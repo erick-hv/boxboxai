@@ -817,7 +817,10 @@ def fetch_practice_results(round_num: int, season: int = SEASON) -> str:
 
 def get_practice_context(query: str, next_race: dict | None = None,
                           mem: dict | None = None) -> str:
-    """Returns practice session data if query asks about FP1/FP2/FP3."""
+    """
+    Gets practice session info by searching news sources.
+    Much more reliable than OpenF1 lap data parsing.
+    """
     q = query.lower()
     is_practice = any(kw in q for kw in [
         "fp1", "fp2", "fp3", "practice", "práctica", "libre",
@@ -826,23 +829,50 @@ def get_practice_context(query: str, next_race: dict | None = None,
     if not is_practice:
         return ""
 
-    # Always use current race weekend — not next race
+    # Figure out which race weekend we're talking about
     current = fetch_current_race()
-    if not current:
-        current = next_race
-    if not current:
-        return ""
+    race_name = ""
+    if current:
+        race_name = current.get("raceName", "")
 
-    round_num = int(current.get("round", 0))
-    if not round_num:
-        return ""
+    # Build search query
+    fp_type = ""
+    if "fp1" in q or "practice 1" in q or "libre 1" in q:
+        fp_type = "FP1 Free Practice 1"
+    elif "fp2" in q or "practice 2" in q or "libre 2" in q:
+        fp_type = "FP2 Free Practice 2"
+    elif "fp3" in q or "practice 3" in q or "libre 3" in q:
+        fp_type = "FP3 Free Practice 3"
+    else:
+        fp_type = "Free Practice"
 
-    results = fetch_practice_results(round_num, SEASON)
-    if not results:
-        return ""
+    search_query = f"{race_name} {fp_type} 2026 results fastest"
 
-    circuit = current.get("Circuit", {}).get("circuitName", "") 
-    return f"Practice session results — {circuit} R{round_num}:\n\n{results}"
+    # Search news
+    news = get_news_context(search_query)
+    if news:
+        return f"Practice session news for {race_name} {fp_type}:\n{news}"
+
+    # Also search DuckDuckGo
+    try:
+        ddg_url = "https://api.duckduckgo.com/"
+        r = requests.get(ddg_url, params={
+            "q": search_query, "format": "json", "no_html": "1"
+        }, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            parts = []
+            if data.get("AbstractText"):
+                parts.append(data["AbstractText"])
+            for t in data.get("RelatedTopics", [])[:3]:
+                if isinstance(t, dict) and t.get("Text"):
+                    parts.append(t["Text"])
+            if parts:
+                return f"Practice info for {race_name} {fp_type}:\n{' '.join(parts)[:800]}"
+    except Exception:
+        pass
+
+    return f"Searching for {race_name} {fp_type} results — check /news for latest updates."
 
 
 
@@ -2284,6 +2314,13 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     # News
     if _is_news_query(user_msg):
         news_ctx = get_news_context(user_msg)
+
+    # Practice also triggers news search
+    if any(kw in user_msg.lower() for kw in
+           ["fp1","fp2","fp3","practice","práctica","libre","entreno",
+            "qualifying","quali","clasificación","sprint"]):
+        if not news_ctx:
+            news_ctx = get_news_context(user_msg)
 
     # Weather — use current race weekend not next race
     if _is_weather_query(user_msg):
