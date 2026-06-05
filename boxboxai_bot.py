@@ -808,19 +808,14 @@ def get_practice_context(query: str, next_race: dict | None = None,
     if not is_practice:
         return ""
 
-    # Figure out which round to look up
-    round_num = None
+    # Always use current race weekend — not next race
+    current = fetch_current_race()
+    if not current:
+        current = next_race
+    if not current:
+        return ""
 
-    # Check if asking about next/current race
-    if next_race:
-        round_num = int(next_race.get("round", 0))
-
-    # Check episodes for round references
-    if mem and not round_num:
-        episodes = mem.get("episodic", [])
-        if episodes:
-            round_num = episodes[-1].get("round", 0) + 1
-
+    round_num = int(current.get("round", 0))
     if not round_num:
         return ""
 
@@ -828,7 +823,7 @@ def get_practice_context(query: str, next_race: dict | None = None,
     if not results:
         return ""
 
-    circuit = next_race.get("Circuit", {}).get("circuitName", "") if next_race else ""
+    circuit = current.get("Circuit", {}).get("circuitName", "") 
     return f"Practice session results — {circuit} R{round_num}:\n\n{results}"
 
 
@@ -866,8 +861,8 @@ def fetch_openf1(endpoint: str, params: dict) -> list:
 
 def fetch_live_session() -> dict | None:
     """
-    Checks OpenF1 for any currently active session today.
-    Returns session info if something is live right now.
+    Checks OpenF1 for any currently active or very recent session.
+    Returns session info if something is live or ended within last 2 hours.
     """
     try:
         today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -876,19 +871,39 @@ def fetch_live_session() -> dict | None:
             "date_start": today,
         })
         if not data:
+            # Try yesterday too for timezone differences
+            yesterday = (datetime.utcnow().replace(hour=0,minute=0,second=0)
+                        .strftime("%Y-%m-%d"))
+            data = fetch_openf1("sessions", {
+                "year":       SEASON,
+                "date_start": yesterday,
+            })
+        if not data:
             return None
-        # Find most recent session that hasn't ended yet
+
         now = datetime.utcnow()
+        best = None
+
         for s in sorted(data, key=lambda x: x.get("date_start",""), reverse=True):
-            end = s.get("date_end","")
+            start_str = s.get("date_start", "")
+            end_str   = s.get("date_end",   "")
             try:
-                end_dt = datetime.fromisoformat(end.replace("Z",""))
-                if end_dt > now:
+                start_dt = datetime.fromisoformat(start_str.replace("Z",""))
+                end_dt   = datetime.fromisoformat(end_str.replace("Z",""))
+
+                # Currently live
+                if start_dt <= now <= end_dt:
                     return s
+
+                # Ended within last 3 hours — still relevant
+                hours_ago = (now - end_dt).total_seconds() / 3600
+                if 0 <= hours_ago <= 3:
+                    if best is None:
+                        best = s
             except Exception:
                 continue
-        # If none ongoing, return the most recent of today
-        return data[0] if data else None
+
+        return best
     except Exception:
         return None
 
@@ -1855,6 +1870,38 @@ def fetch_standings() -> tuple[list, list]:
 
     return drivers, constructors
 
+def fetch_current_race() -> dict | None:
+    """
+    Gets the current race weekend — the race happening right now or
+    within the current week. Falls back to next race if none active.
+    Jolpica /current returns the ongoing round during race weekends.
+    """
+    # Try /current endpoint first — returns active race weekend
+    data = safe_get(f"{JOLPICA}/{SEASON}/current.json")
+    if data:
+        races = data.get("MRData",{}).get("RaceTable",{}).get("Races",[])
+        if races:
+            return races[-1]  # most recent
+
+    # Fall back to checking if today is within 4 days of a race
+    today = datetime.now().date()
+    data2 = safe_get(f"{JOLPICA}/{SEASON}.json", {"limit": 30})
+    if data2:
+        races = data2.get("MRData",{}).get("RaceTable",{}).get("Races",[])
+        for race in races:
+            try:
+                race_date = datetime.strptime(race["date"], "%Y-%m-%d").date()
+                delta = (race_date - today).days
+                if -3 <= delta <= 0:   # race happened 0-3 days ago = this weekend
+                    return race
+                if 0 < delta <= 4:     # race in next 4 days = coming up
+                    return race
+            except Exception:
+                continue
+
+    return fetch_next_race()
+
+
 def fetch_next_race() -> dict | None:
     data = safe_get(f"{JOLPICA}/{SEASON}/next.json")
     if not data:
@@ -2189,16 +2236,16 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     if _is_news_query(user_msg):
         news_ctx = get_news_context(user_msg)
 
-    # Weather
+    # Weather — use current race weekend not next race
     if _is_weather_query(user_msg):
-        next_race   = fetch_next_race()
-        weather_ctx = get_weather_context(user_msg, next_race)
+        current_race = fetch_current_race()
+        weather_ctx  = get_weather_context(user_msg, current_race)
 
-    # Practice sessions
+    # Practice sessions — use current race weekend
     if any(kw in user_msg.lower() for kw in
            ["fp1","fp2","fp3","practice","práctica","libre","entreno"]):
-        next_race    = fetch_next_race()
-        practice_ctx = get_practice_context(user_msg, next_race, mem)
+        current_race = fetch_current_race()
+        practice_ctx = get_practice_context(user_msg, current_race, mem)
 
     # Historical comparisons
     historical_ctx = get_historical_context(user_msg)
