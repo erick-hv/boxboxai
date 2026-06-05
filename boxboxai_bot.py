@@ -841,6 +841,35 @@ def fetch_openf1(endpoint: str, params: dict) -> list:
         return []
 
 
+def fetch_live_session() -> dict | None:
+    """
+    Checks OpenF1 for any currently active session today.
+    Returns session info if something is live right now.
+    """
+    try:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        data  = fetch_openf1("sessions", {
+            "year":       SEASON,
+            "date_start": today,
+        })
+        if not data:
+            return None
+        # Find most recent session that hasn't ended yet
+        now = datetime.utcnow()
+        for s in sorted(data, key=lambda x: x.get("date_start",""), reverse=True):
+            end = s.get("date_end","")
+            try:
+                end_dt = datetime.fromisoformat(end.replace("Z",""))
+                if end_dt > now:
+                    return s
+            except Exception:
+                continue
+        # If none ongoing, return the most recent of today
+        return data[0] if data else None
+    except Exception:
+        return None
+
+
 def get_live_session_context() -> str:
     """Returns live session data if a session is currently active."""
     session = fetch_live_session()
