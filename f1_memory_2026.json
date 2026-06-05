@@ -1,0 +1,1943 @@
+{
+  "semantic": {
+    "circuit/monaco": {
+      "text": "Circuit de Monaco. 3.337km street circuit, 78 laps. OVERTAKING_DIFFICULTY=0.95. Key sector S3. Norris 2025 pole record 1:09.954. Lowest overtaking rate on calendar. Qualifying position is maximally important. No SC in 2025 race (first since 2021).",
+      "tags": [
+        "street",
+        "monaco",
+        "high-qualifying-weight"
+      ],
+      "relevance_keys": [
+        "monaco",
+        "street",
+        "qualifying",
+        "overtaking"
+      ]
+    },
+    "circuit/spain": {
+      "text": "Circuit de Barcelona-Catalunya. OVERTAKING_DIFFICULTY=0.65. Mixed circuit. Key sector S1. DRS on main straight. Good overtaking opportunities vs Monaco but still hard.",
+      "tags": [
+        "mixed",
+        "spain",
+        "barcelona"
+      ],
+      "relevance_keys": [
+        "spain",
+        "barcelona",
+        "catalunya",
+        "mixed"
+      ]
+    },
+    "circuit/monza": {
+      "text": "Autodromo Nazionale di Monza. OVERTAKING_DIFFICULTY=0.30. High-speed. Key sector S1. Easiest circuit to overtake. Slipstream dominant. Low-downforce setup.",
+      "tags": [
+        "high_speed",
+        "monza",
+        "italy"
+      ],
+      "relevance_keys": [
+        "monza",
+        "italy",
+        "high speed",
+        "slipstream"
+      ]
+    },
+    "circuit/silverstone": {
+      "text": "Silverstone Circuit. OVERTAKING_DIFFICULTY=0.45. High-speed. Key sector S1 (Copse, Maggots, Becketts). British GP. High-speed corners suit aerodynamically efficient cars.",
+      "tags": [
+        "high_speed",
+        "silverstone",
+        "britain"
+      ],
+      "relevance_keys": [
+        "silverstone",
+        "britain",
+        "british",
+        "copse"
+      ]
+    },
+    "driver/norris": {
+      "text": "Lando Norris. McLaren #4. British. 2025 WDC winner (by 2pts over Verstappen at Abu Dhabi). Monaco specialist — pole record + win 2025. Won AUS R1, BHR R4, SAU R5, MON R8. Consistent tyre manager. Strong recent_form in second half of season. compound_score excellent.",
+      "tags": [
+        "mclaren",
+        "champion",
+        "norris"
+      ],
+      "relevance_keys": [
+        "norris",
+        "lando",
+        "mclaren",
+        "champion",
+        "wdc"
+      ]
+    },
+    "driver/piastri": {
+      "text": "Oscar Piastri. McLaren #81. Australian. Led 2025 WDC for 15 of 24 rounds. Won CHN R2, JPN R3, MIA R6, ESP R7. Finished 3rd in 2025 WDC. Dominated first half of season. Champ lead eroded from Monaco onwards.",
+      "tags": [
+        "mclaren",
+        "piastri"
+      ],
+      "relevance_keys": [
+        "piastri",
+        "oscar",
+        "mclaren"
+      ]
+    },
+    "driver/verstappen": {
+      "text": "Max Verstappen. Red Bull #1. Dutch. 4x WDC 2021-24. RB21 not matching MCL39 pace in 2025. Finished 2nd in 2025 WDC (2pts behind Norris). Still wins on power circuits. Good qualifying. Strategic risk-taker — pitted lap 77/78 at Monaco.",
+      "tags": [
+        "redbull",
+        "verstappen",
+        "4x-wdc"
+      ],
+      "relevance_keys": [
+        "verstappen",
+        "max",
+        "red bull",
+        "redbull"
+      ]
+    },
+    "driver/leclerc": {
+      "text": "Charles Leclerc. Ferrari #16. Monegasque. Monaco specialist — P2 Monaco 2025 home race. Would have won 2021 Monaco from pole (car failure). High circuit_type_score for street circuits. Emotional connection to Monaco.",
+      "tags": [
+        "ferrari",
+        "leclerc",
+        "street-specialist"
+      ],
+      "relevance_keys": [
+        "leclerc",
+        "charles",
+        "ferrari",
+        "monaco",
+        "street"
+      ]
+    },
+    "driver/hamilton": {
+      "text": "Lewis Hamilton. Ferrari #44. British. Moved from Mercedes after 12 years for 2025. Transition year — learning Ferrari culture and setup philosophy. P5 Monaco 2025.",
+      "tags": [
+        "ferrari",
+        "hamilton",
+        "transition"
+      ],
+      "relevance_keys": [
+        "hamilton",
+        "lewis",
+        "ferrari",
+        "mercedes"
+      ]
+    },
+    "driver/russell": {
+      "text": "George Russell. Mercedes #63. British. Monaco 2025: Q2 mechanical issue → P14 start. Bottled behind Williams. Corner cut on Albon earned penalty. Called mandatory 2-stop rule 'flawed'.",
+      "tags": [
+        "mercedes",
+        "russell"
+      ],
+      "relevance_keys": [
+        "russell",
+        "george",
+        "mercedes"
+      ]
+    },
+    "team/mclaren": {
+      "text": "McLaren MCL39. Mercedes PU. Back-to-back 2024+2025 constructors champions. Norris+Piastri strongest driver pairing in F1. Fastest avg pitstop. Best compound_score. Dominant in 2025 — won 12 of 24 races.",
+      "tags": [
+        "top-team",
+        "mclaren",
+        "constructors-champion"
+      ],
+      "relevance_keys": [
+        "mclaren",
+        "mcl39",
+        "orange",
+        "constructors"
+      ]
+    },
+    "team/redbull": {
+      "text": "Red Bull RB21. Honda RBPT PU. Verstappen leads. Good in qualifying. Race pace not matching McLaren 2025. Strategic gambles (late pitstops). Perez dropped — Lawson joined mid-season.",
+      "tags": [
+        "top-team",
+        "redbull"
+      ],
+      "relevance_keys": [
+        "red bull",
+        "redbull",
+        "rb21",
+        "verstappen",
+        "lawson"
+      ]
+    },
+    "team/ferrari": {
+      "text": "Ferrari SF-25. Ferrari PU. Leclerc+Hamilton. Strong on street circuits and technical tracks. Hamilton adaptation to Ferrari culture ongoing throughout 2025.",
+      "tags": [
+        "top-team",
+        "ferrari"
+      ],
+      "relevance_keys": [
+        "ferrari",
+        "sf-25",
+        "scuderia",
+        "leclerc",
+        "hamilton"
+      ]
+    },
+    "team/mercedes": {
+      "text": "Mercedes W16. Mercedes PU. Russell+Antonelli. Dominant 2026. ANT leads WDC 131pts. RUS 88pts after DNF Montreal lap 31 power unit failure while leading.",
+      "tags": [
+        "mercedes"
+      ],
+      "relevance_keys": [
+        "mercedes",
+        "w16",
+        "russell",
+        "antonelli"
+      ]
+    },
+    "predictor/model": {
+      "text": "f1_2026_predictor.py v7.0. Hybrid: manual weights (<6 races) -> XGBoost (>=6 races). 24 features. MC 10000 sims. Dynamic qualifying weight: 0.22 + (OVERTAKING_DIFFICULTY x 0.16). Bayesian priors persist.",
+      "tags": [
+        "predictor",
+        "model"
+      ],
+      "relevance_keys": [
+        "predictor",
+        "model",
+        "xgboost",
+        "monte carlo",
+        "prediction",
+        "weights"
+      ]
+    },
+    "predictor/qualifying_weight": {
+      "text": "Dynamic qualifying weight: 0.22 + (overtaking_difficulty x 0.16). Monaco=0.95 -> 37.2%. Monza=0.30 -> 27%. Spain=0.65 -> 32.4%. When quali data available: quali_pos_next weight = 45%.",
+      "tags": [
+        "predictor",
+        "qualifying",
+        "weights"
+      ],
+      "relevance_keys": [
+        "qualifying weight",
+        "overtaking difficulty",
+        "quali",
+        "weight",
+        "feature importance"
+      ]
+    },
+    "predictor/monte_carlo": {
+      "text": "MC simulation: pace noise, SC probability Poisson(1.2), pit variance, lap-1 incident 18%, DNF reliability model. 10000 sims. Outputs: win%, podium%, finish%, avg_pos, P10/P90.",
+      "tags": [
+        "predictor",
+        "monte-carlo"
+      ],
+      "relevance_keys": [
+        "monte carlo",
+        "simulation",
+        "probability",
+        "dnf",
+        "reliability",
+        "safety car"
+      ]
+    },
+    "season/2026_summary": {
+      "text": "2026 F1: new aero regs. 5 races done. ANT 4 wins (Shanghai/Suzuka/Miami/Montreal). RUS won Australia. Standings: ANT 131, RUS 88, LEC 75, HAM 72, VER 43, NOR 58, PIA 48. RUS DNF Montreal power unit. HAM P2 Montreal best Ferrari result. VER first podium Montreal. NOR DNF Montreal. McLaren struggling.",
+      "tags": [
+        "season",
+        "2026",
+        "summary"
+      ],
+      "relevance_keys": [
+        "season",
+        "2026",
+        "championship",
+        "standings",
+        "wdc",
+        "wcc",
+        "title"
+      ]
+    }
+  },
+  "episodic": [
+    {
+      "round": 1,
+      "track": "Melbourne",
+      "circuit": "Albert Park Grand Prix Circuit",
+      "country": "Australia",
+      "date": "2026-03-08",
+      "race_name": "Australian Grand Prix",
+      "winner": "RUS",
+      "p2": "ANT",
+      "p3": "LEC",
+      "fastest_lap": "VER",
+      "fastest_lap_time": "1:22.091",
+      "dnfs": [],
+      "points_top5": {
+        "RUS": "25",
+        "ANT": "18",
+        "LEC": "15",
+        "HAM": "12",
+        "NOR": "10"
+      },
+      "position_changes": [
+        "HAM▲3",
+        "VER▲14",
+        "BEA▲5",
+        "GAS▲4",
+        "ALB▲3"
+      ],
+      "qualifying": {
+        "pole": "RUS",
+        "pole_time": "1:18.518",
+        "top10": "P1:RUS(1:18.518) | P2:ANT(1:18.811) | P3:HAD(1:19.303) | P4:LEC(1:19.327) | P5:PIA(1:19.380) | P6:NOR(1:19.475) | P7:HAM(1:19.478) | P8:LAW(1:19.994) | P9:LIN(1:21.247) | P10:BOR(1:20.221)",
+        "q3_runners": [
+          "RUS",
+          "ANT",
+          "HAD",
+          "LEC",
+          "PIA",
+          "NOR",
+          "HAM",
+          "LAW",
+          "LIN",
+          "BOR"
+        ]
+      },
+      "sprint": {},
+      "pitstops": {
+        "strategy_summary": "11 drivers 1-stop, 7 drivers 2-stop, 1 drivers 3+",
+        "fastest_stop_driver": "norris",
+        "fastest_stop_time": 17.649,
+        "one_stoppers": 11,
+        "two_stoppers": 7,
+        "three_plus_stoppers": 1
+      },
+      "full_classification": [
+        "P1:RUS",
+        "P2:ANT",
+        "P3:LEC",
+        "P4:HAM",
+        "P5:NOR",
+        "P6:VER",
+        "P7:BEA",
+        "P8:LIN",
+        "P9:BOR",
+        "P10:GAS",
+        "P11:OCO",
+        "P12:ALB",
+        "P13:LAW",
+        "P14:COL",
+        "P15:SAI",
+        "P16:PER"
+      ],
+      "dns": [],
+      "penalties": [],
+      "grid_penalties": [],
+      "post_race_penalties": [],
+      "sc_periods": [
+        {
+          "type": "VSC",
+          "lap_in": 12,
+          "lap_out": 14
+        },
+        {
+          "type": "VSC",
+          "lap_in": 18,
+          "lap_out": 20
+        },
+        {
+          "type": "VSC",
+          "lap_in": 34,
+          "lap_out": 34
+        }
+      ],
+      "sc_count": 0,
+      "vsc_count": 3,
+      "red_flags": [
+        58
+      ],
+      "story": "George Russell wins Australian Grand Prix. P2: Andrea Kimi Antonelli. P3: Charles Leclerc. Fastest lap: VER (1:22.091). Red flag: lap(s) 58. Big movers: HAM▲3, VER▲14, BEA▲5, GAS▲4. Pole: RUS (1:18.518). Strategy: 11 drivers 1-stop, 7 drivers 2-stop, 1 drivers 3+.",
+      "champ_after": "ANT 131pts | RUS 88pts | LEC 75pts",
+      "champ_delta": "ANT leads",
+      "data_source": "openf1",
+      "prediction": null,
+      "prediction_correct": null,
+      "agent_notes": "",
+      "tags": [
+        "rus-wins",
+        "melbourne"
+      ],
+      "telemetry": {
+        "source": "openf1",
+        "fetched_at": "2026-06-04T16:46:31.136415",
+        "fastest_laps": {
+          "6": 85.239,
+          "41": 84.182,
+          "1": 82.358,
+          "12": 82.417,
+          "31": 84.424,
+          "10": 84.486,
+          "14": 85.713,
+          "5": 83.257,
+          "87": 84.02,
+          "23": 84.375,
+          "55": 83.59,
+          "3": 82.091,
+          "43": 82.926,
+          "30": 83.783,
+          "77": 87.364,
+          "11": 86.07,
+          "18": 85.41,
+          "16": 82.579,
+          "63": 82.67,
+          "44": 82.423
+        },
+        "sector_bests": {
+          "6": {
+            "s1": 29.867,
+            "s2": 18.575,
+            "s3": 36.445
+          },
+          "41": {
+            "s1": 29.507,
+            "s2": 17.645,
+            "s3": 36.678
+          },
+          "1": {
+            "s1": 28.979,
+            "s2": 17.644,
+            "s3": 35.599
+          },
+          "12": {
+            "s1": 28.856,
+            "s2": 17.461,
+            "s3": 35.704
+          },
+          "31": {
+            "s1": 29.828,
+            "s2": 17.388,
+            "s3": 36.354
+          },
+          "10": {
+            "s1": 29.633,
+            "s2": 17.647,
+            "s3": 36.748
+          },
+          "14": {
+            "s1": 29.879,
+            "s2": 18.262,
+            "s3": 37.069
+          },
+          "5": {
+            "s1": 29.395,
+            "s2": 17.721,
+            "s3": 36.062
+          },
+          "87": {
+            "s1": 29.567,
+            "s2": 17.578,
+            "s3": 36.563
+          },
+          "23": {
+            "s1": 29.418,
+            "s2": 18.011,
+            "s3": 36.742
+          },
+          "55": {
+            "s1": 29.171,
+            "s2": 17.805,
+            "s3": 36.374
+          },
+          "3": {
+            "s1": 28.823,
+            "s2": 17.536,
+            "s3": 35.652
+          },
+          "43": {
+            "s1": 29.042,
+            "s2": 17.38,
+            "s3": 36.352
+          },
+          "30": {
+            "s1": 29.404,
+            "s2": 17.679,
+            "s3": 36.439
+          },
+          "77": {
+            "s1": 30.778,
+            "s2": 18.033,
+            "s3": 38.156
+          },
+          "11": {
+            "s1": 29.952,
+            "s2": 18.011,
+            "s3": 37.709
+          },
+          "18": {
+            "s1": 29.694,
+            "s2": 18.467,
+            "s3": 36.943
+          },
+          "16": {
+            "s1": 28.995,
+            "s2": 17.598,
+            "s3": 35.848
+          },
+          "63": {
+            "s1": 28.857,
+            "s2": 17.458,
+            "s3": 35.862
+          },
+          "44": {
+            "s1": 28.867,
+            "s2": 17.505,
+            "s3": 35.716
+          }
+        },
+        "tyre_stints": {
+          "27": [
+            {
+              "compound": "HARD",
+              "laps": 0,
+              "lap_start": 1
+            }
+          ],
+          "43": [
+            {
+              "compound": "HARD",
+              "laps": 7,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 36,
+              "lap_start": 9
+            },
+            {
+              "compound": "SOFT",
+              "laps": 10,
+              "lap_start": 46
+            }
+          ],
+          "6": [
+            {
+              "compound": "MEDIUM",
+              "laps": 9,
+              "lap_start": 1
+            }
+          ],
+          "1": [
+            {
+              "compound": "MEDIUM",
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 22,
+              "lap_start": 11
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 24,
+              "lap_start": 34
+            }
+          ],
+          "31": [
+            {
+              "compound": null,
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 46,
+              "lap_start": 11
+            }
+          ],
+          "10": [
+            {
+              "compound": null,
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 46,
+              "lap_start": 11
+            }
+          ],
+          "55": [
+            {
+              "compound": "SOFT",
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 21,
+              "lap_start": 11
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 11,
+              "lap_start": 33
+            },
+            {
+              "compound": "SOFT",
+              "laps": 11,
+              "lap_start": 45
+            }
+          ],
+          "30": [
+            {
+              "compound": null,
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 21,
+              "lap_start": 11
+            },
+            {
+              "compound": "SOFT",
+              "laps": 24,
+              "lap_start": 33
+            }
+          ],
+          "14": [
+            {
+              "compound": "SOFT",
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "SOFT",
+              "laps": 1,
+              "lap_start": 11
+            },
+            {
+              "compound": "SOFT",
+              "laps": 8,
+              "lap_start": 13
+            }
+          ],
+          "18": [
+            {
+              "compound": "MEDIUM",
+              "laps": 9,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 14,
+              "lap_start": 11
+            },
+            {
+              "compound": "SOFT",
+              "laps": 7,
+              "lap_start": 26
+            },
+            {
+              "compound": "SOFT",
+              "laps": 4,
+              "lap_start": 34
+            },
+            {
+              "compound": "SOFT",
+              "laps": 4,
+              "lap_start": 39
+            }
+          ],
+          "63": [
+            {
+              "compound": null,
+              "laps": 10,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 46,
+              "lap_start": 12
+            }
+          ],
+          "12": [
+            {
+              "compound": "MEDIUM",
+              "laps": 10,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 46,
+              "lap_start": 12
+            }
+          ],
+          "23": [
+            {
+              "compound": null,
+              "laps": 10,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 20,
+              "lap_start": 12
+            },
+            {
+              "compound": "SOFT",
+              "laps": 24,
+              "lap_start": 33
+            }
+          ],
+          "77": [
+            {
+              "compound": "HARD",
+              "laps": 10,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 3,
+              "lap_start": 12
+            }
+          ],
+          "41": [
+            {
+              "compound": "MEDIUM",
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 39,
+              "lap_start": 18
+            }
+          ],
+          "87": [
+            {
+              "compound": "MEDIUM",
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 39,
+              "lap_start": 18
+            }
+          ],
+          "3": [
+            {
+              "compound": "HARD",
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 22,
+              "lap_start": 18
+            },
+            {
+              "compound": "HARD",
+              "laps": 17,
+              "lap_start": 41
+            }
+          ],
+          "5": [
+            {
+              "compound": "MEDIUM",
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 14,
+              "lap_start": 18
+            },
+            {
+              "compound": "HARD",
+              "laps": 24,
+              "lap_start": 33
+            }
+          ],
+          "11": [
+            {
+              "compound": null,
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 24,
+              "lap_start": 18
+            },
+            {
+              "compound": "SOFT",
+              "laps": 12,
+              "lap_start": 43
+            }
+          ],
+          "16": [
+            {
+              "compound": "MEDIUM",
+              "laps": 23,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 33,
+              "lap_start": 25
+            }
+          ],
+          "44": [
+            {
+              "compound": "MEDIUM",
+              "laps": 26,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 28
+            }
+          ]
+        },
+        "pit_stops": {
+          "43": [
+            27.7,
+            18.56
+          ],
+          "1": [
+            18.2,
+            17.6
+          ],
+          "31": [
+            18.5
+          ],
+          "10": [
+            18.6
+          ],
+          "55": [
+            19.8,
+            25.94,
+            34.62
+          ],
+          "30": [
+            19.1,
+            18.19
+          ],
+          "14": [
+            25.89
+          ],
+          "18": [
+            36.69,
+            33.1,
+            33.18,
+            22.4,
+            22.47
+          ],
+          "63": [
+            17.79
+          ],
+          "12": [
+            20.98
+          ],
+          "23": [
+            18.12,
+            18.4
+          ],
+          "77": [
+            30.39
+          ],
+          "41": [
+            18.51
+          ],
+          "3": [
+            19.07,
+            18.0
+          ],
+          "87": [
+            18.77
+          ],
+          "5": [
+            22.62,
+            22.6
+          ],
+          "11": [
+            21.37,
+            18.95
+          ],
+          "16": [
+            17.6,
+            17.66
+          ],
+          "44": [
+            17.7,
+            17.74
+          ]
+        },
+        "fastest_lap_overall": 82.091,
+        "fastest_lap_driver": "3"
+      },
+      "verification": {
+        "status": "skipped",
+        "reason": "No web data available",
+        "corrections": []
+      },
+      "constructor_leader": "Mercedes 219pts",
+      "briefing": "George Russell converted pole position into a commanding victory at the Australian Grand Prix, leading every lap to claim the season opener in Melbourne. The Mercedes driver controlled proceedings from the front while Antonelli delivered a stellar drive to P2, marking an impressive start to his campaign. Charles Leclerc completed the podium for Ferrari, while Hadley couldn't maintain his strong P3 qualifying result in the race. Max Verstappen salvaged fastest lap despite a difficult weekend that saw him qualify outside the top three.\n\nStrategy split defined the midfield battle with 11 drivers committing to aggressive one-stop strategies while seven opted for the safer two-stop approach. Russell's pace management from the front proved crucial, never giving his rivals a sniff of an overtaking opportunity. The clean race—remarkably without a single DNF—allowed strategy to play out naturally, rewarding those who nailed their tire degradation windows and punished anyone who got it wrong.\n\nAntonelli leads the championship on 131 points after his podium, but Russell's victory keeps him within striking distance at 88 points, just 43 back. Leclerc sits third on 75 points, already 56 behind the leader. The big story heading into R2 is whether Mercedes has genuinely found race-winning pace or if Melbourne's unique characteristics flattered them. Watch for Red Bull's response—Verstappen's struggles in qualifying suggest they've got work to do, and they won't stay down for long.",
+      "briefing_generated_at": "2026-06-04T16:46:47.431929"
+    },
+    {
+      "round": 2,
+      "track": "Shanghai",
+      "circuit": "Shanghai International Circuit",
+      "country": "China",
+      "date": "2026-03-15",
+      "race_name": "Chinese Grand Prix",
+      "winner": "ANT",
+      "p2": "RUS",
+      "p3": "HAM",
+      "fastest_lap": "ANT",
+      "fastest_lap_time": "1:35.275",
+      "dnfs": [],
+      "points_top5": {
+        "ANT": "25",
+        "RUS": "18",
+        "HAM": "15",
+        "LEC": "12",
+        "BEA": "10"
+      },
+      "position_changes": [
+        "BEA▲5",
+        "LAW▲7",
+        "SAI▲8",
+        "LIN▲3"
+      ],
+      "qualifying": {
+        "pole": "ANT",
+        "pole_time": "1:32.064",
+        "top10": "P1:ANT(1:32.064) | P2:RUS(1:32.286) | P3:HAM(1:32.415) | P4:LEC(1:32.428) | P5:PIA(1:32.550) | P6:NOR(1:32.608) | P7:GAS(1:32.873) | P8:VER(1:33.002) | P9:HAD(1:33.121) | P10:BEA(1:33.292)",
+        "q3_runners": [
+          "ANT",
+          "RUS",
+          "HAM",
+          "LEC",
+          "PIA",
+          "NOR",
+          "GAS",
+          "VER",
+          "HAD",
+          "BEA"
+        ]
+      },
+      "sprint": {
+        "sprint_winner": "RUS",
+        "sprint_p2": "LEC",
+        "sprint_p3": "HAM",
+        "sprint_top3": "P1:RUS | P2:LEC | P3:HAM",
+        "sprint_pts": {
+          "RUS": "8",
+          "LEC": "7",
+          "HAM": "6",
+          "NOR": "5",
+          "ANT": "4",
+          "PIA": "3",
+          "LAW": "2",
+          "BEA": "1"
+        }
+      },
+      "pitstops": {
+        "strategy_summary": "15 drivers 1-stop, 2 drivers 2-stop",
+        "fastest_stop_driver": "hamilton",
+        "fastest_stop_time": 22.433,
+        "one_stoppers": 15,
+        "two_stoppers": 2,
+        "three_plus_stoppers": 0
+      },
+      "full_classification": [
+        "P1:ANT",
+        "P2:RUS",
+        "P3:HAM",
+        "P4:LEC",
+        "P5:BEA",
+        "P6:GAS",
+        "P7:LAW",
+        "P8:HAD",
+        "P9:SAI",
+        "P10:COL",
+        "P11:HUL",
+        "P12:LIN",
+        "P13:BOT",
+        "P14:OCO",
+        "P15:PER"
+      ],
+      "dns": [],
+      "penalties": [],
+      "grid_penalties": [],
+      "post_race_penalties": [
+        {
+          "driver": "?",
+          "type": "time penalty",
+          "detail": "FIA STEWARDS: 10 SECOND TIME PENALTY FOR CAR 31 (OCO) - CAUSING A COLLISION",
+          "lap": 37
+        },
+        {
+          "driver": "?",
+          "type": "time penalty",
+          "detail": "FIA STEWARDS: PENALTY SERVED - 10 SECOND TIME PENALTY FOR CAR 31 (OCO) - CAUSING A COLLISION",
+          "lap": 51
+        }
+      ],
+      "sc_periods": [
+        {
+          "type": "SC",
+          "lap_in": 13,
+          "lap_out": "end"
+        }
+      ],
+      "sc_count": 1,
+      "vsc_count": 0,
+      "red_flags": [
+        56
+      ],
+      "story": "Andrea Kimi Antonelli wins Chinese Grand Prix. P2: George Russell. P3: Lewis Hamilton. Fastest lap: ANT (1:35.275). Safety car: SC L13-end. Red flag: lap(s) 56. Big movers: BEA▲5, LAW▲7, SAI▲8, LIN▲3. Pole: ANT (1:32.064). Sprint: RUS won (P1:RUS | P2:LEC | P3:HAM). Strategy: 15 drivers 1-stop, 2 drivers 2-stop.",
+      "champ_after": "ANT 131pts | RUS 88pts | LEC 75pts",
+      "champ_delta": "ANT leads",
+      "data_source": "openf1",
+      "prediction": null,
+      "prediction_correct": null,
+      "agent_notes": "",
+      "tags": [
+        "ant-wins",
+        "shanghai",
+        "sprint-weekend"
+      ],
+      "telemetry": {},
+      "verification": {
+        "status": "skipped",
+        "reason": "No web data available",
+        "corrections": []
+      },
+      "constructor_leader": "Mercedes 219pts",
+      "briefing": "Antonio delivered a commanding lights-to-flag victory at the Chinese Grand Prix, converting pole position into his first win of the season and immediately bouncing back from Russell's Melbourne triumph. The championship leader controlled proceedings from the front, with Russell and Hamilton completing an otherwise processional podium behind him. Antonio also claimed fastest lap with a 1:35.275, underlining his dominance at the Shanghai International Circuit.\n\nThe race was decided largely on Saturday, with track position proving king as 15 of the grid opted for the safer one-stop strategy. Antonio's qualifying masterclass—three-tenths clear of Russell—gave him clean air to manage the race, and neither Mercedes driver had the pace to seriously challenge once the pit cycle settled. The two drivers who rolled the dice on a two-stop couldn't make the alternative strategy pay off, and with no DNFs to shake up the order, it was a straightforward afternoon for the frontrunners.\n\nAntonio extends his championship lead to 43 points over Russell, with Leclerc now 56 points back in third—a significant gap just two rounds in. Russell needs to find qualifying pace to challenge Antonio on Saturdays, as race day overtaking proved nearly impossible in Shanghai. The early-season narrative is clear: Antonio is the man to beat, and his rivals need to disrupt his rhythm soon before this championship advantage becomes insurmountable.",
+      "briefing_generated_at": "2026-06-04T16:47:05.627622"
+    },
+    {
+      "round": 3,
+      "track": "Suzuka",
+      "circuit": "Suzuka Circuit",
+      "country": "Japan",
+      "date": "2026-03-29",
+      "race_name": "Japanese Grand Prix",
+      "winner": "ANT",
+      "p2": "PIA",
+      "p3": "LEC",
+      "fastest_lap": "ANT",
+      "fastest_lap_time": "1:32.432",
+      "dnfs": [],
+      "points_top5": {
+        "ANT": "25",
+        "PIA": "18",
+        "LEC": "15",
+        "RUS": "12",
+        "NOR": "10"
+      },
+      "position_changes": [
+        "VER▲3",
+        "LAW▲5",
+        "HAD▼4"
+      ],
+      "qualifying": {
+        "pole": "ANT",
+        "pole_time": "1:28.778",
+        "top10": "P1:ANT(1:28.778) | P2:RUS(1:29.076) | P3:PIA(1:29.132) | P4:LEC(1:29.405) | P5:NOR(1:29.409) | P6:HAM(1:29.567) | P7:GAS(1:29.691) | P8:HAD(1:29.978) | P9:BOR(1:30.274) | P10:LIN(1:30.319)",
+        "q3_runners": [
+          "ANT",
+          "RUS",
+          "PIA",
+          "LEC",
+          "NOR",
+          "HAM",
+          "GAS",
+          "HAD",
+          "BOR",
+          "LIN"
+        ]
+      },
+      "sprint": {},
+      "pitstops": {
+        "strategy_summary": "19 drivers 1-stop, 2 drivers 2-stop, 1 drivers 3+",
+        "fastest_stop_driver": "hamilton",
+        "fastest_stop_time": 22.891,
+        "one_stoppers": 19,
+        "two_stoppers": 2,
+        "three_plus_stoppers": 1
+      },
+      "full_classification": [
+        "P1:ANT",
+        "P2:PIA",
+        "P3:LEC",
+        "P4:RUS",
+        "P5:NOR",
+        "P6:HAM",
+        "P7:GAS",
+        "P8:VER",
+        "P9:LAW",
+        "P10:OCO",
+        "P11:HUL",
+        "P12:HAD",
+        "P13:BOR",
+        "P14:LIN",
+        "P15:SAI",
+        "P16:COL",
+        "P17:PER",
+        "P18:ALO",
+        "P19:BOT",
+        "P20:ALB"
+      ],
+      "dns": [],
+      "penalties": [],
+      "grid_penalties": [],
+      "post_race_penalties": [],
+      "sc_periods": [
+        {
+          "type": "SC",
+          "lap_in": 27,
+          "lap_out": "end"
+        }
+      ],
+      "sc_count": 1,
+      "vsc_count": 0,
+      "red_flags": [
+        53
+      ],
+      "story": "Andrea Kimi Antonelli wins Japanese Grand Prix. P2: Oscar Piastri. P3: Charles Leclerc. Fastest lap: ANT (1:32.432). Safety car: SC L27-end. Red flag: lap(s) 53. Big movers: VER▲3, LAW▲5, HAD▼4. Pole: ANT (1:28.778). Strategy: 19 drivers 1-stop, 2 drivers 2-stop, 1 drivers 3+.",
+      "champ_after": "ANT 131pts | RUS 88pts | LEC 75pts",
+      "champ_delta": "ANT leads",
+      "data_source": "openf1",
+      "prediction": null,
+      "prediction_correct": null,
+      "agent_notes": "",
+      "tags": [
+        "ant-wins",
+        "suzuka"
+      ],
+      "telemetry": {
+        "source": "openf1",
+        "fetched_at": "2026-06-04T16:47:11.803685",
+        "fastest_laps": {
+          "12": 92.432,
+          "63": 92.549,
+          "81": 92.996,
+          "16": 92.634,
+          "1": 93.208,
+          "44": 92.777,
+          "10": 93.691,
+          "6": 93.837,
+          "5": 94.164,
+          "41": 94.314,
+          "3": 93.552,
+          "31": 94.256,
+          "27": 93.732,
+          "30": 94.23,
+          "43": 94.512,
+          "55": 94.514,
+          "23": 93.427,
+          "87": 95.604,
+          "11": 95.637,
+          "77": 96.269,
+          "14": 96.221,
+          "18": 97.217
+        },
+        "sector_bests": {
+          "12": {
+            "s1": 33.662,
+            "s2": 40.986,
+            "s3": 17.695
+          },
+          "63": {
+            "s1": 33.743,
+            "s2": 41.039,
+            "s3": 17.578
+          },
+          "81": {
+            "s1": 33.887,
+            "s2": 41.214,
+            "s3": 17.843
+          },
+          "16": {
+            "s1": 33.676,
+            "s2": 40.919,
+            "s3": 17.8
+          },
+          "1": {
+            "s1": 33.929,
+            "s2": 41.281,
+            "s3": 17.739
+          },
+          "44": {
+            "s1": 33.962,
+            "s2": 41.108,
+            "s3": 17.707
+          },
+          "10": {
+            "s1": 34.194,
+            "s2": 41.432,
+            "s3": 17.868
+          },
+          "6": {
+            "s1": 34.064,
+            "s2": 41.713,
+            "s3": 17.617
+          },
+          "5": {
+            "s1": 34.497,
+            "s2": 41.724,
+            "s3": 17.778
+          },
+          "41": {
+            "s1": 34.81,
+            "s2": 41.569,
+            "s3": 17.799
+          },
+          "3": {
+            "s1": 34.037,
+            "s2": 41.453,
+            "s3": 17.817
+          },
+          "31": {
+            "s1": 34.724,
+            "s2": 41.452,
+            "s3": 17.809
+          },
+          "27": {
+            "s1": 33.84,
+            "s2": 41.508,
+            "s3": 17.678
+          },
+          "30": {
+            "s1": 34.592,
+            "s2": 41.545,
+            "s3": 17.838
+          },
+          "43": {
+            "s1": 34.735,
+            "s2": 41.851,
+            "s3": 17.738
+          },
+          "55": {
+            "s1": 34.85,
+            "s2": 41.652,
+            "s3": 17.904
+          },
+          "23": {
+            "s1": 34.368,
+            "s2": 41.228,
+            "s3": 17.831
+          },
+          "87": {
+            "s1": 35.006,
+            "s2": 41.84,
+            "s3": 18.041
+          },
+          "11": {
+            "s1": 35.067,
+            "s2": 42.095,
+            "s3": 18.217
+          },
+          "77": {
+            "s1": 35.553,
+            "s2": 42.27,
+            "s3": 18.175
+          },
+          "14": {
+            "s1": 35.249,
+            "s2": 42.453,
+            "s3": 18.273
+          },
+          "18": {
+            "s1": 35.578,
+            "s2": 42.879,
+            "s3": 18.357
+          }
+        },
+        "tyre_stints": {
+          "1": [
+            {
+              "compound": "MEDIUM",
+              "laps": 15,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 36,
+              "lap_start": 17
+            }
+          ],
+          "87": [
+            {
+              "compound": "MEDIUM",
+              "laps": 15,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 3,
+              "lap_start": 17
+            }
+          ],
+          "16": [
+            {
+              "compound": "MEDIUM",
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 35,
+              "lap_start": 18
+            }
+          ],
+          "43": [
+            {
+              "compound": "MEDIUM",
+              "laps": 16,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 35,
+              "lap_start": 18
+            }
+          ],
+          "81": [
+            {
+              "compound": "MEDIUM",
+              "laps": 17,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 34,
+              "lap_start": 19
+            }
+          ],
+          "41": [
+            {
+              "compound": "MEDIUM",
+              "laps": 17,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 34,
+              "lap_start": 19
+            }
+          ],
+          "31": [
+            {
+              "compound": "MEDIUM",
+              "laps": 18,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 33,
+              "lap_start": 20
+            }
+          ],
+          "6": [
+            {
+              "compound": "MEDIUM",
+              "laps": 18,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 33,
+              "lap_start": 20
+            }
+          ],
+          "77": [
+            {
+              "compound": "HARD",
+              "laps": 18,
+              "lap_start": 1
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 32,
+              "lap_start": 20
+            }
+          ],
+          "63": [
+            {
+              "compound": "MEDIUM",
+              "laps": 20,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 31,
+              "lap_start": 22
+            }
+          ],
+          "11": [
+            {
+              "compound": "MEDIUM",
+              "laps": 20,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 31,
+              "lap_start": 22
+            }
+          ],
+          "18": [
+            {
+              "compound": "MEDIUM",
+              "laps": 20,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 2,
+              "lap_start": 22
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 5,
+              "lap_start": 25
+            }
+          ],
+          "14": [
+            {
+              "compound": "MEDIUM",
+              "laps": 20,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 1,
+              "lap_start": 22
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 28,
+              "lap_start": 24
+            }
+          ],
+          "12": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "44": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "10": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "3": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "30": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "5": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "55": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 30,
+              "lap_start": 23
+            }
+          ],
+          "23": [
+            {
+              "compound": "MEDIUM",
+              "laps": 21,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 22,
+              "lap_start": 23
+            },
+            {
+              "compound": "SOFT",
+              "laps": 0,
+              "lap_start": 46
+            },
+            {
+              "compound": "SOFT",
+              "laps": 0,
+              "lap_start": 47
+            },
+            {
+              "compound": "SOFT",
+              "laps": 0,
+              "lap_start": 48
+            },
+            {
+              "compound": "SOFT",
+              "laps": 0,
+              "lap_start": 49
+            },
+            {
+              "compound": "MEDIUM",
+              "laps": 1,
+              "lap_start": 50
+            }
+          ],
+          "27": [
+            {
+              "compound": "MEDIUM",
+              "laps": 22,
+              "lap_start": 1
+            },
+            {
+              "compound": "HARD",
+              "laps": 29,
+              "lap_start": 24
+            }
+          ]
+        },
+        "pit_stops": {
+          "1": [
+            23.32
+          ],
+          "87": [
+            25.0
+          ],
+          "16": [
+            22.99
+          ],
+          "43": [
+            23.65
+          ],
+          "81": [
+            23.44
+          ],
+          "41": [
+            26.3
+          ],
+          "31": [
+            24.63
+          ],
+          "6": [
+            23.7
+          ],
+          "77": [
+            25.13
+          ],
+          "63": [
+            22.94
+          ],
+          "11": [
+            27.31
+          ],
+          "18": [
+            25.08,
+            23.5
+          ],
+          "14": [
+            26.46,
+            24.01
+          ],
+          "12": [
+            23.29
+          ],
+          "44": [
+            22.89
+          ],
+          "10": [
+            24.3
+          ],
+          "3": [
+            24.49
+          ],
+          "30": [
+            24.1
+          ],
+          "5": [
+            24.63
+          ],
+          "55": [
+            24.4
+          ],
+          "23": [
+            24.6,
+            23.07,
+            24.1,
+            26.0,
+            32.7,
+            24.3
+          ],
+          "27": [
+            23.9
+          ]
+        },
+        "fastest_lap_overall": 92.432,
+        "fastest_lap_driver": "12"
+      },
+      "verification": {
+        "status": "skipped",
+        "reason": "No web data available",
+        "corrections": []
+      },
+      "constructor_leader": "Mercedes 219pts",
+      "briefing": "ANT dominated from lights to flag at Suzuka, converting pole position into a commanding victory ahead of Oscar Piastia and Charles Leclerc. The reigning champion controlled proceedings throughout, setting the fastest lap of 1:32.432 and never looking threatened. Russell, who qualified a strong P2, faded to finish off the podium, while Piastia delivered a solid drive to split the front-runners and secure second place. Clean racing saw all 20 cars reach the checkered flag for the first time this season.\n\nThe race was decided on pure pace rather than strategic variation or drama. While 19 drivers opted for the conventional one-stop strategy, ANT simply had the measure of the field and managed the race perfectly. Russell's qualifying performance didn't translate to race day, suggesting Red Bull may have found something overnight or Mercedes struggled with tire degradation. The lack of incidents or safety cars meant track position from qualifying proved crucial, and ANT's pole lap of 1:28.778 set up the perfect weekend.\n\nANT has surged to a commanding 43-point championship lead over Russell after back-to-back wins in Shanghai and Suzuka, with 131 points to Russell's 88. Leclerc sits third on 75 points after his podium, keeping Ferrari in the hunt. The momentum has swung decisively toward ANT after Russell took the opener in Melbourne, and the question now is whether anyone can stop the dominant run. Watch for whether Mercedes can find race pace to match their qualifying speed, and if Ferrari can close the gap to the front two.",
+      "briefing_generated_at": "2026-06-04T16:47:28.989748"
+    },
+    {
+      "round": 4,
+      "track": "Miami",
+      "circuit": "Miami International Autodrome",
+      "country": "USA",
+      "date": "2026-05-03",
+      "race_name": "Miami Grand Prix",
+      "winner": "ANT",
+      "p2": "NOR",
+      "p3": "PIA",
+      "fastest_lap": "NOR",
+      "fastest_lap_time": "1:31.869",
+      "dnfs": [
+        "BEA(retirement)",
+        "BOR(retirement)",
+        "OCO(retirement)",
+        "LIN(retirement)",
+        "ALO(retirement)",
+        "PER(retirement)",
+        "STR(retirement)",
+        "BOT(retirement)",
+        "HUL(retirement)",
+        "LAW(retirement)",
+        "GAS(retirement)",
+        "HAD(retirement)"
+      ],
+      "points_top5": {
+        "ANT": "25",
+        "NOR": "18",
+        "PIA": "15",
+        "RUS": "12",
+        "VER": "10"
+      },
+      "position_changes": [
+        "PIA▲4",
+        "VER▼3",
+        "LEC▼5",
+        "SAI▲4",
+        "ALB▲5",
+        "BOR▲9"
+      ],
+      "qualifying": {
+        "pole": "ANT",
+        "pole_time": "1:27.798",
+        "top10": "P1:ANT(1:27.798) | P2:VER(1:27.964) | P3:LEC(1:28.143) | P4:NOR(1:28.183) | P5:RUS(1:28.197) | P6:HAM(1:28.319) | P7:PIA(1:28.500) | P8:COL(1:28.762) | P9:GAS(1:28.810) | P10:HUL(1:29.439)",
+        "q3_runners": [
+          "ANT",
+          "VER",
+          "LEC",
+          "NOR",
+          "RUS",
+          "HAM",
+          "PIA",
+          "COL",
+          "GAS",
+          "HUL"
+        ]
+      },
+      "sprint": {
+        "sprint_winner": "NOR",
+        "sprint_p2": "PIA",
+        "sprint_p3": "LEC",
+        "sprint_top3": "P1:NOR | P2:PIA | P3:LEC",
+        "sprint_pts": {
+          "NOR": "8",
+          "PIA": "7",
+          "LEC": "6",
+          "RUS": "5",
+          "VER": "4",
+          "ANT": "3",
+          "HAM": "2",
+          "GAS": "1"
+        }
+      },
+      "pitstops": {
+        "strategy_summary": "17 drivers 1-stop, 1 drivers 2-stop, 1 drivers 3+",
+        "fastest_stop_driver": "bottas",
+        "fastest_stop_time": 17.173,
+        "one_stoppers": 17,
+        "two_stoppers": 1,
+        "three_plus_stoppers": 1
+      },
+      "full_classification": [
+        "P1:ANT",
+        "P2:NOR",
+        "P3:PIA",
+        "P4:RUS",
+        "P5:VER",
+        "P6:HAM",
+        "P7:COL",
+        "P8:LEC",
+        "P9:SAI",
+        "P10:ALB",
+        "P11:BEA",
+        "P12:BOR",
+        "P13:OCO",
+        "P14:LIN",
+        "P15:ALO",
+        "P16:PER",
+        "P17:STR",
+        "P18:BOT",
+        "P19:HUL",
+        "P20:LAW",
+        "P21:GAS",
+        "P22:HAD"
+      ],
+      "dns": [],
+      "penalties": [],
+      "grid_penalties": [],
+      "post_race_penalties": [],
+      "sc_periods": [],
+      "sc_count": 0,
+      "vsc_count": 0,
+      "red_flags": [],
+      "story": "Andrea Kimi Antonelli wins Miami Grand Prix. P2: Lando Norris. P3: Oscar Piastri. Fastest lap: NOR (1:31.869). DNFs: BEA(retirement), BOR(retirement), OCO(retirement), LIN(retirement), ALO(retirement). Big movers: PIA▲4, VER▼3, LEC▼5, SAI▲4. Pole: ANT (1:27.798). Sprint: NOR won (P1:NOR | P2:PIA | P3:LEC). Strategy: 17 drivers 1-stop, 1 drivers 2-stop, 1 drivers 3+.",
+      "champ_after": "ANT 131pts | RUS 88pts | LEC 75pts",
+      "champ_delta": "ANT leads",
+      "data_source": "jolpica_fallback",
+      "prediction": null,
+      "prediction_correct": null,
+      "agent_notes": "",
+      "tags": [
+        "ant-wins",
+        "miami",
+        "sprint-weekend",
+        "dnf"
+      ],
+      "telemetry": {},
+      "verification": {
+        "status": "skipped",
+        "reason": "No web data available",
+        "corrections": []
+      },
+      "constructor_leader": "Mercedes 219pts",
+      "briefing": "Antonelli continues his dominant start to the season with a commanding lights-to-flag victory in Miami, completing a hat-trick of wins after Shanghai and Suzuka. Starting from pole with a stunning 1:27.798 lap, he controlled the race from the front while McLaren secured a double podium behind him with Norris taking second and Piastri third. Verstappen's front-row start promised a challenge, but he faded from contention as four retirements—Bearman, Bortoleto, Ocon, and Lindblad—added drama to what was otherwise a processional affair in the Florida heat.\n\nThe race unfolded as a largely strategic procession with 17 drivers opting for the one-stop approach, though the outliers on different strategies failed to make an impact. Norris grabbed fastest lap with a 1:31.869, but neither McLaren driver had the pace to genuinely threaten Antonelli's lead. The retirements shuffled the midfield but didn't affect the top order, and once ANT broke away in the opening stint, the result was never in doubt.\n\nAntonelli now holds a commanding 43-point advantage over Russell in second, with Leclerc a further 13 points back in third. Three wins from four races has turned what looked like a competitive season into an early procession—Russell and Ferrari need to find answers quickly before this championship slips away entirely. The pressure is mounting on Red Bull and Mercedes to disrupt Antonelli's momentum, or we're watching a coronation rather than a contest.",
+      "briefing_generated_at": "2026-06-04T16:47:48.081666"
+    },
+    {
+      "round": 5,
+      "track": "Montreal",
+      "circuit": "Circuit Gilles Villeneuve",
+      "country": "Canada",
+      "date": "2026-05-24",
+      "race_name": "Canadian Grand Prix",
+      "winner": "ANT",
+      "p2": "HAM",
+      "p3": "VER",
+      "fastest_lap": "ANT",
+      "fastest_lap_time": "1:14.210",
+      "dnfs": [
+        "HAD(retirement)",
+        "COL(retirement)",
+        "LAW(retirement)",
+        "GAS(retirement)",
+        "SAI(retirement)",
+        "BEA(retirement)",
+        "PIA(retirement)",
+        "HUL(retirement)",
+        "BOR(retirement)",
+        "OCO(retirement)",
+        "STR(retirement)",
+        "BOT(retirement)",
+        "PER(retirement)",
+        "NOR(retirement)",
+        "RUS(retirement)",
+        "ALO(retirement)",
+        "ALB(retirement)",
+        "LIN(dns)"
+      ],
+      "points_top5": {
+        "ANT": "25",
+        "HAM": "18",
+        "VER": "15",
+        "LEC": "12",
+        "HAD": "10"
+      },
+      "position_changes": [
+        "HAM▲3",
+        "VER▲3",
+        "LEC▲4",
+        "COL▲4",
+        "LAW▲5",
+        "GAS▲6",
+        "SAI▲6",
+        "BEA▲6",
+        "PIA▼7"
+      ],
+      "qualifying": {
+        "pole": "RUS",
+        "pole_time": "1:12.578",
+        "top10": "P1:RUS(1:12.578) | P2:ANT(1:12.646) | P3:NOR(1:12.729) | P4:PIA(1:12.781) | P5:HAM(1:12.868) | P6:VER(1:12.907) | P7:HAD(1:12.935) | P8:LEC(1:12.976) | P9:LIN(1:13.280) | P10:COL(1:13.697)",
+        "q3_runners": [
+          "RUS",
+          "ANT",
+          "NOR",
+          "PIA",
+          "HAM",
+          "VER",
+          "HAD",
+          "LEC",
+          "LIN",
+          "COL"
+        ]
+      },
+      "sprint": {
+        "sprint_winner": "RUS",
+        "sprint_p2": "NOR",
+        "sprint_p3": "ANT",
+        "sprint_top3": "P1:RUS | P2:NOR | P3:ANT",
+        "sprint_pts": {
+          "RUS": "8",
+          "NOR": "7",
+          "ANT": "6",
+          "PIA": "5",
+          "LEC": "4",
+          "HAM": "3",
+          "VER": "2",
+          "LIN": "1"
+        }
+      },
+      "pitstops": {
+        "strategy_summary": "10 drivers 1-stop, 7 drivers 2-stop, 2 drivers 3+",
+        "fastest_stop_driver": "norris",
+        "fastest_stop_time": 23.418,
+        "one_stoppers": 10,
+        "two_stoppers": 7,
+        "three_plus_stoppers": 2
+      },
+      "full_classification": [
+        "P1:ANT",
+        "P2:HAM",
+        "P3:VER",
+        "P4:LEC",
+        "P5:HAD",
+        "P6:COL",
+        "P7:LAW",
+        "P8:GAS",
+        "P9:SAI",
+        "P10:BEA",
+        "P11:PIA",
+        "P12:HUL",
+        "P13:BOR",
+        "P14:OCO",
+        "P15:STR",
+        "P16:BOT",
+        "P17:PER",
+        "P18:NOR",
+        "P19:RUS",
+        "P20:ALO",
+        "P21:ALB",
+        "P22:LIN"
+      ],
+      "dns": [],
+      "penalties": [],
+      "grid_penalties": [],
+      "post_race_penalties": [],
+      "sc_periods": [],
+      "sc_count": 0,
+      "vsc_count": 0,
+      "red_flags": [],
+      "story": "Andrea Kimi Antonelli wins Canadian Grand Prix. P2: Lewis Hamilton. P3: Max Verstappen. Fastest lap: ANT (1:14.210). DNFs: HAD(retirement), COL(retirement), LAW(retirement), GAS(retirement), SAI(retirement). Big movers: HAM▲3, VER▲3, LEC▲4, COL▲4. Pole: RUS (1:12.578). Sprint: RUS won (P1:RUS | P2:NOR | P3:ANT). Strategy: 10 drivers 1-stop, 7 drivers 2-stop, 2 drivers 3+.",
+      "champ_after": "ANT 131pts | RUS 88pts | LEC 75pts",
+      "champ_delta": "ANT leads",
+      "data_source": "jolpica_fallback",
+      "prediction": null,
+      "prediction_correct": null,
+      "agent_notes": "",
+      "tags": [
+        "ant-wins",
+        "montreal",
+        "sprint-weekend",
+        "dnf"
+      ],
+      "telemetry": {},
+      "verification": {
+        "status": "skipped",
+        "reason": "No web data available",
+        "corrections": []
+      },
+      "constructor_leader": "Mercedes 219pts",
+      "briefing": "ANT converted P2 on the grid into his third consecutive victory at Circuit Gilles Villeneuve, overtaking polesitter RUS to extend his championship lead. HAM delivered a strong drive to claim second place, while VER rounded out the podium. RUS couldn't convert pole position into a win, ultimately finishing outside the podium positions. Four retirements—HAD, COL, LAW, and GAS—shook up the field, though the race ran largely to form at the front with the top runners controlling proceedings.\n\nStrategy proved critical with a near-even split between one-stop (10 drivers) and two-stop approaches (7 drivers), plus two brave souls attempting three or more stops. ANT's pace advantage was undeniable—he took fastest lap honors with a 1:14.210 and had the speed to manage whatever strategy he chose. The multiple DNFs created opportunities through the field, but the frontrunners had enough margin to absorb any chaos. Track position and tire management separated the podium finishers from the rest in Montreal's unique stop-start rhythm.\n\nANT now holds a commanding 43-point lead over RUS with 131 points, while LEC sits third on 75—a worrying 56 points back already just five races in. Three wins on the bounce suggests ANT and his team have found a sweet spot with their package, and the momentum looks ominous for rivals. The key question heading into the next race: can anyone break ANT's winning streak, or are we watching the championship slip away before the European leg even begins? RUS needs answers after squandering pole position.",
+      "briefing_generated_at": "2026-06-04T16:48:10.967654"
+    }
+  ],
+  "predictions_log": [],
+  "confidence_adjustments": {},
+  "meta": {
+    "created": "2026-06-04T16:45:59.970437",
+    "last_updated": "2026-06-04T16:48:55.231006",
+    "version": "3.0",
+    "season": 2026
+  }
+}
