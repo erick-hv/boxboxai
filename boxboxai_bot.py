@@ -306,12 +306,308 @@ def start_news_scheduler():
 
 
 # ═════════════════════════════════════════════════════════════
-#  FEATURE: RACE WEEKEND NOTIFICATIONS
+#  TIMEZONE SYSTEM
 # ═════════════════════════════════════════════════════════════
+
+# Common timezones for F1 fans — offset from UTC in hours
+TIMEZONE_OPTIONS = {
+    "🇲🇽 Mexico City":     -6,
+    "🇺🇸 New York":        -5,
+    "🇺🇸 Chicago":         -6,
+    "🇺🇸 Los Angeles":     -8,
+    "🇧🇷 São Paulo":       -3,
+    "🇬🇧 London":           0,
+    "🇪🇸 Madrid/Barcelona": 2,
+    "🇩🇪 Germany":          2,
+    "🇮🇹 Italy":            2,
+    "🇳🇱 Netherlands":      2,
+    "🇦🇪 Dubai":            4,
+    "🇯🇵 Japan":            9,
+    "🇦🇺 Melbourne":       10,
+}
+
+# Full 2026 session schedule — all times in UTC
+# Format: (round, race_name, circuit_tz_offset, sessions)
+# sessions: list of (session_name, weekday, hour, minute)
+# weekday: 4=Friday, 5=Saturday, 6=Sunday (race day)
+SESSION_SCHEDULE_2026 = [
+    (1,  "Australian GP",    11, [
+        ("FP1",        4, 1,  30),
+        ("FP2",        4, 5,   0),
+        ("FP3",        5, 2,   0),
+        ("Qualifying", 5, 5,   0),
+        ("Race",       6, 4,   0),
+    ]),
+    (2,  "Chinese GP",       8, [
+        ("FP1",           4,  3,  30),
+        ("Sprint Quali",  4,  7,  30),
+        ("Sprint Race",   5,  3,   0),
+        ("Qualifying",    5,  7,   0),
+        ("Race",          6,  7,   0),
+    ]),
+    (3,  "Japanese GP",      9, [
+        ("FP1",        4,  2,  30),
+        ("FP2",        4,  6,   0),
+        ("FP3",        5,  2,  30),
+        ("Qualifying", 5,  6,   0),
+        ("Race",       6,  5,   0),
+    ]),
+    (4,  "Miami GP",        -5, [
+        ("FP1",           4, 18,   0),
+        ("Sprint Quali",  4, 22,   0),
+        ("Sprint Race",   5, 16,   0),
+        ("Qualifying",    5, 20,   0),
+        ("Race",          6, 20,   0),
+    ]),
+    (5,  "Canadian GP",     -5, [
+        ("FP1",        4, 17,  30),
+        ("FP2",        4, 21,   0),
+        ("FP3",        5, 16,  30),
+        ("Qualifying", 5, 20,   0),
+        ("Race",       6, 18,   0),
+    ]),
+    (6,  "Monaco GP",        2, [
+        ("FP1",        4, 11,  30),
+        ("FP2",        4, 15,   0),
+        ("FP3",        5, 11,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 13,   0),
+    ]),
+    (7,  "Spanish GP",       2, [
+        ("FP1",        4, 11,  30),
+        ("FP2",        4, 15,   0),
+        ("FP3",        5, 10,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 13,   0),
+    ]),
+    (8,  "Austrian GP",      2, [
+        ("FP1",           4, 10,  30),
+        ("Sprint Quali",  4, 14,  30),
+        ("Sprint Race",   5, 10,   0),
+        ("Qualifying",    5, 14,   0),
+        ("Race",          6, 13,   0),
+    ]),
+    (9,  "British GP",       1, [
+        ("FP1",        4, 11,  30),
+        ("FP2",        4, 15,   0),
+        ("FP3",        5, 10,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 14,   0),
+    ]),
+    (10, "Belgian GP",       2, [
+        ("FP1",        4, 11,  30),
+        ("FP2",        4, 15,   0),
+        ("FP3",        5, 10,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 13,   0),
+    ]),
+    (11, "Hungarian GP",     2, [
+        ("FP1",        4, 11,  30),
+        ("FP2",        4, 15,   0),
+        ("FP3",        5, 10,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 13,   0),
+    ]),
+    (12, "Dutch GP",         2, [
+        ("FP1",        4, 10,  30),
+        ("FP2",        4, 14,   0),
+        ("FP3",        5, 10,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 13,   0),
+    ]),
+    (13, "Italian GP",       2, [
+        ("FP1",        4, 11,  30),
+        ("FP2",        4, 15,   0),
+        ("FP3",        5, 10,  30),
+        ("Qualifying", 5, 14,   0),
+        ("Race",       6, 13,   0),
+    ]),
+    (14, "Singapore GP",     8, [
+        ("FP1",        4, 9,  30),
+        ("FP2",        4, 13,   0),
+        ("FP3",        5, 9,  30),
+        ("Qualifying", 5, 13,   0),
+        ("Race",       6, 12,   0),
+    ]),
+    (15, "Azerbaijan GP",    4, [
+        ("FP1",        4, 9,  30),
+        ("FP2",        4, 13,   0),
+        ("FP3",        5, 9,  30),
+        ("Qualifying", 5, 13,   0),
+        ("Race",       6, 11,   0),
+    ]),
+    (16, "US GP",           -6, [
+        ("FP1",           4, 18,  30),
+        ("Sprint Quali",  4, 22,  30),
+        ("Sprint Race",   5, 17,   0),
+        ("Qualifying",    5, 22,   0),
+        ("Race",          6, 20,   0),
+    ]),
+    (17, "Mexico City GP",  -6, [
+        ("FP1",        4, 19,  30),
+        ("FP2",        4, 23,   0),
+        ("FP3",        5, 18,  30),
+        ("Qualifying", 5, 22,   0),
+        ("Race",       6, 20,   0),
+    ]),
+    (18, "São Paulo GP",    -3, [
+        ("FP1",           4, 14,  30),
+        ("Sprint Quali",  4, 18,  30),
+        ("Sprint Race",   5, 14,   0),
+        ("Qualifying",    5, 18,   0),
+        ("Race",          6, 17,   0),
+    ]),
+    (19, "Las Vegas GP",    -8, [
+        ("FP1",        5,  4,  30),
+        ("FP2",        5,  8,   0),
+        ("FP3",        6,  4,  30),
+        ("Qualifying", 6,  8,   0),
+        ("Race",       6, 22,   0),
+    ]),
+    (20, "Qatar GP",         3, [
+        ("FP1",           4, 13,  30),
+        ("Sprint Quali",  4, 17,  30),
+        ("Sprint Race",   5, 13,   0),
+        ("Qualifying",    5, 17,   0),
+        ("Race",          6, 17,   0),
+    ]),
+    (21, "Abu Dhabi GP",     4, [
+        ("FP1",        4, 9,  30),
+        ("FP2",        4, 13,   0),
+        ("FP3",        5, 9,  30),
+        ("Qualifying", 5, 13,   0),
+        ("Race",       6, 13,   0),
+    ]),
+]
+
+
+def get_user_tz_offset(user_data: dict) -> int:
+    """Returns user's UTC offset in hours. Defaults to -6 (Mexico City)."""
+    return user_data.get("tz_offset", -6)
+
+
+def format_session_times(session_name: str,
+                          utc_hour: int, utc_min: int,
+                          circuit_tz: int,
+                          user_tz: int,
+                          user_tz_label: str) -> str:
+    """Formats a session time in UTC, circuit local, and user local time."""
+    def to_local(h, m, offset):
+        total = h * 60 + m + offset * 60
+        total = total % (24 * 60)
+        return total // 60, total % 60
+
+    circuit_h, circuit_m = to_local(utc_hour, utc_min, circuit_tz)
+    user_h,    user_m    = to_local(utc_hour, utc_min, user_tz)
+
+    return (
+        f"*{session_name}*\n"
+        f"  🏟 Circuit: {circuit_h:02d}:{circuit_m:02d} local\n"
+        f"  🌍 Your time: {user_h:02d}:{user_m:02d} {user_tz_label}\n"
+        f"  🕐 UTC: {utc_hour:02d}:{utc_min:02d}"
+    )
+
+
+def get_sessions_for_current_round() -> tuple | None:
+    """Returns (round_data, race_date) for the current race weekend."""
+    today = datetime.now().date()
+    for entry in SESSION_SCHEDULE_2026:
+        rnd = entry[0]
+        # Find matching round in calendar
+        for cal_rnd, name, date_str in [
+            (r, n, d) for r, n, d in [
+                (e[0], e[1], d) for e in SESSION_SCHEDULE_2026
+                for d in [next((x[2] for x in [
+                    (1,"Australian GP","2026-03-15"),
+                    (2,"Chinese GP","2026-03-22"),
+                    (3,"Japanese GP","2026-04-06"),
+                    (4,"Miami GP","2026-05-04"),
+                    (5,"Canadian GP","2026-05-24"),
+                    (6,"Monaco GP","2026-06-07"),
+                    (7,"Spanish GP","2026-06-14"),
+                    (8,"Austrian GP","2026-06-28"),
+                    (9,"British GP","2026-07-05"),
+                    (10,"Belgian GP","2026-07-19"),
+                    (11,"Hungarian GP","2026-07-26"),
+                    (12,"Dutch GP","2026-08-23"),
+                    (13,"Italian GP","2026-09-06"),
+                    (14,"Singapore GP","2026-09-20"),
+                    (15,"Azerbaijan GP","2026-09-27"),
+                    (16,"US GP","2026-10-18"),
+                    (17,"Mexico City GP","2026-10-25"),
+                    (18,"São Paulo GP","2026-11-08"),
+                    (19,"Las Vegas GP","2026-11-21"),
+                    (20,"Qatar GP","2026-11-29"),
+                    (21,"Abu Dhabi GP","2026-12-06"),
+                ] if x[0] == e[0]), None)]
+            ]
+        ]:
+            pass
+    return None
+
+
+# Simpler version — direct lookup
+RACE_DATES_2026 = {
+    1: "2026-03-15", 2: "2026-03-22", 3: "2026-04-06",
+    4: "2026-05-04", 5: "2026-05-24", 6: "2026-06-07",
+    7: "2026-06-14", 8: "2026-06-28", 9: "2026-07-05",
+    10:"2026-07-19",11: "2026-07-26",12: "2026-08-23",
+    13:"2026-09-06",14: "2026-09-20",15: "2026-09-27",
+    16:"2026-10-18",17: "2026-10-25",18: "2026-11-08",
+    19:"2026-11-21",20: "2026-11-29",21: "2026-12-06",
+}
+
+
+def get_upcoming_sessions(user_tz: int, user_tz_label: str,
+                           hours_ahead: int = 1) -> list:
+    """
+    Returns sessions starting within the next `hours_ahead` hours.
+    Used to trigger 15-min-before notifications.
+    """
+    now_utc   = datetime.utcnow()
+    upcoming  = []
+
+    for entry in SESSION_SCHEDULE_2026:
+        rnd, race_name, circuit_tz, sessions = entry
+        race_date_str = RACE_DATES_2026.get(rnd)
+        if not race_date_str:
+            continue
+
+        race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
+
+        for session_name, weekday_offset, utc_h, utc_m in sessions:
+            # Calculate actual session date
+            # weekday_offset: 4=Friday(-2), 5=Saturday(-1), 6=Sunday(0)
+            days_before = 6 - weekday_offset  # days before Sunday race day
+            session_date = race_date - timedelta(days=days_before)
+
+            session_dt = datetime(
+                session_date.year, session_date.month, session_date.day,
+                utc_h, utc_m, 0
+            )
+
+            # Check if session starts within the next `hours_ahead` hours
+            delta_minutes = (session_dt - now_utc).total_seconds() / 60
+            if 10 <= delta_minutes <= hours_ahead * 60:
+                upcoming.append({
+                    "round":       rnd,
+                    "race_name":   race_name,
+                    "session":     session_name,
+                    "session_dt":  session_dt,
+                    "circuit_tz":  circuit_tz,
+                    "minutes_away": int(delta_minutes),
+                    "time_str":    format_session_times(
+                        session_name, utc_h, utc_m,
+                        circuit_tz, user_tz, user_tz_label
+                    ),
+                })
+
+    return upcoming
+
+
 
 NOTIFICATIONS_FILE = Path(__file__).parent / "boxboxai_notifications.json"
 
-# Track which notifications have been sent to avoid duplicates
 def load_notification_state() -> dict:
     if NOTIFICATIONS_FILE.exists():
         try:
@@ -321,7 +617,10 @@ def load_notification_state() -> dict:
     return {}
 
 def save_notification_state(state: dict):
-    NOTIFICATIONS_FILE.write_text(json.dumps(state, indent=2))
+    try:
+        NOTIFICATIONS_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
 
 def get_active_user_ids(sessions: dict) -> list:
     """Returns user IDs active in the last 30 days."""
@@ -336,95 +635,104 @@ def get_active_user_ids(sessions: dict) -> list:
             active.append(uid)
     return active
 
-async def send_race_weekend_notifications(app, sessions: dict,
-                                          mem: dict):
+
+SESSION_EMOJIS = {
+    "FP1": "🔧", "FP2": "🔧", "FP3": "🔧",
+    "Qualifying": "⏱", "Sprint Quali": "⏱", "Sprint Qualifying": "⏱",
+    "Sprint Race": "🏃", "Race": "🏁",
+}
+
+SESSION_HYPE = {
+    "FP1":            "First cars on track this weekend! Watch who finds pace early 👀",
+    "FP2":            "FP2 is the most important practice — teams run race simulations 🛞",
+    "FP3":            "Final practice before qualifying — last chance to dial the car in 🔩",
+    "Qualifying":     "THIS IS IT. Qualifying defines the race. Who takes pole? 🏆",
+    "Sprint Quali":   "Sprint shootout — short, fast, brutal. Every tenth counts ⚡",
+    "Sprint Race":    "Sprint race! Full speed, no team orders, nothing to lose 🔥",
+    "Race":           "RACE DAY. Lights out and away we go! 🚦🏎",
+}
+
+
+async def send_session_notifications(app, sessions: dict):
     """
-    Sends proactive race weekend messages to all active users.
-    Friday: Practice starts — hype message
-    Saturday: Qualifying preview
-    Sunday: Race day message with prediction
+    Checks for sessions starting in the next 15 minutes
+    and sends personalized notifications to all active users with their local time.
+    Runs every 5 minutes.
     """
-    state     = load_notification_state()
-    next_race = fetch_next_race()
-    if not next_race:
-        return
-
-    race_name  = next_race.get("raceName", "Next Race")
-    race_date  = next_race.get("date", "")   # YYYY-MM-DD (Sunday)
-    round_num  = next_race.get("round", "?")
-
-    if not race_date:
-        return
-
-    try:
-        race_dt = datetime.strptime(race_date, "%Y-%m-%d")
-    except Exception:
-        return
-
-    today      = datetime.now()
-    days_to    = (race_dt.date() - today.date()).days
-    state_key  = f"r{round_num}"
-
-    # Friday = race_day - 2, Saturday = race_day - 1, Sunday = race_day
-    messages_to_send = []
-
-    if days_to == 2 and not state.get(f"{state_key}_friday"):
-        # Get weather for context
-        weather = get_weather_context(race_name, next_race)
-        msg = (
-            f"🏎 *{race_name} weekend is here!* 🏁\n\n"
-            f"Practice starts today — the fastest drivers in the world are "
-            f"hitting the track at {next_race.get('Circuit',{}).get('circuitName','')}.\n\n"
-            f"Follow along and ask me anything — strategy predictions, "
-            f"who looks fast, weather impact, whatever you want to know. "
-            f"Let's talk F1! 🔥"
-        )
-        messages_to_send.append((f"{state_key}_friday", msg))
-
-    elif days_to == 1 and not state.get(f"{state_key}_saturday"):
-        msg = (
-            f"⏱ *{race_name} — Qualifying Day!* 🚦\n\n"
-            f"Today we find out who starts from pole. "
-            f"Monaco grid position is everything — ask me "
-            f"_/winner_ for my prediction or ask who I think takes pole. 🏆"
-        )
-        messages_to_send.append((f"{state_key}_saturday", msg))
-
-    elif days_to == 0 and not state.get(f"{state_key}_sunday"):
-        msg = (
-            f"🏁 *RACE DAY — {race_name}!* 🏎\n\n"
-            f"Lights out today! Ask me anything — "
-            f"prediction, strategy breakdown, championship stakes, weather. "
-            f"Let's go racing! 🔥🏆\n\n"
-            f"_/winner_ — my race winner pick\n"
-            f"_/predict full_ — complete race analysis"
-        )
-        messages_to_send.append((f"{state_key}_sunday", msg))
-
-    if not messages_to_send:
-        return
-
+    state        = load_notification_state()
     active_users = get_active_user_ids(sessions)
     if not active_users:
         return
 
-    for state_flag, message in messages_to_send:
-        sent_count = 0
-        for uid in active_users:
-            try:
-                await app.bot.send_message(
-                    chat_id=uid,
-                    text=message,
-                    parse_mode="Markdown"
+    now_utc = datetime.utcnow()
+
+    for entry in SESSION_SCHEDULE_2026:
+        rnd, race_name, circuit_tz, session_list = entry
+        race_date_str = RACE_DATES_2026.get(rnd)
+        if not race_date_str:
+            continue
+
+        race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
+
+        for session_name, weekday_offset, utc_h, utc_m in session_list:
+            days_before  = 6 - weekday_offset
+            session_date = race_date - timedelta(days=days_before)
+            session_dt   = datetime(
+                session_date.year, session_date.month, session_date.day,
+                utc_h, utc_m, 0
+            )
+
+            # Only notify if session is 10-20 minutes away
+            delta_mins = (session_dt - now_utc).total_seconds() / 60
+            if not (10 <= delta_mins <= 20):
+                continue
+
+            # Check we haven't already sent this notification
+            notif_key = f"r{rnd}_{session_name.replace(' ','_')}"
+            if state.get(notif_key):
+                continue
+
+            # Send to each active user with their local time
+            sent = 0
+            for uid in active_users:
+                user_data      = sessions.get(uid, {})
+                user_tz_offset = get_user_tz_offset(user_data)
+                user_tz_label  = user_data.get("tz_label", "UTC-6")
+
+                # Calculate times
+                def to_local(h, m, off):
+                    total = (h * 60 + m + off * 60) % (24 * 60)
+                    return total // 60, total % 60
+
+                circ_h, circ_m = to_local(utc_h, utc_m, circuit_tz)
+                user_h, user_m = to_local(utc_h, utc_m, user_tz_offset)
+
+                emoji = SESSION_EMOJIS.get(session_name, "🏎")
+                hype  = SESSION_HYPE.get(session_name, "Session starting soon!")
+
+                msg = (
+                    f"{emoji} *{race_name} — {session_name} in ~15 min!*\n\n"
+                    f"{hype}\n\n"
+                    f"🏟 Circuit time: *{circ_h:02d}:{circ_m:02d}*\n"
+                    f"🌍 Your time: *{user_h:02d}:{user_m:02d}* ({user_tz_label})\n"
+                    f"🕐 UTC: *{utc_h:02d}:{utc_m:02d}*\n\n"
+                    f"_/predict_ for race preview • _/winner_ for my pick"
                 )
-                sent_count += 1
-                await asyncio.sleep(0.1)  # rate limit
-            except Exception:
-                pass
-        state[state_flag] = datetime.now().isoformat()
-        log.info(f"Notification {state_flag} sent to {sent_count} users")
+
+                try:
+                    await app.bot.send_message(
+                        chat_id=uid, text=msg,
+                        parse_mode="Markdown")
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    pass
+
+            state[notif_key] = now_utc.isoformat()
+            log.info(f"Session notification {notif_key} sent to {sent} users")
 
     save_notification_state(state)
+
 
 
 # ═════════════════════════════════════════════════════════════
@@ -615,20 +923,26 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
 
 async def notification_loop(app, sessions_ref: list, mem_ref: list):
     """
-    Async loop that checks every hour for:
-    - Race weekend notifications to send
-    - Weekly digest to send
+    Async loop that:
+    - Every 5 min: checks for sessions starting in ~15 min, sends notifications
+    - Every hour: sends weekly digest on Mondays
     """
     import asyncio as _asyncio
+    check_count = 0
     while True:
         try:
-            await send_race_weekend_notifications(
-                app, sessions_ref[0], mem_ref[0])
-            await send_weekly_digest(
-                app, sessions_ref[0], mem_ref[0])
+            # Every 5 minutes — session start notifications
+            await send_session_notifications(app, sessions_ref[0])
+
+            # Every hour (12 x 5min checks) — weekly digest
+            check_count += 1
+            if check_count >= 12:
+                check_count = 0
+                await send_weekly_digest(
+                    app, sessions_ref[0], mem_ref[0])
         except Exception as e:
             log.warning(f"Notification loop error: {e}")
-        await _asyncio.sleep(3600)  # check every hour
+        await _asyncio.sleep(300)  # check every 5 minutes
 
 
 # ═════════════════════════════════════════════════════════════
@@ -1857,6 +2171,7 @@ _Developed by Erick Hernandez_
 ━━━━━━━━━━━━━━━━━━━━━━
 
 /start — welcome & intro
+/timezone — 🌍 Set your timezone for notifications
 /standings — 🏆 Driver championship standings
 /constructors — 🏗 Constructor standings
 /season — 📅 Full 2026 season results
@@ -2833,13 +3148,100 @@ mem      = {}
 sessions = {}
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
+    user_id   = str(update.effective_user.id)
+    user      = update.effective_user
     allowed, rate_msg = check_rate_limit(user_id)
     if not allowed:
         await update.message.reply_text(rate_msg)
         return
+
+    # Initialize session if new user
+    if user_id not in sessions:
+        sessions[user_id] = {
+            "history":    [],
+            "first_seen": datetime.now().isoformat(),
+            "stats":      {"total_messages": 0, "favorite_topics": {},
+                           "commands_used": {}, "last_active": None},
+        }
+        save_sessions(sessions)
+
     await update.message.reply_text(
         WELCOME, parse_mode=constants.ParseMode.MARKDOWN)
+
+    # Ask for timezone if not set yet
+    if "tz_offset" not in sessions.get(user_id, {}):
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = []
+        row = []
+        for i, (label, offset) in enumerate(TIMEZONE_OPTIONS.items()):
+            row.append(InlineKeyboardButton(
+                label, callback_data=f"tz:{offset}:{label}"))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        await update.message.reply_text(
+            "🌍 *One quick thing!*\n\nWhat's your timezone? "
+            "I'll use this to show session times in your local time "
+            "when I send notifications.\n\n"
+            "_You can change this anytime with /timezone_",
+            parse_mode=constants.ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
+async def handle_timezone_callback(update: Update,
+                                    ctx: ContextTypes.DEFAULT_TYPE):
+    """Handles timezone selection from inline keyboard."""
+    query   = update.callback_query
+    user_id = str(query.from_user.id)
+
+    if not query.data.startswith("tz:"):
+        return
+
+    await query.answer()
+
+    parts  = query.data.split(":", 2)
+    offset = int(parts[1])
+    label  = parts[2] if len(parts) > 2 else "UTC"
+
+    if user_id not in sessions:
+        sessions[user_id] = {"history": [], "first_seen": datetime.now().isoformat(),
+                              "stats": {}}
+
+    sessions[user_id]["tz_offset"] = offset
+    sessions[user_id]["tz_label"]  = label
+    save_sessions(sessions)
+
+    await query.edit_message_text(
+        f"✅ Timezone set to *{label}*!\n\n"
+        f"I'll now show session times in your local time "
+        f"whenever I send race weekend notifications. 🏎",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
+
+async def cmd_timezone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Lets users update their timezone."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    keyboard = []
+    row = []
+    for i, (label, offset) in enumerate(TIMEZONE_OPTIONS.items()):
+        row.append(InlineKeyboardButton(
+            label, callback_data=f"tz:{offset}:{label}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    await update.message.reply_text(
+        "🌍 *Update your timezone*\n\nPick your location:",
+        parse_mode=constants.ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -3290,8 +3692,10 @@ def main():
            .get_updates_request(request_updates)
            .build())
 
+    from telegram.ext import CallbackQueryHandler
     app.add_handler(CommandHandler("start",          cmd_start))
     app.add_handler(CommandHandler("help",           cmd_help))
+    app.add_handler(CommandHandler("timezone",       cmd_timezone))
     app.add_handler(CommandHandler("standings",      cmd_standings))
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
     app.add_handler(CommandHandler("season",         cmd_season))
@@ -3305,6 +3709,7 @@ def main():
     app.add_handler(CommandHandler("wouldyourather", cmd_wouldyourather))
     app.add_handler(CommandHandler("news",           cmd_news))
     app.add_handler(CommandHandler("mystats",        cmd_mystats))
+    app.add_handler(CallbackQueryHandler(handle_timezone_callback, pattern="^tz:"))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(handle_error)
