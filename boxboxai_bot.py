@@ -309,22 +309,110 @@ def start_news_scheduler():
 #  TIMEZONE SYSTEM
 # ═════════════════════════════════════════════════════════════
 
-# Common timezones for F1 fans — offset from UTC in hours
-TIMEZONE_OPTIONS = {
-    "🇲🇽 Mexico City":     -6,
-    "🇺🇸 New York":        -5,
-    "🇺🇸 Chicago":         -6,
-    "🇺🇸 Los Angeles":     -8,
-    "🇧🇷 São Paulo":       -3,
-    "🇬🇧 London":           0,
-    "🇪🇸 Madrid/Barcelona": 2,
-    "🇩🇪 Germany":          2,
-    "🇮🇹 Italy":            2,
-    "🇳🇱 Netherlands":      2,
-    "🇦🇪 Dubai":            4,
-    "🇯🇵 Japan":            9,
-    "🇦🇺 Melbourne":       10,
+# Comprehensive country → UTC offset map
+COUNTRY_TIMEZONES = {
+    # Americas
+    "mexico": (-6, "🇲🇽 Mexico"),
+    "méxico": (-6, "🇲🇽 Mexico"),
+    "mexico city": (-6, "🇲🇽 Mexico"),
+    "guadalajara": (-6, "🇲🇽 Mexico"),
+    "monterrey": (-6, "🇲🇽 Mexico"),
+    "usa": (-5, "🇺🇸 USA (East)"),
+    "united states": (-5, "🇺🇸 USA (East)"),
+    "new york": (-5, "🇺🇸 USA (East)"),
+    "miami": (-5, "🇺🇸 USA (East)"),
+    "chicago": (-6, "🇺🇸 USA (Central)"),
+    "dallas": (-6, "🇺🇸 USA (Central)"),
+    "houston": (-6, "🇺🇸 USA (Central)"),
+    "denver": (-7, "🇺🇸 USA (Mountain)"),
+    "los angeles": (-8, "🇺🇸 USA (Pacific)"),
+    "california": (-8, "🇺🇸 USA (Pacific)"),
+    "seattle": (-8, "🇺🇸 USA (Pacific)"),
+    "canada": (-5, "🇨🇦 Canada (East)"),
+    "toronto": (-5, "🇨🇦 Canada (East)"),
+    "montreal": (-5, "🇨🇦 Canada (East)"),
+    "vancouver": (-8, "🇨🇦 Canada (West)"),
+    "brazil": (-3, "🇧🇷 Brazil"),
+    "brasil": (-3, "🇧🇷 Brazil"),
+    "são paulo": (-3, "🇧🇷 Brazil"),
+    "sao paulo": (-3, "🇧🇷 Brazil"),
+    "rio": (-3, "🇧🇷 Brazil"),
+    "argentina": (-3, "🇦🇷 Argentina"),
+    "buenos aires": (-3, "🇦🇷 Argentina"),
+    "colombia": (-5, "🇨🇴 Colombia"),
+    "bogota": (-5, "🇨🇴 Colombia"),
+    "chile": (-4, "🇨🇱 Chile"),
+    "peru": (-5, "🇵🇪 Peru"),
+    "venezuela": (-4, "🇻🇪 Venezuela"),
+    "ecuador": (-5, "🇪🇨 Ecuador"),
+    # Europe
+    "uk": (1, "🇬🇧 UK"),
+    "united kingdom": (1, "🇬🇧 UK"),
+    "england": (1, "🇬🇧 UK"),
+    "london": (1, "🇬🇧 UK"),
+    "ireland": (1, "🇮🇪 Ireland"),
+    "spain": (2, "🇪🇸 Spain"),
+    "españa": (2, "🇪🇸 Spain"),
+    "madrid": (2, "🇪🇸 Spain"),
+    "barcelona": (2, "🇪🇸 Spain"),
+    "france": (2, "🇫🇷 France"),
+    "paris": (2, "🇫🇷 France"),
+    "germany": (2, "🇩🇪 Germany"),
+    "deutschland": (2, "🇩🇪 Germany"),
+    "italy": (2, "🇮🇹 Italy"),
+    "italia": (2, "🇮🇹 Italy"),
+    "netherlands": (2, "🇳🇱 Netherlands"),
+    "holland": (2, "🇳🇱 Netherlands"),
+    "belgium": (2, "🇧🇪 Belgium"),
+    "switzerland": (2, "🇨🇭 Switzerland"),
+    "austria": (2, "🇦🇹 Austria"),
+    "portugal": (1, "🇵🇹 Portugal"),
+    "monaco": (2, "🇲🇨 Monaco"),
+    "sweden": (2, "🇸🇪 Sweden"),
+    "norway": (2, "🇳🇴 Norway"),
+    "denmark": (2, "🇩🇰 Denmark"),
+    "finland": (3, "🇫🇮 Finland"),
+    "poland": (2, "🇵🇱 Poland"),
+    "czech": (2, "🇨🇿 Czech Republic"),
+    "hungary": (2, "🇭🇺 Hungary"),
+    "greece": (3, "🇬🇷 Greece"),
+    "turkey": (3, "🇹🇷 Turkey"),
+    "russia": (3, "🇷🇺 Russia (Moscow)"),
+    # Middle East & Asia
+    "uae": (4, "🇦🇪 UAE"),
+    "dubai": (4, "🇦🇪 UAE"),
+    "abu dhabi": (4, "🇦🇪 UAE"),
+    "saudi": (3, "🇸🇦 Saudi Arabia"),
+    "qatar": (3, "🇶🇦 Qatar"),
+    "bahrain": (3, "🇧🇭 Bahrain"),
+    "india": (5, "🇮🇳 India"),
+    "pakistan": (5, "🇵🇰 Pakistan"),
+    "china": (8, "🇨🇳 China"),
+    "japan": (9, "🇯🇵 Japan"),
+    "south korea": (9, "🇰🇷 South Korea"),
+    "korea": (9, "🇰🇷 South Korea"),
+    "singapore": (8, "🇸🇬 Singapore"),
+    "thailand": (7, "🇹🇭 Thailand"),
+    "indonesia": (7, "🇮🇩 Indonesia"),
+    "malaysia": (8, "🇲🇾 Malaysia"),
+    "philippines": (8, "🇵🇭 Philippines"),
+    "vietnam": (7, "🇻🇳 Vietnam"),
+    # Oceania
+    "australia": (10, "🇦🇺 Australia (East)"),
+    "sydney": (10, "🇦🇺 Australia (East)"),
+    "melbourne": (10, "🇦🇺 Australia (East)"),
+    "perth": (8, "🇦🇺 Australia (West)"),
+    "new zealand": (12, "🇳🇿 New Zealand"),
+    # Africa
+    "south africa": (2, "🇿🇦 South Africa"),
+    "nigeria": (1, "🇳🇬 Nigeria"),
+    "egypt": (2, "🇪🇬 Egypt"),
+    "morocco": (1, "🇲🇦 Morocco"),
+    "kenya": (3, "🇰🇪 Kenya"),
 }
+
+# Pending timezone requests — user_id: True
+_tz_pending: dict = {}
 
 # Full 2026 session schedule — all times in UTC
 # Format: (round, race_name, circuit_tz_offset, sessions)
@@ -484,6 +572,22 @@ SESSION_SCHEDULE_2026 = [
 def get_user_tz_offset(user_data: dict) -> int:
     """Returns user's UTC offset in hours. Defaults to -6 (Mexico City)."""
     return user_data.get("tz_offset", -6)
+
+
+def lookup_country_tz(text: str) -> tuple | None:
+    """
+    Looks up a country/city in COUNTRY_TIMEZONES.
+    Returns (offset, label) or None if not found.
+    """
+    t = text.lower().strip()
+    # Exact match first
+    if t in COUNTRY_TIMEZONES:
+        return COUNTRY_TIMEZONES[t]
+    # Partial match
+    for key, val in COUNTRY_TIMEZONES.items():
+        if key in t or t in key:
+            return val
+    return None
 
 
 def format_session_times(session_name: str,
@@ -3148,8 +3252,7 @@ mem      = {}
 sessions = {}
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id   = str(update.effective_user.id)
-    user      = update.effective_user
+    user_id = str(update.effective_user.id)
     allowed, rate_msg = check_rate_limit(user_id)
     if not allowed:
         await update.message.reply_text(rate_msg)
@@ -3170,77 +3273,33 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Ask for timezone if not set yet
     if "tz_offset" not in sessions.get(user_id, {}):
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = []
-        row = []
-        for i, (label, offset) in enumerate(TIMEZONE_OPTIONS.items()):
-            row.append(InlineKeyboardButton(
-                label, callback_data=f"tz:{offset}:{label}"))
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-        if row:
-            keyboard.append(row)
-
+        _tz_pending[user_id] = True
         await update.message.reply_text(
-            "🌍 *One quick thing!*\n\nWhat's your timezone? "
-            "I'll use this to show session times in your local time "
-            "when I send notifications.\n\n"
-            "_You can change this anytime with /timezone_",
-            parse_mode=constants.ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "🌍 *One quick thing!*\n\n"
+            "In which country are you located? "
+            "Just type it and I'll set your timezone automatically "
+            "so notifications show in your local time 🕐\n\n"
+            "_Examples: Mexico, Spain, Brazil, Japan, USA..._",
+            parse_mode=constants.ParseMode.MARKDOWN
         )
 
 
 async def handle_timezone_callback(update: Update,
                                     ctx: ContextTypes.DEFAULT_TYPE):
-    """Handles timezone selection from inline keyboard."""
-    query   = update.callback_query
-    user_id = str(query.from_user.id)
-
-    if not query.data.startswith("tz:"):
-        return
-
+    """Legacy callback handler — kept for safety."""
+    query = update.callback_query
     await query.answer()
-
-    parts  = query.data.split(":", 2)
-    offset = int(parts[1])
-    label  = parts[2] if len(parts) > 2 else "UTC"
-
-    if user_id not in sessions:
-        sessions[user_id] = {"history": [], "first_seen": datetime.now().isoformat(),
-                              "stats": {}}
-
-    sessions[user_id]["tz_offset"] = offset
-    sessions[user_id]["tz_label"]  = label
-    save_sessions(sessions)
-
-    await query.edit_message_text(
-        f"✅ Timezone set to *{label}*!\n\n"
-        f"I'll now show session times in your local time "
-        f"whenever I send race weekend notifications. 🏎",
-        parse_mode=constants.ParseMode.MARKDOWN
-    )
 
 
 async def cmd_timezone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Lets users update their timezone."""
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    keyboard = []
-    row = []
-    for i, (label, offset) in enumerate(TIMEZONE_OPTIONS.items()):
-        row.append(InlineKeyboardButton(
-            label, callback_data=f"tz:{offset}:{label}"))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-
+    """Lets users update their timezone by typing their country."""
+    user_id = str(update.effective_user.id)
+    _tz_pending[user_id] = True
     await update.message.reply_text(
-        "🌍 *Update your timezone*\n\nPick your location:",
-        parse_mode=constants.ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "🌍 *Update your timezone*\n\n"
+        "In which country are you located? Just type it:\n\n"
+        "_Examples: Mexico, Spain, Brazil, Japan, Australia, UK..._",
+        parse_mode=constants.ParseMode.MARKDOWN
     )
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3589,7 +3648,37 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
         return
 
-    # ── 4. Off-topic guardrail ────────────────────────────
+    # ── 4. Timezone pending — user just typed their country ──
+    if _tz_pending.get(user_id):
+        tz_result = lookup_country_tz(text)
+        if tz_result:
+            offset, label = tz_result
+            sessions[user_id]["tz_offset"] = offset
+            sessions[user_id]["tz_label"]  = label
+            save_sessions(sessions)
+            _tz_pending.pop(user_id, None)
+            # Calculate current UTC time in their timezone as example
+            now_utc = datetime.utcnow()
+            local_h = (now_utc.hour + offset) % 24
+            await update.message.reply_text(
+                f"✅ Got it — *{label}*!\n\n"
+                f"Your current local time: *{local_h:02d}:{now_utc.minute:02d}*\n\n"
+                f"I'll show all session times in your timezone from now on. "
+                f"Let's talk F1! 🏎🇲🇽",
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+            return
+        else:
+            # Country not recognized — ask again
+            await update.message.reply_text(
+                f"🤔 I didn't recognize *{text}* as a location.\n\n"
+                f"Try typing just the country name, like:\n"
+                f"_Mexico, Spain, Brazil, Japan, USA, UK, Australia..._",
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+            return
+
+    # ── 5. Off-topic guardrail ────────────────────────────
     if is_off_topic(text):
         reply = get_off_topic_response(text)
         update_user_history(sessions, user_id, "user", text)
