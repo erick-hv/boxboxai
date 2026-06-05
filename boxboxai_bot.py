@@ -875,25 +875,114 @@ def get_practice_context(query: str, next_race: dict | None = None,
     return f"Searching for {race_name} {fp_type} results — check /news for latest updates."
 
 
+def get_session_context(query: str) -> str:
+    """
+    Universal session handler — covers ALL session types:
+    FP1, FP2, FP3, Qualifying, Sprint Qualifying, Sprint Race,
+    live or completed, current or past race weekend.
+    Uses news search — reliable regardless of API availability.
+    """
+    q = query.lower()
 
-    """
-    Checks OpenF1 for any currently active session.
-    Returns session info if something is live right now.
-    """
+    # Detect session type
+    session_type = ""
+    if any(kw in q for kw in ["sprint quali", "sprint qualifying", "sq", "clasificación sprint"]):
+        session_type = "Sprint Qualifying"
+    elif any(kw in q for kw in ["sprint race", "sprint", "carrera sprint"]):
+        session_type = "Sprint Race"
+    elif any(kw in q for kw in ["qualifying", "quali", "clasificación", "q1", "q2", "q3", "pole"]):
+        session_type = "Qualifying"
+    elif any(kw in q for kw in ["fp1", "practice 1", "libre 1", "p1"]):
+        session_type = "FP1 Free Practice 1"
+    elif any(kw in q for kw in ["fp2", "practice 2", "libre 2", "p2"]):
+        session_type = "FP2 Free Practice 2"
+    elif any(kw in q for kw in ["fp3", "practice 3", "libre 3", "p3"]):
+        session_type = "FP3 Free Practice 3"
+    elif any(kw in q for kw in ["practice", "práctica", "libre", "entreno", "entrenamiento"]):
+        session_type = "Free Practice"
+    else:
+        return ""
+
+    # Detect which race — check query for circuit names first
+    race_name = ""
+    circuit_keywords = {
+        "monaco": "Monaco Grand Prix",
+        "mónaco": "Monaco Grand Prix",
+        "barcelona": "Spanish Grand Prix",
+        "spain": "Spanish Grand Prix",
+        "españa": "Spanish Grand Prix",
+        "austria": "Austrian Grand Prix",
+        "spielberg": "Austrian Grand Prix",
+        "silverstone": "British Grand Prix",
+        "britain": "British Grand Prix",
+        "spa": "Belgian Grand Prix",
+        "belgium": "Belgian Grand Prix",
+        "budapest": "Hungarian Grand Prix",
+        "hungary": "Hungarian Grand Prix",
+        "zandvoort": "Dutch Grand Prix",
+        "monza": "Italian Grand Prix",
+        "italy": "Italian Grand Prix",
+        "baku": "Azerbaijan Grand Prix",
+        "singapore": "Singapore Grand Prix",
+        "austin": "United States Grand Prix",
+        "mexico": "Mexico City Grand Prix",
+        "são paulo": "São Paulo Grand Prix",
+        "brazil": "São Paulo Grand Prix",
+        "las vegas": "Las Vegas Grand Prix",
+        "lusail": "Qatar Grand Prix",
+        "qatar": "Qatar Grand Prix",
+        "abu dhabi": "Abu Dhabi Grand Prix",
+        "montreal": "Canadian Grand Prix",
+        "canada": "Canadian Grand Prix",
+        "suzuka": "Japanese Grand Prix",
+        "japan": "Japanese Grand Prix",
+        "shanghai": "Chinese Grand Prix",
+        "china": "Chinese Grand Prix",
+        "melbourne": "Australian Grand Prix",
+        "australia": "Australian Grand Prix",
+        "miami": "Miami Grand Prix",
+        "imola": "Emilia Romagna Grand Prix",
+        "jeddah": "Saudi Arabian Grand Prix",
+        "bahrain": "Bahrain Grand Prix",
+    }
+    for kw, name in circuit_keywords.items():
+        if kw in q:
+            race_name = name
+            break
+
+    # Fall back to current race weekend
+    if not race_name:
+        current = fetch_current_race()
+        if current:
+            race_name = current.get("raceName", "")
+
+    search_query = f"{race_name} {session_type} 2026 results"
+
+    # Search news feeds
+    news = get_news_context(search_query)
+    if news:
+        return f"{race_name} — {session_type}:\n{news}"
+
+    # DuckDuckGo fallback
     try:
-        # Get sessions happening today
-        today = datetime.now().strftime("%Y-%m-%d")
-        data  = fetch_openf1("sessions", {
-            "year":       SEASON,
-            "date_start": today,
-        })
-        if not data:
-            return None
-        # Find most recent session
-        data.sort(key=lambda x: x.get("date_start", ""), reverse=True)
-        return data[0] if data else None
+        r = requests.get("https://api.duckduckgo.com/", params={
+            "q": search_query, "format": "json", "no_html": "1"
+        }, timeout=8)
+        if r.status_code == 200:
+            data  = r.json()
+            parts = []
+            if data.get("AbstractText"):
+                parts.append(data["AbstractText"])
+            for t in data.get("RelatedTopics", [])[:3]:
+                if isinstance(t, dict) and t.get("Text"):
+                    parts.append(t["Text"])
+            if parts:
+                return f"{race_name} — {session_type}:\n{' '.join(parts)[:800]}"
     except Exception:
-        return None
+        pass
+
+    return ""
+
 
 
 def fetch_openf1(endpoint: str, params: dict) -> list:
@@ -2327,11 +2416,15 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         current_race = fetch_current_race()
         weather_ctx  = get_weather_context(user_msg, current_race)
 
-    # Practice sessions — use current race weekend
-    if any(kw in user_msg.lower() for kw in
-           ["fp1","fp2","fp3","practice","práctica","libre","entreno"]):
-        current_race = fetch_current_race()
-        practice_ctx = get_practice_context(user_msg, current_race, mem)
+    # Universal session handler — FP1/FP2/FP3/Quali/Sprint/live/past
+    session_ctx = get_session_context(user_msg)
+    if session_ctx:
+        practice_ctx = session_ctx
+    elif any(kw in user_msg.lower() for kw in
+             ["fp1","fp2","fp3","practice","práctica","libre","entreno",
+              "qualifying","quali","clasificación","sprint","q1","q2","q3"]):
+        if not news_ctx:
+            news_ctx = get_news_context(user_msg)
 
     # Historical comparisons
     historical_ctx = get_historical_context(user_msg)
