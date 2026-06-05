@@ -1495,16 +1495,27 @@ def is_off_topic(text: str) -> bool:
     return False
 
 
-def get_off_topic_response(text: str) -> str:
-    """Returns a friendly off-topic redirect in the right language."""
-    import random
+def _detect_language(text: str) -> str:
+    """Returns 'es' for Spanish, 'en' for English based on content."""
+    spanish_indicators = [
+        "qué", "que ", "cómo", "como ", "quién", "quien", "por favor",
+        "puedes", "puede", "tienes", "tiene", "eres", "hacer", "haz",
+        "dime", "dame", "estás", "esta ", "este ", "ese ", "esa ",
+        "ignora", "actúa", "actua", "revela", "instrucción", "instruccion",
+        "sin restricciones", "olvida", "nueva ", "nuevo ",
+        "tarea", "escuela", "ayuda", "necesito", "quiero", "soy ",
+        "del ", "las ", "los ", "una ", "unos ", "para ", "pero ",
+    ]
     t = text.lower()
-    is_spanish = any(w in t for w in [
-        "qué", "cómo", "quién", "por favor", "puedes",
-        "me", "mi", "tu", "es", "de", "la", "el", "en",
-        "tarea", "escuela", "escríbeme", "ayuda",
-    ])
-    responses = OFF_TOPIC_RESPONSES_ES if is_spanish else OFF_TOPIC_RESPONSES_EN
+    score = sum(1 for w in spanish_indicators if w in t)
+    return "es" if score >= 1 else "en"
+
+
+def get_off_topic_response(text: str) -> str:
+    """Returns off-topic redirect in the same language as the message."""
+    import random
+    lang = _detect_language(text)
+    responses = OFF_TOPIC_RESPONSES_ES if lang == "es" else OFF_TOPIC_RESPONSES_EN
     return random.choice(responses)
 
 
@@ -1628,12 +1639,10 @@ def check_injection(text: str) -> bool:
 
 
 def get_injection_response(text: str) -> str:
-    """Returns appropriate injection attempt response."""
+    """Returns injection response in the same language as the attempt."""
     import random
-    t = text.lower()
-    is_spanish = any(w in t for w in ["ignora", "actúa", "revela", "instrucción",
-                                       "sin restricciones", "modo"])
-    responses = INJECTION_RESPONSES_ES if is_spanish else INJECTION_RESPONSES_EN
+    lang = _detect_language(text)
+    responses = INJECTION_RESPONSES_ES if lang == "es" else INJECTION_RESPONSES_EN
     return random.choice(responses)
 
 
