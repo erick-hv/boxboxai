@@ -702,55 +702,80 @@ def build_user_profile(user_data: dict) -> str:
 def fetch_practice_results(round_num: int, season: int = SEASON) -> str:
     """
     Fetches FP1/FP2/FP3 results from OpenF1 for a given round.
-    Returns formatted string of practice session results.
+    Uses meeting_key matching for reliability.
     """
+    # Step 1: get the meeting_key for this round via meetings endpoint
+    try:
+        meetings = fetch_openf1("meetings", {"year": season})
+        if not meetings:
+            return ""
+
+        # Sort meetings by date and pick by round index
+        sorted_meetings = sorted(meetings, key=lambda x: x.get("date_start",""))
+        if round_num < 1 or round_num > len(sorted_meetings):
+            return ""
+
+        meeting = sorted_meetings[round_num - 1]
+        meeting_key = meeting.get("meeting_key")
+        circuit     = meeting.get("circuit_short_name", "")
+        if not meeting_key:
+            return ""
+
+    except Exception as e:
+        log.warning(f"Meeting lookup failed: {e}")
+        return ""
+
+    # Step 2: get all sessions for this meeting
+    try:
+        sessions_data = fetch_openf1("sessions", {"meeting_key": meeting_key})
+        if not sessions_data:
+            return ""
+    except Exception as e:
+        log.warning(f"Sessions lookup failed: {e}")
+        return ""
+
     session_types = ["Practice 1", "Practice 2", "Practice 3"]
-    results = []
+    results       = []
+    now           = datetime.utcnow()
 
     for session_name in session_types:
+        matching = [s for s in sessions_data
+                    if s.get("session_name") == session_name]
+        if not matching:
+            continue
+
+        session = matching[0]
+        sk      = session.get("session_key")
+        if not sk:
+            continue
+
+        # Check session has ended (with 30min buffer for data to appear)
+        end_date = session.get("date_end", "")
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace("Z", ""))
+                if end_dt > now:
+                    # Session is still live — include with note
+                    results.append(f"*{session_name}:* 🔴 Currently in progress")
+                    continue
+            except Exception:
+                pass
+
         try:
-            # Get session key
-            sessions_data = fetch_openf1("sessions", {
-                "year":         season,
-                "session_name": session_name,
-            })
-            if not sessions_data:
-                continue
-
-            # Find the right round by sorting and indexing
-            sorted_sessions = sorted(
-                [s for s in sessions_data if s.get("session_name") == session_name],
-                key=lambda x: x.get("date_start", "")
-            )
-            if round_num > len(sorted_sessions):
-                continue
-
-            sk = sorted_sessions[round_num - 1].get("session_key")
-            if not sk:
-                continue
-
-            # Check session has ended
-            end_date = sorted_sessions[round_num - 1].get("date_end", "")
-            if end_date:
-                try:
-                    end_dt = datetime.fromisoformat(end_date.replace("Z", ""))
-                    if end_dt > datetime.utcnow():
-                        continue  # session not finished yet
-                except Exception:
-                    pass
-
-            # Get fastest laps per driver
-            laps = fetch_openf1("laps", {"session_key": sk})
-            if not laps:
-                continue
-
-            # Get drivers for this session
+            # Get laps and drivers
+            laps         = fetch_openf1("laps", {"session_key": sk})
             drivers_data = fetch_openf1("drivers", {"session_key": sk})
-            num_to_name  = {}
+
+            num_to_name = {}
             for d in (drivers_data or []):
                 num  = str(d.get("driver_number", ""))
                 code = d.get("name_acronym", num)
-                num_to_name[num] = code
+                if num and code:
+                    num_to_name[num] = code
+
+            if not laps:
+                results.append(f"*{session_name}:* No lap data yet")
+                continue
 
             # Best lap per driver
             best = {}
@@ -761,40 +786,33 @@ def fetch_practice_results(round_num: int, season: int = SEASON) -> str:
                     continue
                 try:
                     dur_f = float(dur)
-                    if dur_f > 0 and (num not in best or dur_f < best[num]):
+                    if dur_f > 20 and (num not in best or dur_f < best[num]):
                         best[num] = dur_f
                 except Exception:
                     pass
 
             if not best:
+                results.append(f"*{session_name}:* No valid lap times yet")
                 continue
 
-            # Sort by fastest lap
             sorted_best = sorted(best.items(), key=lambda x: x[1])[:10]
-
-            lines = [f"*{session_name}:*"]
+            lines       = [f"*{session_name} — {circuit}:*"]
             for i, (num, lap_time) in enumerate(sorted_best, 1):
-                code   = num_to_name.get(num, num)
-                mins   = int(lap_time // 60)
-                secs   = lap_time % 60
-                t_str  = f"{mins}:{secs:06.3f}"
-                gap    = ""
-                if i > 1:
-                    delta = lap_time - sorted_best[0][1]
-                    gap   = f" (+{delta:.3f}s)"
+                code  = num_to_name.get(num, f"#{num}")
+                mins  = int(lap_time // 60)
+                secs  = lap_time % 60
+                t_str = f"{mins}:{secs:06.3f}"
+                gap   = f" (+{lap_time - sorted_best[0][1]:.3f}s)" if i > 1 else " 🔥"
                 lines.append(f"P{i}: *{code}* {t_str}{gap}")
 
             results.append("\n".join(lines))
             time.sleep(0.3)
 
         except Exception as e:
-            log.warning(f"FP fetch failed for {session_name}: {e}")
+            log.warning(f"FP data fetch failed for {session_name}: {e}")
             continue
 
-    if not results:
-        return ""
-
-    return "\n\n".join(results)
+    return "\n\n".join(results) if results else ""
 
 
 def get_practice_context(query: str, next_race: dict | None = None,
@@ -1872,34 +1890,65 @@ def fetch_standings() -> tuple[list, list]:
 
 def fetch_current_race() -> dict | None:
     """
-    Gets the current race weekend — the race happening right now or
-    within the current week. Falls back to next race if none active.
-    Jolpica /current returns the ongoing round during race weekends.
+    Gets the current race weekend.
+    Checks today's date against known race dates first (reliable),
+    then falls back to API.
     """
-    # Try /current endpoint first — returns active race weekend
-    data = safe_get(f"{JOLPICA}/{SEASON}/current.json")
-    if data:
-        races = data.get("MRData",{}).get("RaceTable",{}).get("Races",[])
-        if races:
-            return races[-1]  # most recent
-
-    # Fall back to checking if today is within 4 days of a race
     today = datetime.now().date()
-    data2 = safe_get(f"{JOLPICA}/{SEASON}.json", {"limit": 30})
-    if data2:
-        races = data2.get("MRData",{}).get("RaceTable",{}).get("Races",[])
-        for race in races:
-            try:
-                race_date = datetime.strptime(race["date"], "%Y-%m-%d").date()
-                delta = (race_date - today).days
-                if -3 <= delta <= 0:   # race happened 0-3 days ago = this weekend
-                    return race
-                if 0 < delta <= 4:     # race in next 4 days = coming up
-                    return race
-            except Exception:
-                continue
 
-    return fetch_next_race()
+    # Hardcoded 2026 race dates — reliable fallback when APIs fail
+    RACE_CALENDAR_2026 = [
+        (1,  "Australian Grand Prix",     "2026-03-15"),
+        (2,  "Chinese Grand Prix",        "2026-03-22"),
+        (3,  "Japanese Grand Prix",       "2026-04-06"),
+        (4,  "Miami Grand Prix",          "2026-05-04"),
+        (5,  "Canadian Grand Prix",       "2026-05-24"),
+        (6,  "Monaco Grand Prix",         "2026-06-07"),
+        (7,  "Spanish Grand Prix",        "2026-06-14"),
+        (8,  "Austrian Grand Prix",       "2026-06-28"),
+        (9,  "British Grand Prix",        "2026-07-05"),
+        (10, "Belgian Grand Prix",        "2026-07-19"),
+        (11, "Hungarian Grand Prix",      "2026-07-26"),
+        (12, "Dutch Grand Prix",          "2026-08-23"),
+        (13, "Italian Grand Prix",        "2026-09-06"),
+        (14, "Spanish Grand Prix",        "2026-09-13"),
+        (15, "Singapore Grand Prix",      "2026-09-20"),
+        (16, "Azerbaijan Grand Prix",     "2026-09-27"),
+        (17, "United States Grand Prix",  "2026-10-18"),
+        (18, "Mexico City Grand Prix",    "2026-10-25"),
+        (19, "São Paulo Grand Prix",      "2026-11-08"),
+        (20, "Las Vegas Grand Prix",      "2026-11-21"),
+        (21, "Qatar Grand Prix",          "2026-11-29"),
+        (22, "Abu Dhabi Grand Prix",      "2026-12-06"),
+    ]
+
+    for rnd, name, date_str in RACE_CALENDAR_2026:
+        try:
+            race_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            delta = (race_date - today).days
+            if -3 <= delta <= 1:  # within race weekend window
+                return {
+                    "round":    str(rnd),
+                    "raceName": name,
+                    "date":     date_str,
+                    "Circuit":  {"circuitName": name.replace(" Grand Prix",""),
+                                 "Location":    {"locality": name.replace(" Grand Prix",""),
+                                                 "country": ""}},
+                }
+        except Exception:
+            continue
+
+    # Fall back to API
+    try:
+        data = safe_get(f"{JOLPICA}/{SEASON}/next.json")
+        if data:
+            races = data.get("MRData",{}).get("RaceTable",{}).get("Races",[])
+            if races:
+                return races[0]
+    except Exception:
+        pass
+
+    return None
 
 
 def fetch_next_race() -> dict | None:
