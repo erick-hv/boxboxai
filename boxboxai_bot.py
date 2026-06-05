@@ -70,6 +70,9 @@ TG_MAX_CHARS  = 4096
 
 # ── The Race news feed ────────────────────────────────────────
 THE_RACE_RSS      = "https://the-race.com/feed/"
+AUTOSPORT_RSS     = "https://www.autosport.com/rss/feed/f1"
+RACEFANS_RSS      = "https://www.racefans.net/feed/"
+NEWS_FEEDS        = [THE_RACE_RSS, AUTOSPORT_RSS, RACEFANS_RSS]
 THE_RACE_SEARCH   = "https://the-race.com/?s="
 NEWS_CACHE_FILE   = Path(__file__).parent / "boxboxai_news_cache.json"
 NEWS_REFRESH_MINS = 30   # refresh RSS every 30 minutes
@@ -84,32 +87,52 @@ _news_lock       = threading.Lock()
 
 
 def _fetch_rss() -> list:
-    """Fetches and parses The Race RSS feed. Returns list of articles."""
-    try:
-        r = requests.get(THE_RACE_RSS, timeout=10,
-                         headers={"User-Agent": "BoxBoxAI/1.0"})
-        if r.status_code != 200:
-            return []
-        root = ET.fromstring(r.text)
-        articles = []
-        for item in root.findall(".//item")[:20]:
-            title   = item.findtext("title", "").strip()
-            link    = item.findtext("link",  "").strip()
-            pubdate = item.findtext("pubDate", "").strip()
-            # Get description — strip HTML tags
-            desc = item.findtext("description", "")
-            desc = re.sub(r"<[^>]+>", "", desc).strip()[:300]
-            if title:
-                articles.append({
-                    "title":   title,
-                    "summary": desc,
-                    "url":     link,
-                    "date":    pubdate,
-                })
-        return articles
-    except Exception as e:
-        log.warning(f"RSS fetch failed: {e}")
-        return []
+    """
+    Fetches and parses F1 news from The Race, Autosport, and RaceFans.
+    Returns deduplicated list of articles sorted by date.
+    """
+    all_articles = []
+    seen_titles  = set()
+
+    for feed_url in NEWS_FEEDS:
+        try:
+            r = requests.get(feed_url, timeout=10,
+                             headers={"User-Agent": "BoxBoxAI/1.0"})
+            if r.status_code != 200:
+                continue
+            root = ET.fromstring(r.text)
+            for item in root.findall(".//item")[:15]:
+                title   = item.findtext("title", "").strip()
+                link    = item.findtext("link",  "").strip()
+                pubdate = item.findtext("pubDate", "").strip()
+                desc    = item.findtext("description", "")
+                desc    = re.sub(r"<[^>]+>", "", desc).strip()[:300]
+
+                # Deduplicate by title similarity
+                title_key = re.sub(r"[^a-z0-9]", "", title.lower())[:40]
+                if title and title_key not in seen_titles:
+                    seen_titles.add(title_key)
+                    all_articles.append({
+                        "title":   title,
+                        "summary": desc,
+                        "url":     link,
+                        "date":    pubdate,
+                        "source":  feed_url.split("/")[2].replace("www.",""),
+                    })
+        except Exception as e:
+            log.warning(f"RSS fetch failed for {feed_url}: {e}")
+            continue
+
+    # Sort by date descending (most recent first)
+    def parse_date(a):
+        try:
+            from email.utils import parsedate_to_datetime
+            return parsedate_to_datetime(a["date"]).timestamp()
+        except Exception:
+            return 0
+
+    all_articles.sort(key=parse_date, reverse=True)
+    return all_articles[:30]
 
 
 def _fetch_article_text(url: str, max_chars: int = 2000) -> str:
@@ -991,65 +1014,305 @@ def get_prediction_accuracy() -> str:
 # ═════════════════════════════════════════════════════════════
 
 CIRCUIT_GUIDES = {
-    "monaco": """
-Circuit de Monaco — The most famous street circuit.
-- 78 laps, 3.337km, 19 corners
-- Overtaking difficulty: 9.5/10 — almost impossible once positions set
-- Qualifying is EVERYTHING — pole wins ~50% of the time, P1-P3 win ~90%
-- Key corners: Sainte Devote (T1 crash magnet), Massenet, Casino Square,
-  Mirabeau, Grand Hotel Hairpin (tightest corner in F1), Tunnel (blind exit),
-  Nouvelle Chicane, Tabac, Swimming Pool complex, Rascasse, Anthony Noghes
-- Strategy: almost always 1-stop, tyres don't degrade much but safety car
-  bunches the field — timing your pit stop around SC is critical
-- Historical stat: winner has started P1 or P2 in 80%+ of modern era races
-- Biggest danger: barriers everywhere, any mistake ends your race
-- Checo's home (spiritually) — he's won here multiple times
+    "melbourne": """
+Albert Park, Australia — Season opener, semi-street circuit
+- 58 laps, 5.278km, 16 corners
+- Medium downforce, park circuit through Albert Park lake
+- Turn 1 and 3 are big overtaking spots, Turn 9/10 chicane crucial
+- Safety car common at Turn 1 on lap 1 — always drama on opening lap
+- Tyres: medium degradation, usually 1-stop but 2-stop possible in heat
+- Weather: Melbourne autumn, can be changeable, occasional rain
+- Strategy: undercut works well here — pit early if you have pace
 """,
-    "silverstone": """
-Circuit: Silverstone, UK — High speed temple
-- 52 laps, 5.891km, 18 corners
-- Fast, sweeping corners — Copse, Maggotts, Becketts, Chapel are iconic
-- Very hard on rear tyres — 2-stop strategy common in hot conditions
-- Weather: British weather means anything can happen
-- Overtaking: DRS on Hangar Straight and Wellington Straight — decent action
-- Wing level: medium-low downforce
-""",
-    "monza": """
-Circuit: Monza, Italy — Temple of Speed
-- 53 laps, 5.793km
-- Lowest downforce track of the season — drag reduction everything
-- Power unit circuit — Mercedes/Ferrari power advantage matters here
-- Main straight + Curva Grande + Lesmo 1&2 + Ascari + Parabolica
-- Slipstreaming huge — qualifying can produce surprise results
-- Tyre wear low — usually 1-stop
-- Tifosi (Ferrari fans) make the atmosphere electric
-""",
-    "spa": """
-Circuit: Spa-Francorchamps, Belgium — Greatest circuit on the calendar
-- 44 laps, 7.004km — longest circuit on the calendar
-- Eau Rouge/Raidillon — most iconic corner sequence in F1
-- Weather: Spa has its own microclimate — can be wet sector 1, dry sector 3
-- High downforce needed — lots of medium/high speed corners
-- Pouhon, Blanchimont, Bus Stop chicane
-- Overtaking: Kemmel Straight + DRS after Raidillon — great racing
+    "shanghai": """
+Shanghai International Circuit, China
+- 56 laps, 5.451km, 16 corners
+- Long back straight with hairpin — best DRS/overtaking of the season
+- Sector 1: sweeping high-speed esses, very demanding on front tyres
+- Sector 3: long Turn 16 leads onto pit straight — tyre stress
+- Tyres: high deg, especially rear. 2-stop common strategy
+- Sprint weekend in 2026
+- Strategy: the hairpin makes undercuts very effective
+- Key battle zone: Turn 14 hairpin — heavy braking, lots of passes
 """,
     "suzuka": """
-Circuit: Suzuka, Japan — Figure-8 layout, technical masterpiece
-- 53 laps, 5.807km
-- Figure-8 layout with overpass — unique in F1
-- S-curves in sector 1 are defining — ultra-high speed commitment required
-- 130R corner — one of fastest in F1
-- Spoon curve, Degner curves, Casino Triangle
-- Medium-high downforce, hard on rear tyres
-- Night race vibes — passionate Japanese crowd
+Suzuka Circuit, Japan — Figure-8 layout, technical masterpiece
+- 53 laps, 5.807km, 18 corners
+- Sector 1: S-curves — ultra-high-speed commitment, terrifying and beautiful
+- 130R — one of fastest corners in F1, flat for top cars
+- Spoon Curve: double apex, key for sector 3 exit speed
+- Degner 1&2: blind exit, crucial for sector time
+- Casino Triangle: tricky chicane, easy to run wide
+- Overtaking: DRS on main straight, Turn 1 works but difficult
+- Tyres: medium-high deg on rears through S-curves
+- Weather: Japanese autumn, can be wet — the 2022 rain race happened here
 """,
-    "melbourne": """
-Circuit: Albert Park, Australia — Season opener
-- 58 laps, 5.278km, 16 corners
-- Semi-street circuit through public park
-- Medium downforce, decent overtaking on long straight
-- Turn 1 always drama-prone on lap 1
-- Weather: Melbourne autumn — can be changeable
+    "bahrain": """
+Bahrain International Circuit, Sakhir — Night race
+- 57 laps, 5.412km, 15 corners
+- Very abrasive surface — one of hardest on tyres all season
+- Turns 1-4 complex: key overtaking zone, cars go side by side
+- Turn 10 hairpin: best overtaking spot, long run to braking zone
+- Turn 14-15 chicane: DRS activation — second big pass opportunity
+- Tyres: very high degradation. 2-stop almost mandatory. Rear limited
+- Atmosphere: incredible under floodlights in the desert
+- Strategy: pit window crucial, undercut is king at Turn 1
+""",
+    "jeddah": """
+Jeddah Corniche Circuit, Saudi Arabia — Night street circuit
+- 50 laps, 6.174km — one of longest circuits
+- Fastest street circuit in F1. Terrifyingly quick walls everywhere
+- 27 corners, most taken flat or near-flat at 200-300 km/h
+- Very low downforce setup — all about top speed
+- Sector 2: blind chicanes, near-zero margin for error
+- Overtaking: mainly Turn 1 and DRS zones — limited due to speed
+- Safety car almost certain — walls catch everything
+- Tyres: low deg due to smooth surface despite the speed
+- Strategy: typically 1-stop, SC window timing is critical
+""",
+    "miami": """
+Miami International Autodrome, USA — Sprint weekend
+- 57 laps, 5.412km, 19 corners
+- Street-style circuit around Hard Rock Stadium
+- Turns 11-16: technical middle sector, very tight, safety car zone
+- Main straight DRS: biggest passing zone
+- Turn 1 braking: overtaking possible but risky
+- Tyres: medium degradation, 1-stop viable but 2-stop faster
+- Sprint weekend in 2026
+- Atmosphere: American F1 party, big crowd energy
+- Strategy: track position very important, undercut works here
+""",
+    "imola": """
+Autodromo Enzo e Dino Ferrari, Imola, Italy
+- 63 laps, 4.909km, 19 corners
+- Very old school, narrow circuit — extremely limited overtaking
+- Tamburello chicane: high-speed approach, site of Senna's 1994 accident
+- Variante Alta: crucial chicane for sector 2 time
+- Rivazza corners: double left-hander, key for lap time
+- Raidillon-style Piratella: fast left-hander, respect required
+- Overtaking: virtually impossible outside DRS zone at Turn 2
+- Tyres: medium deg, typically 1-stop
+- Strategy: qualifying position is almost everything here
+""",
+    "monaco": """
+Circuit de Monaco — The most famous street circuit
+- 78 laps, 3.337km, 19 corners
+- Overtaking difficulty: 9.5/10 — almost impossible once positions set
+- Qualifying is EVERYTHING — pole wins ~50% of the time
+- Sainte Devote (T1): crash magnet on lap 1, tight right-hander
+- Massenet-Casino: fast left into Casino Square right, commitment needed
+- Grand Hotel Hairpin: tightest corner in F1, 15 km/h
+- Tunnel: unique in F1, blind exit onto chicane
+- Nouvelle Chicane: traditional collision point, marshal's nightmare
+- Tabac: fast left, walls either side, no run-off
+- Swimming Pool complex: S-section, easy to clip the wall
+- Rascasse: final hairpin, notorious for time-wasting in qualifying
+- Tyres: low deg due to low speeds, usually 1-stop
+- Strategy: SC timing is everything — all pit stops happen under SC
+- Checo is the God of Monaco — 2x wins, perfect car placement on walls
+""",
+    "montreal": """
+Circuit Gilles Villeneuve, Canada
+- 70 laps, 4.361km, 14 corners
+- Semi-street circuit on an island in the St. Lawrence River
+- Wall of Champions (T13-14): claims world champions every year
+- Casino Hairpin: best overtaking spot, very late braking zone
+- Long back straight with chicane: high-speed braking, DRS zone
+- Pit lane exit: merges aggressively, causes incidents
+- Tyres: medium deg. Mixed 1 and 2-stop strategies common
+- Weather: can be anything in Canadian June — wet races common
+- Safety car probability: very high due to Wall of Champions
+- Strategy: SC timing critical, fuel-saving important here
+""",
+    "barcelona": """
+Circuit de Barcelona-Catalunya, Spain
+- 66 laps, 4.655km, 16 corners
+- Development circuit — extensively used for testing, teams know it cold
+- Turn 1-2: classic overtaking point, heavy braking from high speed
+- Turn 3 Renault: long high-speed right-hander, downforce critical
+- Turn 9: hardest corner — long, decreasing radius, rear stressed
+- DRS zones: main straight and back straight
+- Tyres: very high rear degradation. 2-stop almost always faster
+- Strategy: tyre management defines the race. Undercut very effective
+- Dirty air problem: very hard to follow through high-speed corners
+""",
+    "spielberg": """
+Red Bull Ring, Spielberg, Austria
+- 71 laps, 4.318km — shortest lap on calendar
+- Very short lap but incredibly fast, set in beautiful mountains
+- Turns 3-4: massive uphill braking zone — wheel-to-wheel frequent
+- Turn 7-8: final two corners before long straight — DRS key
+- Very high downforce circuit despite short lap
+- Tyres: high stress on short lap, lots of laps = high total deg
+- Austrian Grand Prix atmosphere: Orange army (Max fans) everywhere
+- Weather: Styrian mountains bring rain frequently
+- Overtaking: Turn 3 and Turn 4 are both viable — good racing
+""",
+    "silverstone": """
+Silverstone, UK — High-speed temple
+- 52 laps, 5.891km, 18 corners
+- Copse: flat-out at 290+ km/h for top cars. THE commitment corner
+- Maggotts-Becketts-Chapel: iconic S-sequence, ultra-high speed
+- Hangar Straight + Stowe: biggest overtaking opportunity
+- Vale-Club complex: technical final sector
+- Wellington Straight: second DRS zone, good passing
+- Tyres: very hard on rear tyres through high-speed corners
+- British fans: incredible atmosphere, biggest F1 crowd of the year
+- Weather: British summer = anything. Rain very common
+- Strategy: 2-stop almost mandatory. Tyre deg very high
+""",
+    "budapest": """
+Hungaroring, Budapest, Hungary
+- 70 laps, 4.381km, 14 corners
+- Monaco without the walls — extremely difficult to overtake
+- Very twisty, high-downforce circuit, 0.95 overtaking difficulty
+- Turn 1-2 complex: only real overtaking zone, very late braking
+- Turn 4: hairpin entry, can catch someone napping
+- Turns 11-12: technical complex before long straight
+- Tyres: medium deg due to low speeds but very long lap
+- Strategy: qualifying position dominates. Overcut possible due to long pit lane
+- Atmosphere: boiling hot European summer, always 35°C+
+""",
+    "spa": """
+Circuit de Spa-Francorchamps, Belgium — Greatest circuit on the calendar
+- 44 laps, 7.004km — longest circuit on calendar
+- Eau Rouge/Raidillon: most iconic sequence in F1. Terrifying uphill flat-out
+- Pouhon: double-apex high-speed left, one of best corners in racing
+- Blanchimont: 300 km/h left before Bus Stop chicane
+- Kemmel Straight: longest DRS zone, massive overtaking opportunity
+- Bus Stop chicane: final complex, under/overcut zone
+- Weather: Spa has own microclimate — can be wet sector 1, dry sector 3
+- Tyres: high deg on long circuit. 2-stop typically
+- Atmosphere: forest setting, camping fans, legendary vibe
+- History: Belgian GP has produced some of the greatest F1 moments
+""",
+    "zandvoort": """
+Circuit Zandvoort, Netherlands — Seaside banked circuit
+- 72 laps, 4.259km, 14 corners
+- Banked final corner (Arie Luyendyk): car sticks to wall through banking
+- Hugkenheim: banked second-to-last corner, unique sensation for drivers
+- Turn 3 chicane: main overtaking zone
+- Very narrow, difficult to follow — limited passing opportunities
+- Tyres: medium deg. 2-stop typically used
+- Orange army (Dutch fans): incredible atmosphere, sea of orange
+- Dune setting: sand can get blown onto circuit, grip changes
+- Strategy: VSC/SC very common — narrow track = incidents
+""",
+    "monza": """
+Autodromo Nazionale Monza, Italy — Temple of Speed
+- 53 laps, 5.793km — fastest average speed of the season
+- Lowest downforce setup of the year — teams run near-zero wing
+- Rettifilo straight: 350+ km/h before Turn 1 braking
+- Curve Grande: fast right taken flat, slight compression
+- Lesmo 1&2: right-handers into the forest, tricky
+- Ascari chicane: crucial complex, get it wrong and lose lots
+- Parabolica (Curva Biassono): long sweeping final corner, 270° arc
+- Slipstreaming huge — qualifying can produce amazing battles
+- Tyres: low deg despite high speeds — smooth surface
+- Strategy: 1-stop almost always. DRS dominant here
+- Tifosi (Ferrari fans): incredible passion, orange smoke and flags everywhere
+""",
+    "baku": """
+Baku City Circuit, Azerbaijan — Street circuit chaos
+- 51 laps, 6.003km
+- Second longest straight in F1 — 2.2km along the Caspian seafront
+- Castle section: narrow medieval streets, 7-8 metres wide at tightest
+- Turn 8: notorious blind entry, claimed many victims
+- Turn 15-16: complex before long straight, crucial for lap time
+- Overtaking: lots of it. Long straight + DRS = massive speed differential
+- Tyres: low deg on smooth streets, 1-stop typical
+- Safety car: virtually guaranteed every year. Chaos track
+- Strategy: SC window management critical — timing the VSC/SC pit
+- Famous for: bizarre results, random retirements, late drama
+""",
+    "singapore": """
+Marina Bay Street Circuit, Singapore — Night race in the city
+- 62 laps, 4.940km
+- Hottest race of the year — 35°C with 80%+ humidity
+- Very technical, low-speed street circuit
+- Anderson Bridge section: historic race track feeling
+- Esplanade Drive: wall of fame claimed many front wings
+- Turn 18-22: complex chicanes, high SC probability
+- Overtaking: extremely difficult. Qualifying crucial
+- Tyres: low deg due to low speeds. 1-stop standard
+- Strategy: SC almost certain — timing everything
+- Atmosphere: stunning night backdrop of Marina Bay skyline
+""",
+    "austin": """
+Circuit of the Americas, Texas, USA
+- 56 laps, 5.513km, 20 corners
+- Turn 1: uphill, blind apex approach, best mass passing spot
+- Sectors 1 and 2: flowing high-speed corners inspired by classic circuits
+- Turns 12-13: inspired by Maggotts-Becketts, high-speed esses
+- Back straight: DRS zone into Turn 12 hairpin
+- Tyres: hard on rear through high-speed complex
+- 2-stop usually faster but 1-stop possible
+- Sprint weekend some years
+- American crowd: huge fan base now, COTA has become legendary venue
+""",
+    "mexico city": """
+Autodromo Hermanos Rodriguez, Mexico City
+- 71 laps, 4.304km, 17 corners
+- Altitude: 2,285m above sea level — engines produce ~20% less power
+- Power units stressed significantly — cooling critical
+- Peraltada: famous banked final corner, tight stadium section after
+- Foro Sol stadium section: incredible atmosphere, tight and twisty
+- Main straight: DRS helps but altitude reduces effect
+- Tyres: medium deg. 1-stop usually optimal
+- Strategy: unique altitude effect means teams test things here
+- Crowd: Mexican fans loudest of the year — Checo home race atmosphere
+- Pit lane: very long, overcut strategy interesting
+""",
+    "são paulo": """
+Autodromo Jose Carlos Pace, Interlagos, Brazil
+- 71 laps, 4.309km, 15 corners
+- One of greatest circuits — anti-clockwise (unusual), very old school
+- Senna S: iconic double right-hander at turn 1-2, beautiful and dangerous
+- Descida do Lago: blind downhill entry into hairpin
+- Curva do Sol: sweeping right in sector 2
+- Arquibancadas: amphitheatre feel, fans incredibly close to track
+- Weather: tropical, rain almost guaranteed at some point in race week
+- Overtaking: Turns 1 and 4 both viable, very exciting racing
+- Tyres: high degradation, often 2-stop
+- Sprint weekend some years
+- Atmosphere: one of the absolute best of the year
+""",
+    "las vegas": """
+Las Vegas Strip Circuit, USA — Night race on famous Strip
+- 50 laps, 6.201km — one of longest circuits
+- The Strip straight: 1.9km flat-out alongside the casinos
+- Very high speed circuit — second fastest average after Monza
+- Low downforce setup needed
+- Thomas and Mack section: technical stadium complex
+- Tyres: very low deg on smooth strip tarmac
+- Strategy: typically 1-stop on low-deg surface
+- Weather: November desert cold — can be surprisingly cold at night
+- Atmosphere: unique spectacle, gambling capital of world as backdrop
+- New to calendar: still finding its identity as a racing venue
+""",
+    "lusail": """
+Lusail International Circuit, Qatar — Night race
+- 57 laps, 5.380km, 16 corners
+- Very fast, flowing circuit — high-speed sweepers throughout
+- Turns 1-6: long high-speed complex, committed driving required
+- Back section: more technical, slower corners for contrast
+- DRS zone: main straight into Turn 1 — decent overtaking
+- Tyres: very high deg — blistering issues historically
+- 2-stop almost mandatory. Tyre management critical
+- Sprint weekend in 2026
+- Atmosphere: growing fan base in Middle East
+""",
+    "abu dhabi": """
+Yas Marina Circuit, Abu Dhabi — Season finale, night race
+- 58 laps, 5.281km, 16 corners
+- Updated 2021: faster, more overtaking-friendly after redesign
+- Turn 5-6-7: main technical complex, tight and twisty
+- Back straight: DRS zone, reasonable overtaking
+- Marina section: night race with hotel, yachts — spectacular backdrop
+- Tyres: medium deg, 1-stop typical but 2-stop possible
+- Strategy: final race, teams sometimes gamble for championship
+- Atmosphere: unique finale feel — end of season emotion
+- History: 2021 Hamilton-Verstappen title decider happened here
 """,
 }
 
@@ -1435,11 +1698,12 @@ _Developed by Erick Hernandez_
 /start — welcome & intro
 /standings — 🏆 Driver championship standings
 /constructors — 🏗 Constructor standings
-/season — 📅 Full 2026 race calendar & results
+/season — 📅 Full 2026 season results
 /lastrace — 🏁 Latest race summary
-/live — 🔴 Live session timing (race weekends)
+/live — 🔴 Live session timing
 /predict — 🎯 Next race preview
 /winner — 🥇 Quick winner prediction
+/compare — ⚖️ Compare two drivers
 /news — 📰 Latest F1 headlines
 /debate — 🔥 Random F1 debate topic
 /hottake — 🌶️ Spicy F1 hot take
@@ -2445,6 +2709,57 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             part, parse_mode=constants.ParseMode.MARKDOWN)
 
 
+async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Compares two drivers across stats, career, or 2026 season."""
+    user_id = str(update.effective_user.id)
+    args    = " ".join(ctx.args).strip() if ctx.args else ""
+
+    await ctx.bot.send_chat_action(
+        chat_id=update.effective_chat.id,
+        action=constants.ChatAction.TYPING)
+
+    if not args:
+        await update.message.reply_text(
+            "🏎 *Who do you want to compare?*\n\n"
+            "Usage: `/compare Antonelli vs Verstappen`\n"
+            "or: `/compare Hamilton Leclerc`\n\n"
+            "I can compare:\n"
+            "• 2026 season stats\n"
+            "• Rookie seasons\n"
+            "• Career achievements\n"
+            "• Head-to-head at specific circuits",
+            parse_mode=constants.ParseMode.MARKDOWN)
+        return
+
+    history   = get_user_history(sessions, user_id)
+    user_data = sessions.get(user_id, {})
+
+    prompt = (
+        f"Compare these F1 drivers: {args}\n\n"
+        f"Give a detailed but punchy comparison covering:\n"
+        f"1. 2026 season stats (wins, points, poles if relevant)\n"
+        f"2. Career achievements and titles\n"
+        f"3. Driving style differences\n"
+        f"4. Historical context (rookie seasons, peak years)\n"
+        f"5. Your verdict — who comes out on top and why\n\n"
+        f"Use real numbers from your memory. Be specific, not vague."
+    )
+
+    reply = ask_claude(prompt, history, mem, user_data)
+
+    update_user_history(sessions, user_id, "user", f"/compare {args}")
+    update_user_history(sessions, user_id, "assistant", reply)
+    save_sessions(sessions)
+
+    for part in split_message(reply):
+        try:
+            await update.message.reply_text(
+                part, parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            clean = re.sub(r"[*_`\[\]]", "", part)
+            await update.message.reply_text(clean)
+
+
 async def cmd_debate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Triggers a fun F1 debate topic."""
     import random
@@ -2739,9 +3054,10 @@ def main():
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
     app.add_handler(CommandHandler("season",         cmd_season))
     app.add_handler(CommandHandler("lastrace",       cmd_lastrace))
+    app.add_handler(CommandHandler("live",           cmd_live))
     app.add_handler(CommandHandler("predict",        cmd_predict))
     app.add_handler(CommandHandler("winner",         cmd_winner))
-    app.add_handler(CommandHandler("live",           cmd_live))
+    app.add_handler(CommandHandler("compare",        cmd_compare))
     app.add_handler(CommandHandler("debate",         cmd_debate))
     app.add_handler(CommandHandler("hottake",        cmd_hottake))
     app.add_handler(CommandHandler("wouldyourather", cmd_wouldyourather))
