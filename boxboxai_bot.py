@@ -2594,7 +2594,6 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── 3. Prompt injection detection ────────────────────
     if check_injection(text):
         log_security_event(user_id, user.first_name or "", "INJECTION", text)
-        # Add a strike for injection attempts
         if user_id not in _abuse_strikes:
             _abuse_strikes[user_id] = {"strikes": 0, "banned_until": 0}
         _abuse_strikes[user_id]["strikes"] += 1
@@ -2619,21 +2618,34 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         action=constants.ChatAction.TYPING
     )
 
-    history   = get_user_history(sessions, user_id)
-    user_data = sessions.get(user_id, {})
-    reply     = ask_claude(text, history, mem, user_data)
+    try:
+        history   = get_user_history(sessions, user_id)
+        user_data = sessions.get(user_id, {})
+        reply     = ask_claude(text, history, mem, user_data)
 
-    update_user_history(sessions, user_id, "user", text)
-    update_user_history(sessions, user_id, "assistant", reply)
-    save_sessions(sessions)
+        update_user_history(sessions, user_id, "user", text)
+        update_user_history(sessions, user_id, "assistant", reply)
+        save_sessions(sessions)
 
-    # Show rate limit warning if near limit
-    if rate_msg:
-        await update.message.reply_text(rate_msg)
+        # Show rate limit warning if near limit
+        if rate_msg:
+            await update.message.reply_text(rate_msg)
 
-    for part in split_message(reply):
+        for part in split_message(reply):
+            try:
+                # Try with Markdown first
+                await update.message.reply_text(
+                    part, parse_mode=constants.ParseMode.MARKDOWN)
+            except Exception:
+                # Fall back to plain text if markdown fails
+                clean = re.sub(r"[*_`\[\]]", "", part)
+                await update.message.reply_text(clean)
+
+    except Exception as e:
+        log.error(f"handle_message error for {user_id}: {e}")
         await update.message.reply_text(
-            part, parse_mode=constants.ParseMode.MARKDOWN)
+            "⚠️ Something went wrong. Try again in a moment! 🏎"
+        )
 
 async def handle_error(update: object,
                         ctx: ContextTypes.DEFAULT_TYPE):
