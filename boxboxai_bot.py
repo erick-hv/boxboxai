@@ -20,18 +20,9 @@ Run:
   python3 boxboxai_bot.py
 """
 
-import os, sys, json, re, time, logging, ssl
+import os, sys, json, re, time, logging
 from pathlib import Path
 from datetime import datetime
-
-# ── Mac SSL fix ───────────────────────────────────────────────
-try:
-    import certifi
-    os.environ["SSL_CERT_FILE"]      = certifi.where()
-    os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
-    os.environ["HTTPX_CA_BUNDLE"]    = certifi.where()
-except ImportError:
-    certifi = None
 
 # ── dependency check ──────────────────────────────────────────
 missing = []
@@ -49,10 +40,6 @@ try:
     import requests
 except ImportError:
     missing.append("requests")
-try:
-    import certifi
-except ImportError:
-    missing.append("certifi")
 
 if missing:
     print(f"\n  Missing: {', '.join(missing)}")
@@ -622,54 +609,8 @@ def main():
 """)
 
     # ── Build and run app ─────────────────────────────────
-    import httpx
-    from telegram.request import HTTPXRequest
-
-    # Build SSL context from certifi — works on all Mac Python versions
-    cafile  = certifi.where()
     # ── Build and run app ─────────────────────────────────
-    import httpx, subprocess, tempfile, os as _os
     from telegram.request import HTTPXRequest
-
-    # Zscaler proxy intercepts HTTPS — must use Mac system keychain certs
-    # Build a combined cert bundle from system keychain + /etc/ssl/cert.pem
-    _cert_bundle = "/tmp/boxboxai_certs.pem"
-    try:
-        with open(_cert_bundle, "wb") as _f:
-            for _cmd in [
-                ["security", "find-certificate", "-a", "-p",
-                 "/Library/Keychains/System.keychain"],
-                ["security", "find-certificate", "-a", "-p",
-                 _os.path.expanduser("~/Library/Keychains/login.keychain-db")],
-            ]:
-                try:
-                    _out = subprocess.check_output(_cmd, stderr=subprocess.DEVNULL)
-                    _f.write(_out)
-                except Exception:
-                    pass
-            with open("/etc/ssl/cert.pem", "rb") as _base:
-                _f.write(_base.read())
-        log.info(f"Cert bundle built: {_cert_bundle}")
-    except Exception as _e:
-        log.warning(f"Cert bundle failed: {_e}, falling back to /etc/ssl/cert.pem")
-        _cert_bundle = "/etc/ssl/cert.pem"
-
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.load_verify_locations(_cert_bundle)
-
-    # Patch start_tls in anyio backend with our Zscaler-aware SSL context
-    try:
-        from httpcore._backends.anyio import AnyIOStream
-        _orig_start_tls = AnyIOStream.start_tls
-
-        async def _patched_start_tls(self, ssl_context, server_hostname=None, timeout=None):
-            return await _orig_start_tls(
-                self, ssl_ctx, server_hostname=server_hostname, timeout=timeout)
-
-        AnyIOStream.start_tls = _patched_start_tls
-        log.info("SSL patch applied (Zscaler-aware)")
-    except Exception as e:
-        log.warning(f"SSL patch failed: {e}")
 
     request         = HTTPXRequest(connection_pool_size=8, http_version="1.1")
     request_updates = HTTPXRequest(connection_pool_size=8, http_version="1.1")
