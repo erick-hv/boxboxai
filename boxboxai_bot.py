@@ -1050,8 +1050,223 @@ async def notification_loop(app, sessions_ref: list, mem_ref: list):
 
 
 # ═════════════════════════════════════════════════════════════
-#  FEATURE: USER MEMORY PERSONALIZATION
+#  UNIVERSAL LIVE SEARCH ENGINE
 # ═════════════════════════════════════════════════════════════
+
+# Trusted F1 sources for search result filtering
+F1_TRUSTED_DOMAINS = [
+    "the-race.com", "autosport.com", "racefans.net",
+    "motorsport.com", "f1.com", "bbc.co.uk/sport",
+    "espn.com/f1", "skysports.com/f1", "planetf1.com",
+    "crash.net", "gpfans.com", "formula1.com",
+]
+
+def google_search_f1(query: str, num_results: int = 5) -> list:
+    """
+    Searches Google for F1 content and returns relevant results.
+    Filters for trusted F1 domains.
+    Returns list of {title, url, snippet}.
+    """
+    try:
+        search_url = "https://www.google.com/search"
+        headers    = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        params = {
+            "q":    query,
+            "num":  num_results * 2,  # request more, filter down
+            "hl":   "en",
+            "gl":   "us",
+        }
+
+        r = requests.get(search_url, params=params,
+                         headers=headers, timeout=10)
+        if r.status_code != 200:
+            return []
+
+        html = r.text
+        results = []
+
+        # Extract search result blocks
+        # Google uses <div class="g"> for each result
+        blocks = re.findall(
+            r'<div[^>]*class="[^"]*(?:g|MjjYud)[^"]*"[^>]*>(.*?)</div>\s*</div>',
+            html, re.DOTALL)
+
+        for block in blocks[:num_results * 3]:
+            # Extract URL
+            url_match = re.search(r'href="(https?://[^"]+)"', block)
+            if not url_match:
+                continue
+            url = url_match.group(1)
+
+            # Skip Google internal links
+            if "google.com" in url or "youtube.com" in url:
+                continue
+
+            # Extract title
+            title_match = re.search(r'<h3[^>]*>([^<]+)</h3>', block)
+            title = title_match.group(1).strip() if title_match else ""
+
+            # Extract snippet
+            snippet_match = re.search(
+                r'<span[^>]*class="[^"]*(?:st|aCOpRe|hgKElc)[^"]*"[^>]*>'
+                r'([^<]+(?:<[^>]+>[^<]+</[^>]+>)*[^<]*)</span>',
+                block)
+            snippet = ""
+            if snippet_match:
+                snippet = re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip()
+
+            if title or snippet:
+                results.append({
+                    "title":   title,
+                    "url":     url,
+                    "snippet": snippet[:300],
+                })
+
+            if len(results) >= num_results:
+                break
+
+        return results
+
+    except Exception as e:
+        log.warning(f"Google search failed: {e}")
+        return []
+
+
+def fetch_article_content(url: str, max_chars: int = 1500) -> str:
+    """Fetches and extracts clean text from an article URL."""
+    try:
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0 BoxBoxAI/1.0"
+        })
+        if r.status_code != 200:
+            return ""
+
+        text = r.text
+        # Remove scripts, styles, nav
+        for tag in ["script", "style", "nav", "header", "footer",
+                    "aside", "advertisement"]:
+            text = re.sub(
+                rf"<{tag}[^>]*>.*?</{tag}>", "", text, flags=re.DOTALL)
+
+        # Try to get article body
+        for selector in [
+            r'<article[^>]*>(.*?)</article>',
+            r'<div[^>]*class="[^"]*(?:article|content|story|post)[^"]*"[^>]*>(.*?)</div>',
+            r'<main[^>]*>(.*?)</main>',
+        ]:
+            m = re.search(selector, text, re.DOTALL)
+            if m:
+                text = m.group(1)
+                break
+
+        # Strip remaining HTML and clean up
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:max_chars]
+
+    except Exception:
+        return ""
+
+
+def live_search_f1(query: str, race_context: str = "") -> str:
+    """
+    Main live search function. Searches Google + news feeds for
+    any F1 session or topic question. Returns context string.
+    """
+    # Build optimized search query
+    current = fetch_current_race()
+    race_name = ""
+    if current:
+        race_name = current.get("raceName", "")
+
+    # Add race context if not already in query
+    search_q = query
+    if race_name and race_name.lower().split()[0] not in query.lower():
+        search_q = f"{race_name} {query} 2026"
+    else:
+        search_q = f"{query} F1 2026"
+
+    # Remove question words for better search
+    search_q = re.sub(
+        r'\b(what|happened|is|happening|tell me about|how did|'
+        r'qué|pasó|cómo|cuéntame)\b',
+        "", search_q, flags=re.IGNORECASE
+    ).strip()
+    search_q = re.sub(r'\s+', ' ', search_q)
+
+    log.info(f"Live search: '{search_q}'")
+
+    results = []
+
+    # 1. Google search
+    google_results = google_search_f1(search_q, num_results=4)
+    if google_results:
+        for r in google_results[:2]:
+            # Fetch full article for top results
+            if r.get("url"):
+                content = fetch_article_content(r["url"], max_chars=800)
+                if content and len(content) > 100:
+                    results.append(
+                        f"{r.get('title','')}: {content}")
+                elif r.get("snippet"):
+                    results.append(
+                        f"{r.get('title','')}: {r['snippet']}")
+
+    # 2. News feed search as fallback/supplement
+    news = get_news_context(search_q)
+    if news and len(news) > 50:
+        results.append(news)
+
+    if not results:
+        return ""
+
+    combined = "\n\n".join(results)
+    return f"Live search results for '{query}':\n{combined[:2500]}"
+
+
+def _is_live_session_question(text: str) -> bool:
+    """
+    Detects if a question needs live search —
+    anything about what's happening in a session,
+    results, times, incidents for any session type.
+    """
+    t = text.lower()
+
+    session_keywords = [
+        # Session types
+        "fp1", "fp2", "fp3", "free practice",
+        "qualifying", "quali", "q1", "q2", "q3",
+        "sprint quali", "sprint qualifying", "sprint race", "sprint",
+        "race", "carrera",
+        # Live/current action words
+        "what happened", "what's happening", "what is happening",
+        "results", "fastest", "fastest lap", "top time",
+        "who is leading", "who's leading", "leaderboard",
+        "times", "lap time", "sector", "red flag", "yellow flag",
+        "incident", "crash", "dnf", "retired",
+        "live", "right now", "currently", "ahora", "en vivo",
+        # Spanish equivalents
+        "qué pasó", "que paso", "qué está pasando",
+        "resultados", "tiempos", "más rápido", "clasificación",
+        "vuelta rápida", "bandera roja", "incidente",
+        "líder", "primer lugar",
+        # Practice specific
+        "práctica", "practica", "entreno", "libre",
+        # Qualifying specific
+        "clasificación", "pole", "eliminado", "knocked out",
+        "pole position", "grid",
+    ]
+
+    return any(kw in t for kw in session_keywords)
+
+
 
 def build_user_profile(user_data: dict) -> str:
     """
@@ -2246,6 +2461,24 @@ BANNER = """🏎 *BoxBoxAI* — F1 Race Analyst
 _Developed by Erick Hernandez_
 ━━━━━━━━━━━━━━━━━━━━━━"""
 
+# ── Bot owner — alerts go only here ──────────────────────────
+BOT_OWNER_ID = "8892063151"
+
+async def alert_owner(app, message: str):
+    """Sends a private alert only to the bot owner (Erick)."""
+    try:
+        await app.bot.send_message(
+            chat_id=BOT_OWNER_ID,
+            text=f"🚨 *BoxBoxAI Alert*\n\n{message}",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        log.error(f"Failed to alert owner: {e}")
+
+
+# Global app reference for alerts from non-async contexts
+_app_ref: list = [None]
+
 WELCOME = """🏎 *Welcome to BoxBoxAI!*
 _Your AI-powered F1 race analyst_
 _Developed by Erick Hernandez_
@@ -2317,9 +2550,395 @@ def load_f1_memory() -> dict:
         ]
     }
 
-# ═════════════════════════════════════════════════════════════
-#  SESSION MANAGER — per-user conversation history
-# ═════════════════════════════════════════════════════════════
+def save_f1_memory(mem: dict):
+    """Saves updated memory to file."""
+    try:
+        MEMORY_FILE.write_text(json.dumps(mem, indent=2))
+        log.info("Memory saved successfully")
+    except Exception as e:
+        log.error(f"Failed to save memory: {e}")
+
+
+AUTO_INGEST_FILE = Path(__file__).parent / "boxboxai_auto_ingest.json"
+
+def load_ingest_state() -> dict:
+    if AUTO_INGEST_FILE.exists():
+        try:
+            return json.loads(AUTO_INGEST_FILE.read_text())
+        except Exception:
+            pass
+    return {"last_ingested_round": 0}
+
+def save_ingest_state(state: dict):
+    try:
+        AUTO_INGEST_FILE.write_text(json.dumps(state, indent=2))
+    except Exception as e:
+        log.error(f"Failed to save ingest state: {e}")
+
+
+def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
+    """
+    Fetches full race result for a given round from Jolpica.
+    Returns structured dict ready for memory storage.
+    """
+    try:
+        data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/results.json")
+        if not data:
+            return None
+
+        races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        if not races:
+            return None
+
+        race     = races[0]
+        results  = race.get("Results", [])
+        if not results:
+            return None
+
+        race_name = race.get("raceName", "")
+        race_date = race.get("date", "")
+        circuit   = race.get("Circuit", {}).get("circuitName", "")
+
+        # Extract top 3
+        def get_driver(r):
+            d = r.get("Driver", {})
+            return d.get("code", d.get("familyName", "?"))
+
+        p1 = get_driver(results[0]) if len(results) > 0 else "?"
+        p2 = get_driver(results[1]) if len(results) > 1 else "?"
+        p3 = get_driver(results[2]) if len(results) > 2 else "?"
+
+        # Extract DNFs
+        dnfs = [
+            f"{get_driver(r)} ({r.get('status','')})"
+            for r in results
+            if r.get("status", "Finished") not in
+               ["Finished", "+1 Lap", "+2 Laps", "+3 Laps"]
+        ]
+
+        # Fastest lap
+        fastest = next(
+            (get_driver(r) for r in results
+             if r.get("FastestLap", {}).get("rank") == "1"), None)
+
+        # Pole position from grid
+        pole = next(
+            (get_driver(r) for r in results
+             if r.get("grid") == "1"), None)
+
+        # Championship standings after this race
+        standings_data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/driverStandings.json")
+        champ_str = ""
+        if standings_data:
+            standings = (standings_data.get("MRData", {})
+                        .get("StandingsTable", {})
+                        .get("StandingsLists", [{}])[0]
+                        .get("DriverStandings", []))
+            if standings:
+                top3 = standings[:3]
+                champ_str = " | ".join(
+                    f"{s['Driver']['code']} {s['points']}pts"
+                    for s in top3
+                )
+
+        story_parts = [f"{p1} wins {race_name}."]
+        if p2 and p3:
+            story_parts.append(f"P2: {p2}, P3: {p3}.")
+        if dnfs:
+            story_parts.append(f"DNFs: {', '.join(dnfs[:3])}.")
+        if fastest:
+            story_parts.append(f"Fastest lap: {fastest}.")
+
+        return {
+            "round":       round_num,
+            "track":       circuit,
+            "race_name":   race_name,
+            "date":        race_date,
+            "winner":      p1,
+            "p2":          p2,
+            "p3":          p3,
+            "pole":        pole or "",
+            "fastest_lap": fastest or "",
+            "dnfs":        dnfs,
+            "story":       " ".join(story_parts),
+            "champ_after": champ_str,
+            "ingested_at": datetime.now().isoformat(),
+        }
+
+    except Exception as e:
+        log.error(f"fetch_race_result R{round_num}: {e}")
+        return None
+
+
+def fetch_qualifying_result(round_num: int, season: int = SEASON) -> dict | None:
+    """Fetches qualifying results for a given round from Jolpica."""
+    try:
+        data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/qualifying.json")
+        if not data:
+            return None
+
+        races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        if not races:
+            return None
+
+        race    = races[0]
+        results = race.get("QualifyingResults", [])
+        if not results:
+            return None
+
+        def get_driver(r):
+            d = r.get("Driver", {})
+            return d.get("code", d.get("familyName", "?"))
+
+        # Build grid top 10
+        grid = []
+        for r in results[:10]:
+            code = get_driver(r)
+            q3   = r.get("Q3", r.get("Q2", r.get("Q1", "")))
+            grid.append(f"P{r.get('position','?')}: {code} ({q3})")
+
+        pole        = get_driver(results[0]) if results else "?"
+        pole_time   = results[0].get("Q3", results[0].get("Q2", "")) if results else ""
+        front_row_2 = get_driver(results[1]) if len(results) > 1 else "?"
+
+        return {
+            "round":      round_num,
+            "race_name":  race.get("raceName", ""),
+            "pole":       pole,
+            "pole_time":  pole_time,
+            "front_row":  f"{pole} / {front_row_2}",
+            "grid_top10": grid,
+            "date":       race.get("date", ""),
+            "ingested_at": datetime.now().isoformat(),
+        }
+
+    except Exception as e:
+        log.error(f"fetch_qualifying_result R{round_num}: {e}")
+        return None
+
+
+def fetch_sprint_result(round_num: int, season: int = SEASON) -> dict | None:
+    """Fetches sprint race results for a given round from Jolpica."""
+    try:
+        data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/sprint.json")
+        if not data:
+            return None
+
+        races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        if not races:
+            return None
+
+        race    = races[0]
+        results = race.get("SprintResults", [])
+        if not results:
+            return None
+
+        def get_driver(r):
+            d = r.get("Driver", {})
+            return d.get("code", d.get("familyName", "?"))
+
+        p1 = get_driver(results[0]) if len(results) > 0 else "?"
+        p2 = get_driver(results[1]) if len(results) > 1 else "?"
+        p3 = get_driver(results[2]) if len(results) > 2 else "?"
+
+        return {
+            "round":     round_num,
+            "race_name": race.get("raceName", ""),
+            "winner":    p1,
+            "p2":        p2,
+            "p3":        p3,
+            "story":     f"Sprint: {p1} wins. P2: {p2}, P3: {p3}.",
+            "ingested_at": datetime.now().isoformat(),
+        }
+
+    except Exception as e:
+        log.error(f"fetch_sprint_result R{round_num}: {e}")
+        return None
+
+
+# Sprint weekends in 2026
+SPRINT_ROUNDS_2026 = {2, 4, 8, 16, 18, 20}  # Chinese, Miami, Austrian, US, São Paulo, Qatar
+
+
+async def _check_and_ingest(mem_ref: list, app=None,
+                             sessions_ref: list = None):
+    """
+    Checks if new results are available and ingests them.
+    Handles: qualifying, sprint qualifying, sprint race, and race results.
+    """
+    state      = load_ingest_state()
+    today      = datetime.now().date()
+
+    RACE_CALENDAR = [
+        (1,"Australian GP","2026-03-15"),
+        (2,"Chinese GP","2026-03-22"),
+        (3,"Japanese GP","2026-04-06"),
+        (4,"Miami GP","2026-05-04"),
+        (5,"Canadian GP","2026-05-24"),
+        (6,"Monaco GP","2026-06-07"),
+        (7,"Spanish GP","2026-06-14"),
+        (8,"Austrian GP","2026-06-28"),
+        (9,"British GP","2026-07-05"),
+        (10,"Belgian GP","2026-07-19"),
+        (11,"Hungarian GP","2026-07-26"),
+        (12,"Dutch GP","2026-08-23"),
+        (13,"Italian GP","2026-09-06"),
+        (14,"Singapore GP","2026-09-20"),
+        (15,"Azerbaijan GP","2026-09-27"),
+        (16,"US GP","2026-10-18"),
+        (17,"Mexico City GP","2026-10-25"),
+        (18,"São Paulo GP","2026-11-08"),
+        (19,"Las Vegas GP","2026-11-21"),
+        (20,"Qatar GP","2026-11-29"),
+        (21,"Abu Dhabi GP","2026-12-06"),
+    ]
+
+    for rnd, name, date_str in RACE_CALENDAR:
+        race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
+        days_since = (today - race_date).days
+
+        if days_since < -3:
+            break  # future races, stop
+
+        mem      = mem_ref[0]
+        episodes = mem.get("episodic", [])
+
+        # Find or create episode for this round
+        episode = next((e for e in episodes if e.get("round") == rnd), None)
+        if episode is None:
+            episode = {"round": rnd, "race_name": name}
+
+        changed = False
+
+        # ── Qualifying (Saturday, days_since >= 1) ─────────────
+        if days_since >= 1 and not episode.get("pole"):
+            log.info(f"Auto-ingest: checking qualifying R{rnd} {name}...")
+            quali = fetch_qualifying_result(rnd, SEASON)
+            if quali:
+                episode["pole"]       = quali["pole"]
+                episode["pole_time"]  = quali.get("pole_time", "")
+                episode["front_row"]  = quali.get("front_row", "")
+                episode["grid_top10"] = quali.get("grid_top10", [])
+                changed = True
+                log.info(f"✅ Qualifying R{rnd}: pole={quali['pole']}")
+
+                # Update semantic memory
+                mem.setdefault("semantic", {})[f"quali/r{rnd}"] = {
+                    "text": (f"R{rnd} {name} qualifying: "
+                             f"Pole: {quali['pole']} ({quali.get('pole_time','')}). "
+                             f"Front row: {quali.get('front_row','')}. "
+                             f"Grid: {', '.join(quali.get('grid_top10',[])[:5])}")
+                }
+
+        # ── Sprint Race (sprint weekends, days_since >= 1) ─────
+        if rnd in SPRINT_ROUNDS_2026 and days_since >= 1 \
+                and not episode.get("sprint_winner"):
+            log.info(f"Auto-ingest: checking sprint R{rnd} {name}...")
+            sprint = fetch_sprint_result(rnd, SEASON)
+            if sprint:
+                episode["sprint_winner"] = sprint["winner"]
+                episode["sprint_p2"]     = sprint["p2"]
+                episode["sprint_p3"]     = sprint["p3"]
+                episode["sprint_story"]  = sprint["story"]
+                changed = True
+                log.info(f"✅ Sprint R{rnd}: winner={sprint['winner']}")
+
+                mem.setdefault("semantic", {})[f"sprint/r{rnd}"] = {
+                    "text": (f"R{rnd} {name} sprint: "
+                             f"{sprint['story']}")
+                }
+
+        # ── Race Result (Sunday, days_since >= 0) ──────────────
+        if days_since >= 0 and not episode.get("winner"):
+            log.info(f"Auto-ingest: checking race result R{rnd} {name}...")
+            result = fetch_race_result(rnd, SEASON)
+            if result:
+                episode.update(result)
+                changed = True
+                log.info(f"✅ Race R{rnd}: winner={result['winner']}")
+
+                if result.get("champ_after"):
+                    mem.setdefault("semantic", {})[
+                        f"standings/after_r{rnd}"] = {
+                        "text": (f"After R{rnd} {name}: "
+                                 f"{result['champ_after']}")
+                    }
+
+                # Notify users of race result
+                if app and sessions_ref:
+                    await _notify_race_result(app, sessions_ref[0], result)
+                    await alert_owner(app,
+                        f"✅ *Auto-ingest complete: R{rnd} {name}*\n\n"
+                        f"🥇 Winner: {result.get('winner','?')}\n"
+                        f"🥈 P2: {result.get('p2','?')}\n"
+                        f"🥉 P3: {result.get('p3','?')}\n"
+                        f"📊 {result.get('champ_after','')}"
+                    )
+
+        # Save if anything changed
+        if changed:
+            # Update episodes list
+            existing_idx = next(
+                (i for i, e in enumerate(episodes) if e.get("round") == rnd),
+                None)
+            if existing_idx is not None:
+                episodes[existing_idx] = episode
+            else:
+                episodes.append(episode)
+                episodes.sort(key=lambda x: x.get("round", 0))
+
+            mem["episodic"] = episodes
+            save_f1_memory(mem)
+            mem_ref[0] = mem
+
+            state[f"r{rnd}_last_check"] = datetime.now().isoformat()
+            save_ingest_state(state)
+
+        # Only process recent races (within 3 days)
+        if days_since > 3:
+            continue
+
+
+async def _notify_race_result(app, sessions: dict, result: dict):
+    """Sends race result notification to all active users."""
+    active_users = get_active_user_ids(sessions)
+    if not active_users:
+        return
+
+    winner = result.get("winner", "?")
+    p2     = result.get("p2", "?")
+    p3     = result.get("p3", "?")
+    name   = result.get("race_name", "")
+    champ  = result.get("champ_after", "")
+
+    msg = (
+        f"🏁 *{name} — RACE OVER!*\n\n"
+        f"🥇 *{winner}*\n"
+        f"🥈 {p2}\n"
+        f"🥉 {p3}\n\n"
+        f"{'📊 Championship: ' + champ if champ else ''}\n\n"
+        f"Ask me anything about the race — strategy, incidents, "
+        f"championship impact. 🏎"
+    )
+
+    sent = 0
+    for uid in active_users:
+        try:
+            await app.bot.send_message(
+                chat_id=uid, text=msg,
+                parse_mode="Markdown")
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+
+    log.info(f"Race result notification sent to {sent} users")
+
+
 def load_sessions() -> dict:
     if SESSIONS_FILE.exists():
         try:
@@ -2514,7 +3133,8 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         circuit_guide: str = "",
                         prediction_accuracy: str = "",
                         driver_stats: str = "",
-                        practice_context: str = "") -> str:
+                        practice_context: str = "",
+                        live_search_context: str = "") -> str:
     # Semantic facts
     sem_lines = []
     for k, v in mem.get("semantic", {}).items():
@@ -2744,6 +3364,8 @@ WEATHER FORECAST:
 HISTORICAL DATA:
 {historical_context if historical_context else "Use your general F1 knowledge for historical questions."}
 
+{f"LIVE SESSION SEARCH RESULTS:{chr(10)}{live_search_context}" if live_search_context else ""}
+
 {f"LIVE SESSION DATA:{chr(10)}{live_context}" if live_context else ""}
 
 {f"PRACTICE SESSION RESULTS:{chr(10)}{practice_context}" if practice_context else ""}
@@ -2759,10 +3381,11 @@ HISTORICAL DATA:
 Use all context naturally. Don't cite sources. Just know it.
 For live or ongoing sessions:
 - Never tell users to go to the F1 app or other websites for live timing
-- Instead, share what you know from news: who looked fast in previous sessions,
-  what to watch for, championship context, and promise full analysis after
-- Say something like "session is live right now — here's what to watch for..."
-- After sessions end, give full breakdown from news coverage
+- Use LIVE SESSION SEARCH RESULTS above to answer session questions
+- Give specific times, positions, incidents from the search results
+- If Q1 just finished and Q2 is live, tell them what happened in Q1
+- Be specific — lap times, who got knocked out, fastest driver, incidents
+- Say "based on latest reports" naturally, not as a disclaimer
 
 
 For circuit questions: use the guide to give specific corner-by-corner insight.
@@ -2825,6 +3448,12 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     driver_stats_ctx= ""
     user_profile_ctx= ""
     practice_ctx    = ""
+    live_search_ctx = ""
+
+    # Universal live search — triggers for ANY session question
+    if _is_live_session_question(user_msg):
+        live_search_ctx = live_search_f1(user_msg)
+        log.info(f"Live search triggered for: {user_msg[:50]}")
 
     # News
     if _is_news_query(user_msg):
@@ -2879,7 +3508,8 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     system   = build_system_prompt(
         mem, news_ctx, weather_ctx, historical_ctx,
         user_profile_ctx, live_ctx, circuit_ctx,
-        pred_accuracy, driver_stats_ctx, practice_ctx
+        pred_accuracy, driver_stats_ctx, practice_ctx,
+        live_search_ctx
     )
     messages = history + [{"role": "user", "content": user_msg}]
 
@@ -2892,8 +3522,20 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         )
         return resp.content[0].text if resp.content else "Sorry, no response."
     except anthropic.AuthenticationError:
+        asyncio.create_task(alert_owner(
+            _app_ref[0],
+            "⚠️ *API Authentication Error*\n\n"
+            "Your Anthropic API key is invalid or expired.\n"
+            "Check console.anthropic.com and update the key in Railway Variables."
+        )) if _app_ref[0] else None
         return "⚠️ API key issue. Contact @ErickHernandez."
     except anthropic.RateLimitError:
+        asyncio.create_task(alert_owner(
+            _app_ref[0],
+            "💳 *API Credits Low or Rate Limited*\n\n"
+            "You may be running low on API credits or hitting rate limits.\n"
+            "Check console.anthropic.com/billing to top up."
+        )) if _app_ref[0] else None
         return "⚠️ Too many requests right now. Try again in a moment!"
     except Exception as e:
         log.error(f"Claude error: {e}")
@@ -3805,11 +4447,23 @@ def main():
 
     # Start race weekend notifications + weekly digest loop
     import asyncio as _asyncio
-    sessions_ref = [sessions]
-    mem_ref      = [mem]
+    sessions_ref    = [sessions]
+    mem_ref         = [mem]
+    _app_ref[0]     = app  # wire for alerts
+
     async def _post_init(application):
+        _app_ref[0] = application
         _asyncio.create_task(
             notification_loop(application, sessions_ref, mem_ref))
+        _asyncio.create_task(
+            auto_ingest_loop(mem_ref, application, sessions_ref))
+        # Send startup alert to owner
+        await alert_owner(application,
+            f"✅ *BoxBoxAI is online*\n\n"
+            f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
+            f"Users: {len(sessions)} tracked\n"
+            f"Ready to go! 🏎"
+        )
     app.post_init = _post_init
 
     print("  ✅ BoxBoxAI is LIVE. Open Telegram and message your bot.\n")
