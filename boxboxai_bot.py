@@ -2764,6 +2764,20 @@ def fetch_sprint_result(round_num: int, season: int = SEASON) -> dict | None:
 SPRINT_ROUNDS_2026 = {2, 4, 8, 16, 18, 20}  # Chinese, Miami, Austrian, US, São Paulo, Qatar
 
 
+async def auto_ingest_loop(mem_ref: list, app=None,
+                           sessions_ref: list = None):
+    """
+    Background loop that automatically ingests new race results,
+    qualifying, and sprint results every 30 minutes.
+    """
+    while True:
+        try:
+            await _check_and_ingest(mem_ref, app, sessions_ref)
+        except Exception as e:
+            log.warning(f"Auto-ingest loop error: {e}")
+        await asyncio.sleep(1800)  # check every 30 minutes
+
+
 async def _check_and_ingest(mem_ref: list, app=None,
                              sessions_ref: list = None):
     """
