@@ -2207,6 +2207,16 @@ OFF_TOPIC_RESPONSES_ES = [
 # Keywords that strongly suggest off-topic questions
 OFF_TOPIC_KEYWORDS = [
     # Homework / school
+    "write my essay", "write an essay", "write my", "my essay",
+    "for school", "my homework", "my assignment",
+    "write code for", "help me code", "code for me",
+    "recipe for", "give me a recipe", "how to cook",
+    "pasta recipe", "carbonara", "ingredients for",
+    "cover letter", "job application", "resume template",
+    "math problem", "solve this equation", "algebra",
+    "help me code", "help me with code", "write code for me",
+    "write a program", "write a script",
+    "my homework", "my assignment", "for school",
     "homework", "tarea", "essay", "ensayo", "thesis", "tesis",
     "assignment", "trabajo escolar", "examen", "exam", "school",
     "escuela", "university", "universidad", "college", "teacher",
@@ -2270,7 +2280,14 @@ def is_off_topic(text: str) -> bool:
     t = text.lower()
 
     # Always allow if F1 content detected
-    if any(kw in t for kw in F1_SAFE_KEYWORDS):
+    # Use word-boundary matching to avoid "rb" matching "carbonara"
+    import re as _re
+    if any(_re.search(r'\b' + _re.escape(kw) + r'\b', t)
+           for kw in F1_SAFE_KEYWORDS if len(kw) > 3):
+        return False
+    # Also check short exact matches
+    if any(kw == t or f" {kw} " in f" {t} "
+           for kw in F1_SAFE_KEYWORDS if len(kw) <= 3):
         return False
 
     # Block if off-topic keyword detected
@@ -2329,9 +2346,14 @@ MAX_HISTORY_STORE   = 20    # messages to keep per user
 INJECTION_PATTERNS = [
     r"ignore\s+(your\s+)?(previous\s+)?(instructions|prompt|rules|guidelines)",
     r"forget\s+(your\s+)?(instructions|rules|training)",
-    r"you\s+are\s+now\s+(a\s+)?(different|new|another)",
+    r"forget\s+(everything|all)\s+(you\s+)?(know|learned)",
+    r"you\s+are\s+now\s+(a\s+)?(different|new|another|dan|gpt|chatgpt)",
+    r"you\s+are\s+now\s+dan",
     r"act\s+as\s+(if\s+you\s+are\s+)?(a\s+)?(different|gpt|chatgpt|openai|unrestricted)",
-    r"pretend\s+(you\s+are|to\s+be)\s+(a\s+)?(different|unrestricted|jailbroken)",
+    r"act\s+as\s+if\s+you\s+have\s+no\s+(rules|restrictions|filter|guidelines)",
+    r"pretend\s+(you\s+are|to\s+be)\s+(a\s+)?(different|unrestricted|jailbroken|gpt|chatgpt)",
+    r"pretend\s+you\s+(are|have)\s+no\s+(rules|restrictions)",
+    r"now\s+you\s+(are|have)\s+no\s+(rules|restrictions|filter)",
     r"jailbreak",
     r"dan\s+mode",
     r"developer\s+mode",
@@ -2339,14 +2361,24 @@ INJECTION_PATTERNS = [
     r"reveal\s+(your\s+)?(api\s+key|token|secret|password|credentials)",
     r"what\s+is\s+your\s+(api\s+key|token|secret|system\s+prompt)",
     r"show\s+me\s+your\s+(api\s+key|token|secret|system\s+prompt|instructions)",
+    r"(reveal|show|print|display)\s+(the\s+)?(system\s+prompt|your\s+instructions|your\s+prompt)",
     r"print\s+your\s+(system\s+prompt|instructions|api\s+key)",
     r"ignore\s+all\s+previous",
     r"nueva\s+instrucción",
-    r"ignora\s+(tus\s+)?(instrucciones|reglas)",
+    r"ignora\s+(todas\s+)?(tus\s+)?(instrucciones|reglas)",
+    r"olvida\s+(todo|tus\s+instrucciones|las\s+reglas)",
     r"actúa\s+como\s+(si\s+fueras\s+)?(otro|diferente|sin\s+restricciones)",
     r"modo\s+desarrollador",
     r"sin\s+restricciones",
     r"revela\s+(tu\s+)?(clave|token|contraseña|api)",
+    r"ahora\s+(eres|tienes)\s+(otro|diferente|sin\s+reglas)",
+    r"reveal your system",
+    r"your system prompt",
+    r"show your (system|instructions|prompt)",
+    r"what.{0,10}system prompt",
+    r"(reveal|show|display|print|tell me)\s+(the\s+)?system\s+prompt",
+    r"what('s| is) (in )?your (system )?prompt",
+    r"(show|tell|give)\s+me\s+your\s+(instructions|system|prompt)",
 ]
 
 INJECTION_RESPONSES_EN = [
