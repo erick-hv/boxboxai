@@ -4119,6 +4119,53 @@ async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             re.sub(r"[*_]", "", "\n".join(lines)))
 
+async def cmd_lastrace(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
+    await update.message.reply_text("Fetching latest race... ⏳")
+    episodes = mem.get("episodic", [])
+    if not episodes:
+        await update.message.reply_text("No race results in memory yet.")
+        return
+    last = sorted(episodes, key=lambda x: x.get("round", 0))[-1]
+    rnd    = last.get("round", "?")
+    name   = last.get("race_name", last.get("track", "?"))
+    winner = last.get("winner", "?")
+    p2     = last.get("p2", "?")
+    p3     = last.get("p3", "?")
+    pole   = last.get("pole", "")
+    fl     = last.get("fastest_lap", "")
+    story  = last.get("story", "")
+    champ  = last.get("champ_after", "")
+    dnfs   = last.get("dnfs", [])
+
+    lines = [f"🏁 *R{rnd} — {name}*",
+             "_Developed by Erick Hernandez_",
+             "━━━━━━━━━━━━━━━━━━━━━━",
+             f"🥇 *{winner}*",
+             f"🥈 {p2}",
+             f"🥉 {p3}",]
+    if pole:
+        lines.append(f"⏱ Pole: *{pole}*")
+    if fl:
+        lines.append(f"💨 Fastest lap: *{fl}*")
+    if dnfs:
+        lines.append(f"⚠️ DNFs: {', '.join(dnfs[:3])}")
+    if champ:
+        lines.append(f"\n📊 Championship: {champ}")
+    if story:
+        lines.append(f"\n_{story}_")
+
+    try:
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(re.sub(r"[*_]", "", "\n".join(lines)))
+
+
 async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     args = ctx.args
     next_race = fetch_next_race()
