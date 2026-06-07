@@ -1,3 +1,11 @@
 python-telegram-bot==22.7
 anthropic
 requests
+
+# Predictor dependencies
+fastf1
+pandas
+numpy
+tabulate
+xgboost
+scikit-learn
