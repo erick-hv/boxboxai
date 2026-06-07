@@ -2816,6 +2816,199 @@ async def auto_ingest_loop(mem_ref: list, app=None,
         await asyncio.sleep(1800)  # check every 30 minutes
 
 
+# ═════════════════════════════════════════════════════════════
+#  AUTO-PREDICTOR LOOP
+#  Runs f1_2026_predictor.py automatically after qualifying
+#  and before each race. Updates CSV on Railway so /winner
+#  and /predict always have fresh Monte Carlo numbers.
+# ═════════════════════════════════════════════════════════════
+
+PREDICTOR_SCRIPT   = Path(__file__).parent / "f1_2026_predictor.py"
+PREDICTOR_STATE_FILE = Path(__file__).parent / "boxboxai_predictor_state.json"
+
+
+def load_predictor_state() -> dict:
+    if PREDICTOR_STATE_FILE.exists():
+        try:
+            return json.loads(PREDICTOR_STATE_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def save_predictor_state(state: dict):
+    try:
+        PREDICTOR_STATE_FILE.write_text(json.dumps(state, indent=2))
+    except Exception as e:
+        log.error(f"Failed to save predictor state: {e}")
+
+
+async def run_predictor_subprocess() -> tuple[bool, str]:
+    """
+    Runs f1_2026_predictor.py as an async subprocess.
+    Returns (success, message).
+    Times out after 10 minutes — predictor fetches APIs + runs 10k MC sims.
+    """
+    if not PREDICTOR_SCRIPT.exists():
+        return False, f"Predictor not found at {PREDICTOR_SCRIPT}"
+
+    log.info("Auto-predictor: starting f1_2026_predictor.py...")
+    try:
+        import sys as _sys
+        proc = await asyncio.create_subprocess_exec(
+            _sys.executable, str(PREDICTOR_SCRIPT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(PREDICTOR_SCRIPT.parent)
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=600)  # 10 min timeout
+        except asyncio.TimeoutError:
+            proc.kill()
+            # CSV may still have been written before timeout
+            if PREDICTOR_CSV.exists():
+                log.info("Auto-predictor: timed out but CSV exists — using it")
+                return True, "Timeout — using partial CSV"
+            return False, "Predictor timed out after 10 minutes"
+
+        if proc.returncode != 0:
+            # Still use CSV if written
+            if PREDICTOR_CSV.exists():
+                log.info("Auto-predictor: exit error but CSV exists — using it")
+                return True, "Exit error — using CSV"
+            output = stdout.decode("utf-8", errors="ignore")[-500:] if stdout else ""
+            return False, f"Predictor failed (exit {proc.returncode}): {output}"
+
+        if not PREDICTOR_CSV.exists():
+            return False, "Predictor ran but CSV not found"
+
+        log.info("Auto-predictor: ✅ CSV updated successfully")
+        return True, "Success"
+
+    except FileNotFoundError:
+        return False, "Python executable not found"
+    except Exception as e:
+        return False, f"Unexpected error: {e}"
+
+
+async def auto_predictor_loop(app=None):
+    """
+    Background loop that runs the predictor automatically:
+    - After qualifying (Saturday) for the upcoming race
+    - After sprint qualifying on sprint weekends
+    - Checks every 30 minutes — only runs once per session per round
+
+    Qualifying data being available = signal to run predictor.
+    Fresh qualifying grid is the most valuable input for the model.
+    """
+    while True:
+        try:
+            await _check_and_run_predictor(app)
+        except Exception as e:
+            log.warning(f"Auto-predictor loop error: {e}")
+        await asyncio.sleep(1800)  # check every 30 minutes
+
+
+async def _check_and_run_predictor(app=None):
+    """
+    Checks if qualifying results are available for the next race.
+    If yes and predictor hasn't run for this round yet, runs it.
+    """
+    state = load_predictor_state()
+    today = datetime.now().date()
+
+    for rnd, name, date_str in [
+        (6,"Monaco GP","2026-06-07"),
+        (7,"Spanish GP","2026-06-14"),
+        (8,"Austrian GP","2026-06-28"),
+        (9,"British GP","2026-07-05"),
+        (10,"Belgian GP","2026-07-19"),
+        (11,"Hungarian GP","2026-07-26"),
+        (12,"Dutch GP","2026-08-23"),
+        (13,"Italian GP","2026-09-06"),
+        (14,"Singapore GP","2026-09-20"),
+        (15,"Azerbaijan GP","2026-09-27"),
+        (16,"US GP","2026-10-18"),
+        (17,"Mexico City GP","2026-10-25"),
+        (18,"São Paulo GP","2026-11-08"),
+        (19,"Las Vegas GP","2026-11-21"),
+        (20,"Qatar GP","2026-11-29"),
+        (21,"Abu Dhabi GP","2026-12-06"),
+    ]:
+        race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
+        days_until = (race_date - today).days
+
+        # Only check races that are 0-2 days away (qualifying weekend)
+        if days_until < 0 or days_until > 2:
+            continue
+
+        # Already ran predictor for this round?
+        state_key = f"predictor_r{rnd}"
+        if state.get(state_key):
+            break
+
+        # Check if qualifying data is available from Jolpica
+        log.info(f"Auto-predictor: checking qualifying for R{rnd} {name}...")
+        try:
+            data = safe_get(f"{JOLPICA}/{SEASON}/{rnd}/qualifying.json")
+            races = (data or {}).get("MRData", {}).get(
+                "RaceTable", {}).get("Races", [])
+            quali_results = races[0].get("QualifyingResults", []) if races else []
+        except Exception:
+            quali_results = []
+
+        if len(quali_results) < 10:
+            log.info(f"Auto-predictor: qualifying not available yet for R{rnd}")
+            break
+
+        # Qualifying is available — run the predictor
+        log.info(f"Auto-predictor: qualifying detected for R{rnd} {name} — running predictor...")
+
+        if app:
+            await alert_owner(app,
+                f"🤖 *Auto-predictor starting*\n\n"
+                f"R{rnd} {name} qualifying detected\n"
+                f"Running f1_2026_predictor.py now... (takes ~5 min)")
+
+        success, msg = await run_predictor_subprocess()
+
+        if success:
+            # Clear predictor cache so next /winner uses fresh CSV
+            _PREDICTOR_CACHE.clear()
+
+            state[state_key] = datetime.now().isoformat()
+            save_predictor_state(state)
+
+            # Read top prediction for the alert
+            _, rows = get_predictor_context()
+            pred_summary = ""
+            if rows:
+                r = rows[0]
+                try:    win_str = f"{float(r.get('win_mc_pct','?')):.1f}%"
+                except: win_str = "?"
+                pred_summary = (
+                    f"\n\n🥇 Model says: *{r.get('FullName','?')}* "
+                    f"({r.get('TeamName','?')}) — {win_str} win probability"
+                )
+
+            log.info(f"Auto-predictor: ✅ R{rnd} {name} prediction ready")
+
+            if app:
+                await alert_owner(app,
+                    f"✅ *Auto-predictor complete: R{rnd} {name}*"
+                    f"{pred_summary}\n\n"
+                    f"Users can now use /winner and /predict full 🏎")
+        else:
+            log.warning(f"Auto-predictor: failed for R{rnd} — {msg}")
+            if app:
+                await alert_owner(app,
+                    f"⚠️ *Auto-predictor failed: R{rnd} {name}*\n\n"
+                    f"Error: {msg}\n\n"
+                    f"/winner will use memory-based prediction as fallback.")
+        break  # only process one round per check
+
+
 async def _check_and_ingest(mem_ref: list, app=None,
                              sessions_ref: list = None):
     """
@@ -4198,61 +4391,246 @@ async def cmd_lastrace(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(re.sub(r"[*_]", "", "\n".join(lines)))
 
 
+# ═════════════════════════════════════════════════════════════
+#  PREDICTOR INTEGRATION
+#  Reads f1_2026_predicciones.csv generated by f1_2026_predictor.py
+#  Run predictor on your Mac, commit CSV to repo, Railway picks it up.
+# ═════════════════════════════════════════════════════════════
+
+PREDICTOR_CSV   = Path(__file__).parent / "f1_2026_predicciones.csv"
+_PREDICTOR_CACHE: dict = {}
+
+
+def read_predictor_csv() -> list:
+    if not PREDICTOR_CSV.exists():
+        return []
+    try:
+        import csv as _csv
+        with open(PREDICTOR_CSV, newline="", encoding="utf-8") as f:
+            return list(_csv.DictReader(f))
+    except Exception:
+        return []
+
+
+def format_predictor_for_claude(rows: list) -> str:
+    if not rows:
+        return ""
+    lines = ["=== PREDICTOR OUTPUT (f1_2026_predictor.py v7.0) ===",
+             "Real Monte Carlo simulation 10,000 runs.\n"]
+
+    def gf(r, k, dec=1):
+        try:    return f"{float(r[k]):.{dec}f}"
+        except: return "-"
+    def g(r, k):
+        v = r.get(k, "")
+        return v if v not in ("", "nan", "NaN", None) else "-"
+
+    lines.append(f"{'#':<3} {'Driver':<20} {'Team':<16} {'Win%':>6} {'Pod%':>6} {'AvgPos':>7} {'MechRisk':>9}")
+    lines.append("-" * 70)
+    for i, r in enumerate(rows[:10], 1):
+        mech = f"{float(r.get('mechanical_risk',0))*100:.1f}%" if g(r,'mechanical_risk') != "-" else "-"
+        lines.append(f"{i:<3} {g(r,'FullName'):<20} {g(r,'TeamName'):<16} "
+                     f"{gf(r,'win_mc_pct'):>6} {gf(r,'podium_mc_pct'):>6} "
+                     f"{gf(r,'avg_mc_pos'):>7} {mech:>9}")
+
+    lines.append("\nKEY FEATURES - Top 5:")
+    for r in rows[:5]:
+        parts = [f"{g(r,'code')}:"]
+        for k, label in [("quali_pos_next","Quali"),("fp_next_delta","FP%"),
+                          ("recent_form","Form"),("circuit_score","Circuit"),
+                          ("compound_score","Compound"),("mechanical_risk","MechRisk"),
+                          ("dominant_failure","Failure")]:
+            v = g(r, k)
+            if v != "-":
+                try:    parts.append(f"{label}={float(v):.3f}")
+                except: parts.append(f"{label}={v}")
+        lines.append("  " + "  ".join(parts))
+
+    try:
+        mtime = datetime.fromtimestamp(PREDICTOR_CSV.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"\nCSV generated: {mtime}")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
+def get_predictor_context() -> tuple:
+    if not PREDICTOR_CSV.exists():
+        return "", []
+    try:
+        mtime = str(PREDICTOR_CSV.stat().st_mtime)
+        if mtime in _PREDICTOR_CACHE:
+            return _PREDICTOR_CACHE[mtime]
+        rows  = read_predictor_csv()
+        block = format_predictor_for_claude(rows)
+        _PREDICTOR_CACHE.clear()
+        _PREDICTOR_CACHE[mtime] = (block, rows)
+        return block, rows
+    except Exception:
+        return "", []
+
+
+def predictor_winner_summary(rows: list) -> str:
+    if not rows:
+        return ""
+    lines = []
+    medals = ["🥇","🥈","🥉"]
+    for i, r in enumerate(rows[:3], 1):
+        name = r.get("FullName", r.get("code","?"))
+        team = r.get("TeamName","")
+        try:    win_str = f"{float(r.get('win_mc_pct','?')):.1f}%"
+        except: win_str = "?"
+        try:    pod_str = f"{float(r.get('podium_mc_pct','?')):.1f}%"
+        except: pod_str = "?"
+        lines.append(f"{medals[i-1]} *{name}* ({team}) — {win_str} win / {pod_str} podium")
+    return "\n".join(lines)
+
+
 async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    args = ctx.args
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
+
+    await ctx.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
+
     next_race = fetch_next_race()
+    race_name = next_race.get("raceName","next race") if next_race else "next race"
+    args      = ctx.args or []
+    pred_block, pred_rows = get_predictor_context()
+    has_pred  = bool(pred_block and pred_rows)
 
     if args and args[0].lower() == "full":
-        # Full AI prediction
-        race_name = next_race.get("raceName","next race") if next_race else "next race"
         await update.message.reply_text(
-            f"Generating full prediction for {race_name}... 🧠")
-        user_id = str(update.effective_user.id)
-        history = get_user_history(sessions, user_id)
-        reply   = ask_claude(
-            f"Give me a full race prediction for the {race_name}: "
-            f"predicted winner with reasoning, top-5, key factors, "
-            f"championship implications, and your confidence level.",
-            history, mem
-        )
-        update_user_history(sessions, user_id, "user",
-                            f"Full prediction for {race_name}")
+            f"🧠 Running full prediction for *{race_name}*...",
+            parse_mode=constants.ParseMode.MARKDOWN)
+        history   = get_user_history(sessions, user_id)
+        user_data = sessions.get(user_id, {})
+
+        if has_pred:
+            prompt = (
+                f"You have the ACTUAL OUTPUT of f1_2026_predictor.py v7.0 below. "
+                f"Real Monte Carlo data — 10,000 runs. Not a guess.\n\n"
+                f"{pred_block}\n\n"
+                f"For the {race_name}, give complete race prediction:\n"
+                f"1. WINNER — state model top pick with exact win% from CSV\n"
+                f"2. WHY — which features drive it (cite actual values)\n"
+                f"3. TOP 5 — predicted finishing order with win% each\n"
+                f"4. WHAT COULD UPSET IT — weather, safety car, mechanical risk\n"
+                f"5. CHAMPIONSHIP STAKES — WDC implications\n"
+                f"6. CONFIDENCE — 0-100 score and why\n\n"
+                f"Use the actual numbers. Be specific."
+            )
+        else:
+            prompt = (
+                f"Give me a full race prediction for the {race_name}: "
+                f"predicted winner with reasoning, top-5, key factors, "
+                f"championship implications, and confidence level."
+            )
+
+        reply = ask_claude(prompt, history, mem, user_data)
+        update_user_history(sessions, user_id, "user", f"Full prediction {race_name}")
         update_user_history(sessions, user_id, "assistant", reply)
         save_sessions(sessions)
         for part in split_message(reply):
-            await update.message.reply_text(
-                part, parse_mode=constants.ParseMode.MARKDOWN)
+            try:
+                await update.message.reply_text(part, parse_mode=constants.ParseMode.MARKDOWN)
+            except Exception:
+                await update.message.reply_text(re.sub(r"[*_`]","",part))
+
     else:
-        text = format_prediction(next_race, mem)
-        await update.message.reply_text(
-            text, parse_mode=constants.ParseMode.MARKDOWN)
+        if has_pred:
+            lines = [
+                f"🎯 *{race_name} — Predictor Preview*",
+                "_Developed by Erick Hernandez_",
+                "━━━━━━━━━━━━━━━━━━━━━━",
+                "",
+                predictor_winner_summary(pred_rows),
+                "",
+                "_Model: f1_2026_predictor.py v7.0 · 10,000 MC sims_",
+                "_/predict full for complete analysis_",
+            ]
+            try:
+                await update.message.reply_text("\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+            except Exception:
+                await update.message.reply_text(re.sub(r"[*_]","","\n".join(lines)))
+        else:
+            text = format_prediction(next_race, mem)
+            try:
+                await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
+            except Exception:
+                await update.message.reply_text(re.sub(r"[*_]","",text))
+
 
 async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Clean one-line winner prediction for next race."""
+    """Race winner prediction — uses predictor CSV when available."""
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
+
     await ctx.bot.send_chat_action(
-        chat_id=update.effective_chat.id,
-        action=constants.ChatAction.TYPING)
+        chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
+
     next_race = fetch_next_race()
-    race_name = next_race.get("raceName", "next race") if next_race else "next race"
-    user_id   = str(update.effective_user.id)
+    race_name = next_race.get("raceName","next race") if next_race else "next race"
     history   = get_user_history(sessions, user_id)
     user_data = sessions.get(user_id, {})
-    reply     = ask_claude(
-        f"Who will win the {race_name}? Give me your pick in 2-3 sentences max — "
-        f"winner, main reason why, and one driver who could upset it.",
-        history, mem, user_data
-    )
-    # Try to extract predicted winner for accuracy tracking
-    for code in ["ANT","RUS","HAM","LEC","VER","NOR","PIA","ALO","SAI","GAS"]:
-        if code in reply.upper()[:100]:
-            save_prediction(race_name, code)
-            break
+    pred_block, pred_rows = get_predictor_context()
+    has_pred  = bool(pred_block and pred_rows)
+
+    if has_pred:
+        r      = pred_rows[0]
+        name   = r.get("FullName", r.get("code","?"))
+        p2     = pred_rows[1].get("FullName","?") if len(pred_rows)>1 else "?"
+        p3     = pred_rows[2].get("FullName","?") if len(pred_rows)>2 else "?"
+        try:    win_str = f"{float(r.get('win_mc_pct','?')):.1f}%"
+        except: win_str = "?"
+        try:    pod_str = f"{float(r.get('podium_mc_pct','?')):.1f}%"
+        except: pod_str = "?"
+        quali  = r.get("quali_pos_next","")
+        form   = r.get("recent_form","")
+        cscor  = r.get("circuit_score","")
+        mech   = r.get("mechanical_risk","")
+        try:    qstr = f"P{int(float(quali))}" if quali not in ("","nan","NaN") else ""
+        except: qstr = ""
+        try:    mstr = f"{float(mech)*100:.1f}% mech risk" if mech not in ("","nan","NaN") else ""
+        except: mstr = ""
+
+        prompt = (
+            f"f1_2026_predictor.py says {name} wins {race_name} "
+            f"with {win_str} probability ({pod_str} podium). "
+            f"P2: {p2}, P3: {p3}. "
+            f"Key: quali={qstr}, recent_form={form}, circuit_score={cscor}. {mstr}. "
+            f"In 2-3 sentences: confirm this pick, main reason why, and ONE driver "
+            f"who could realistically upset it. Use the exact {win_str} number. Be direct."
+        )
+        reply = ask_claude(prompt, history, mem, user_data)
+        save_prediction(race_name, r.get("code", "?"))
+
+    else:
+        reply = ask_claude(
+            f"Who will win the {race_name}? 2-3 sentences max — "
+            f"winner, main reason why, one driver who could upset it.",
+            history, mem, user_data
+        )
+        for code in ["ANT","RUS","HAM","LEC","VER","NOR","PIA","ALO","SAI","GAS"]:
+            if code in reply.upper()[:100]:
+                save_prediction(race_name, code)
+                break
+
     update_user_history(sessions, user_id, "user", f"/winner {race_name}")
     update_user_history(sessions, user_id, "assistant", reply)
     save_sessions(sessions)
     for part in split_message(reply):
-        await update.message.reply_text(
-            part, parse_mode=constants.ParseMode.MARKDOWN)
+        try:
+            await update.message.reply_text(part, parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            await update.message.reply_text(re.sub(r"[*_`]","",part))
+
 
 
 async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4740,11 +5118,14 @@ def main():
             notification_loop(application, sessions_ref, mem_ref))
         _asyncio.create_task(
             auto_ingest_loop(mem_ref, application, sessions_ref))
+        _asyncio.create_task(
+            auto_predictor_loop(application))
         # Send startup alert to owner
         await alert_owner(application,
             f"✅ *BoxBoxAI is online*\n\n"
             f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
             f"Users: {len(sessions)} tracked\n"
+            f"Predictor: {'✅ CSV ready' if PREDICTOR_CSV.exists() else '⏳ waiting for qualifying'}\n"
             f"Ready to go! 🏎"
         )
     app.post_init = _post_init
