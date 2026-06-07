@@ -950,16 +950,14 @@ def build_user_stats_text(user_data: dict, user_name: str) -> str:
 
 async def send_weekly_digest(app, sessions: dict, mem: dict):
     """
-    Sends a weekly F1 digest to all active users every Monday.
-    Includes: race recap, championship standings, what's coming next.
+    Sends a weekly F1 race debrief every Monday.
+    Strategy analysis, key moments, championship implications.
     """
     state = load_digest_state()
-    today = datetime.now().strftime("%Y-%W")  # year-week number
+    today = datetime.now().strftime("%Y-%W")
 
     if state.get("last_digest_week") == today:
-        return  # already sent this week
-
-    # Only send on Mondays
+        return
     if datetime.now().weekday() != 0:
         return
 
@@ -967,62 +965,68 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
     if not active_users:
         return
 
-    # Build digest content
-    episodes   = mem.get("episodic", [])
-    last_race  = episodes[-1] if episodes else None
-    next_race  = fetch_next_race()
-    drivers, _ = fetch_standings()
+    episodes = mem.get("episodic", [])
+    if not episodes:
+        return
 
-    # Championship leader
-    leader = ""
-    if drivers:
-        d    = drivers[0].get("Driver", {})
-        name = f"{d.get('givenName','')[:1]}. {d.get('familyName','')}"
-        pts  = drivers[0].get("points", "?")
-        leader = f"*{name}* leads with *{pts}pts*"
+    last_race = sorted(episodes, key=lambda x: x.get("round", 0))[-1]
+    race_name = last_race.get("race_name", last_race.get("track", ""))
+    winner    = last_race.get("winner", "?")
+    p2        = last_race.get("p2", "?")
+    p3        = last_race.get("p3", "?")
+    story     = last_race.get("story", "")
+    champ     = last_race.get("champ_after", "")
 
-    # Last race summary
-    last_str = ""
-    if last_race:
-        last_str = (f"🏁 Last race: *{last_race.get('race_name', last_race.get('track','?'))}* "
-                    f"— Winner: *{last_race.get('winner','?')}*")
+    # Generate AI debrief
+    try:
+        prompt = (
+            f"Write a punchy Monday race debrief for {race_name}. "
+            f"Result: {winner} won, {p2} P2, {p3} P3. {story} "
+            f"Championship after: {champ}. "
+            f"Cover: the decisive moment, who impressed, who disappointed, "
+            f"championship picture, one thing to watch next race. "
+            f"Keep it under 200 words. No headers. Engaging and opinionated. "
+            f"Use emojis naturally."
+        )
+        resp = get_client().messages.create(
+            model=MODEL, max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        debrief = resp.content[0].text if resp.content else story
+    except Exception:
+        debrief = story
 
-    # Next race
-    next_str = ""
+    next_race = fetch_next_race()
+    next_str  = ""
     if next_race:
-        next_str = (f"🔜 Next up: *{next_race.get('raceName','?')}* "
-                    f"on {next_race.get('date','?')}")
+        next_name = next_race.get("raceName", "")
+        next_date = next_race.get("date", "")
+        next_str  = f"\n\n🔜 *Next up: {next_name}* — {next_date}\n_/predict_ for my full preview"
 
-    digest = (
-        f"🏎 *BoxBoxAI Weekly Digest* 🏆\n"
-        f"_Your F1 week in review_\n"
+    msg = (
+        f"🏁 *{race_name} — Monday Debrief*\n"
+        f"_BoxBoxAI Race Analysis_\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📊 Championship: {leader}\n\n"
-        f"{last_str}\n\n"
+        f"🥇 *{winner}*  🥈 {p2}  🥉 {p3}\n\n"
+        f"{debrief}"
         f"{next_str}\n\n"
-        f"Ask me anything about the season — predictions, analysis, "
-        f"debates. Let's talk F1! 🔥\n\n"
-        f"_/winner_ — next race prediction\n"
-        f"_/debate_ — start a debate\n"
-        f"_/news_ — latest F1 headlines"
+        f"_Ask me anything about the race_ 💬"
     )
 
     sent = 0
     for uid in active_users:
         try:
             await app.bot.send_message(
-                chat_id=uid,
-                text=digest,
-                parse_mode="Markdown"
-            )
+                chat_id=uid, text=msg, parse_mode="Markdown")
             sent += 1
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
         except Exception:
             pass
 
     state["last_digest_week"] = today
     save_digest_state(state)
-    log.info(f"Weekly digest sent to {sent} users")
+    log.info(f"Weekly debrief sent to {sent} users")
+
 
 
 async def notification_loop(app, sessions_ref: list, mem_ref: list):
@@ -2508,15 +2512,17 @@ _Developed by Erick Hernandez_
 ━━━━━━━━━━━━━━━━━━━━━━
 
 /start — welcome & intro
-/timezone — 🌍 Set your timezone for notifications
+/timezone — 🌍 Set your timezone
 /standings — 🏆 Driver championship standings
 /constructors — 🏗 Constructor standings
 /season — 📅 Full 2026 season results
+/schedule — 🗓 Upcoming race schedule (your timezone)
 /lastrace — 🏁 Latest race summary
 /live — 🔴 Live session timing
 /predict — 🎯 Next race preview
 /winner — 🥇 Quick winner prediction
 /compare — ⚖️ Compare two drivers
+/mypredictions — 🎯 Bot prediction accuracy
 /news — 📰 Latest F1 headlines
 /debate — 🔥 Random F1 debate topic
 /hottake — 🌶️ Spicy F1 hot take
@@ -3963,24 +3969,155 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         HELP_TEXT, parse_mode=constants.ParseMode.MARKDOWN)
 
 async def cmd_standings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
     await update.message.reply_text("Fetching live standings... ⏳")
-    drivers, constructors = fetch_standings()
-    text = format_standings(drivers, constructors)
-    await update.message.reply_text(
-        text, parse_mode=constants.ParseMode.MARKDOWN)
+    drivers, _ = fetch_standings()
+    if not drivers:
+        await update.message.reply_text("⚠️ Standings unavailable right now.")
+        return
+    medals  = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    leader  = float(drivers[0].get("points", 0))
+    lines   = ["🏆 *2026 Driver Championship*",
+               "_Developed by Erick Hernandez_",
+               "━━━━━━━━━━━━━━━━━━━━━━"]
+    for i, s in enumerate(drivers[:10]):
+        d     = s.get("Driver", {})
+        name  = f"{d.get('givenName','')[:1]}. {d.get('familyName','')}"
+        pts   = float(s.get("points", 0))
+        wins  = s.get("wins", "0")
+        gap   = f"  _(-{int(leader-pts)})_" if i > 0 else " 🔥"
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        lines.append(f"{medal} *{name}* — {int(pts)}pts  _{wins}W_{gap}")
+    try:
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(
+            re.sub(r"[*_]", "", "\n".join(lines)))
+
+
+async def cmd_constructors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
+    await update.message.reply_text("Fetching constructor standings... ⏳")
+    _, constructors = fetch_standings()
+    if not constructors:
+        await update.message.reply_text("⚠️ Constructor data unavailable right now.")
+        return
+    lines = ["🏗 *2026 Constructor Standings*",
+             "_Developed by Erick Hernandez_",
+             "━━━━━━━━━━━━━━━━━━━━━━"]
+    medals  = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    leader  = float(constructors[0].get("points", 0))
+    team_emojis = {
+        "mercedes": "⬛", "ferrari": "🔴", "red bull": "🔵",
+        "mclaren": "🟡", "aston martin": "🟢", "alpine": "🔵",
+        "williams": "⚪", "haas": "⬜", "rb": "🟤",
+        "audi": "⬛", "cadillac": "🇺🇸",
+    }
+    for i, s in enumerate(constructors[:10]):
+        name  = s.get("Constructor", {}).get("name", "")
+        pts   = float(s.get("points", 0))
+        gap   = f"  _(-{int(leader-pts)})_" if i > 0 else " 🔥"
+        emoji = next((v for k, v in team_emojis.items()
+                      if k in name.lower()), "🏎")
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        lines.append(f"{medal} {emoji} *{name}* — {int(pts)}pts{gap}")
+    try:
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(
+            re.sub(r"[*_]", "", "\n".join(lines)))
+
 
 async def cmd_season(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    text = format_season(mem)
-    for part in split_message(text):
-        await update.message.reply_text(
-            part, parse_mode=constants.ParseMode.MARKDOWN)
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
+    episodes = mem.get("episodic", [])
+    if not episodes:
+        await update.message.reply_text("No race results in memory yet.")
+        return
+    lines = ["📅 *2026 Season Results*",
+             "_Developed by Erick Hernandez_",
+             "━━━━━━━━━━━━━━━━━━━━━━"]
+    for ep in sorted(episodes, key=lambda x: x.get("round", 0)):
+        rnd    = ep.get("round", "?")
+        track  = ep.get("race_name", ep.get("track", "?"))
+        winner = ep.get("winner", "?")
+        p2     = ep.get("p2", "")
+        p3     = ep.get("p3", "")
+        date   = ep.get("date", "")[:10]
+        podium = f"{winner} / {p2} / {p3}" if p2 else winner
+        lines.append(f"R{rnd} *{track}* — 🥇 {podium}  _{date}_")
+    # Add upcoming races
+    today = datetime.now().date()
+    upcoming = []
+    for rnd, name, date_str in [
+        (6,"Monaco GP","2026-06-07"),(7,"Spanish GP","2026-06-14"),
+        (8,"Austrian GP","2026-06-28"),(9,"British GP","2026-07-05"),
+        (10,"Belgian GP","2026-07-19"),(11,"Hungarian GP","2026-07-26"),
+        (12,"Dutch GP","2026-08-23"),(13,"Italian GP","2026-09-06"),
+    ]:
+        race_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        if race_date >= today and not any(
+                e.get("round") == rnd for e in episodes):
+            upcoming.append(f"R{rnd} *{name}* — _{date_str}_ 🔜")
+        if len(upcoming) >= 4:
+            break
+    if upcoming:
+        lines.append("")
+        lines.append("*Upcoming:*")
+        lines.extend(upcoming)
+    for part in split_message("\n".join(lines)):
+        try:
+            await update.message.reply_text(
+                part, parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            await update.message.reply_text(re.sub(r"[*_]", "", part))
 
-async def cmd_lastrace(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Fetching latest race... ⏳")
-    race = fetch_last_race()
-    text = format_last_race(race, mem)
-    await update.message.reply_text(
-        text, parse_mode=constants.ParseMode.MARKDOWN)
+
+async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    allowed, rate_msg = check_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(rate_msg)
+        return
+    await update.message.reply_text("Checking latest F1 news... 📰")
+    # Refresh and get articles directly
+    refresh_news_cache()
+    articles = _news_cache[:10] if _news_cache else []
+    if not articles:
+        await update.message.reply_text(
+            "⚠️ Couldn't fetch news right now. Try again in a moment.")
+        return
+    lines = ["📰 *Latest F1 News*",
+             "_Developed by Erick Hernandez_",
+             "━━━━━━━━━━━━━━━━━━━━━━", ""]
+    for a in articles[:8]:
+        title  = a.get("title", "")
+        source = a.get("source", "")
+        date   = a.get("date", "")[:16]
+        lines.append(f"• *{title}*")
+        if source:
+            lines.append(f"  _{source}  {date}_")
+        lines.append("")
+    try:
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(
+            re.sub(r"[*_]", "", "\n".join(lines)))
 
 async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     args = ctx.args
@@ -4010,35 +4147,6 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text = format_prediction(next_race, mem)
         await update.message.reply_text(
             text, parse_mode=constants.ParseMode.MARKDOWN)
-
-async def cmd_constructors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Fetching constructor standings... ⏳")
-    _, constructors = fetch_standings()
-    if not constructors:
-        await update.message.reply_text("⚠️ Constructor data unavailable right now.")
-        return
-    lines = ["🏗 *2026 Constructor Standings*",
-             "_Developed by Erick Hernandez_",
-             "━━━━━━━━━━━━━━━━━━━━━━"]
-    medals  = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
-    leader  = float(constructors[0].get("points", 0))
-    team_emojis = {
-        "mercedes": "⬛", "ferrari": "🔴", "red bull": "🔵",
-        "mclaren": "🟡", "aston martin": "🟢", "alpine": "🔵",
-        "williams": "⚪", "haas": "⬜", "rb": "🟤",
-        "audi": "⬛", "cadillac": "🇺🇸",
-    }
-    for i, s in enumerate(constructors[:10]):
-        name  = s.get("Constructor", {}).get("name", "")
-        pts   = float(s.get("points", 0))
-        gap   = f"  _(-{int(leader-pts)})_" if i > 0 else " 🔥"
-        emoji = next((v for k, v in team_emojis.items()
-                      if k in name.lower()), "🏎")
-        medal = medals[i] if i < len(medals) else f"{i+1}."
-        lines.append(f"{medal} {emoji} *{name}* — {int(pts)}pts{gap}")
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
-
 
 async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Clean one-line winner prediction for next race."""
@@ -4221,25 +4329,105 @@ async def cmd_wouldyourather(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             part, parse_mode=constants.ParseMode.MARKDOWN)
 
 
-async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Shows latest F1 headlines from The Race."""
-    await update.message.reply_text("Checking latest F1 news... 📰")
-    headlines = get_news_context("")
-    if not headlines:
+async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Shows upcoming race schedule with session times in user's timezone."""
+    user_id   = str(update.effective_user.id)
+    user_data = sessions.get(user_id, {})
+    tz_offset = get_user_tz_offset(user_data)
+    tz_label  = user_data.get("tz_label", "UTC-6")
+
+    today = datetime.now().date()
+    lines = [f"📅 *2026 F1 Schedule*",
+             f"_Times shown in your timezone: {tz_label}_",
+             "━━━━━━━━━━━━━━━━━━━━━━", ""]
+
+    shown = 0
+    for entry in SESSION_SCHEDULE_2026:
+        rnd, race_name, circuit_tz, session_list = entry
+        race_date_str = RACE_DATES_2026.get(rnd)
+        if not race_date_str:
+            continue
+        race_date  = datetime.strptime(race_date_str, "%Y-%m-%d").date()
+        days_until = (race_date - today).days
+
+        if days_until < -1:
+            continue  # past
+        if shown >= 3:
+            break     # show next 3 weekends only
+
+        lines.append(f"🏎 *R{rnd} — {race_name}*  _{race_date_str}_")
+
+        for session_name, weekday_offset, utc_h, utc_m in session_list:
+            days_before  = 6 - weekday_offset
+            session_date = race_date - timedelta(days=days_before)
+            user_mins    = (utc_h * 60 + utc_m + tz_offset * 60) % (24 * 60)
+            user_h       = user_mins // 60
+            user_m       = user_mins % 60
+            emoji        = SESSION_EMOJIS.get(session_name, "🏁")
+            lines.append(
+                f"  {emoji} {session_name}: *{user_h:02d}:{user_m:02d}*"
+                f"  _{session_date.strftime('%b %d')}_")
+
+        lines.append("")
+        shown += 1
+
+    if shown == 0:
+        lines.append("Season complete! 🏆")
+
+    lines.append(f"_Set your timezone: /timezone_")
+
+    for part in split_message("\n".join(lines)):
+        try:
+            await update.message.reply_text(
+                part, parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            await update.message.reply_text(re.sub(r"[*_]", "", part))
+
+
+async def cmd_mypredictions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Shows the bot's prediction accuracy for the season."""
+    preds = load_predictions()
+    if not preds:
         await update.message.reply_text(
-            "⚠️ Couldn't fetch news right now. Try again in a moment.")
+            "🎯 No predictions tracked yet this season.\n\n"
+            "Use /winner before each race and I'll track my accuracy!")
         return
-    # Format nicely
-    lines = ["📰 *Latest F1 News*",
+
+    resolved = [p for p in preds if p.get("correct") is not None]
+    pending  = [p for p in preds if p.get("correct") is None]
+
+    lines = ["🎯 *BoxBoxAI Prediction Accuracy*",
              "_Developed by Erick Hernandez_",
              "━━━━━━━━━━━━━━━━━━━━━━", ""]
-    for line in headlines.split("\n"):
-        if line.startswith("- "):
-            lines.append(f"• {line[2:]}")
-        elif line:
-            lines.append(line)
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+
+    if resolved:
+        correct = sum(1 for p in resolved if p["correct"])
+        total   = len(resolved)
+        pct     = round(correct / total * 100)
+        bar     = "🟢" * correct + "🔴" * (total - correct)
+        lines.append(f"📊 *Season record: {correct}/{total} ({pct}%)*")
+        lines.append(bar)
+        lines.append("")
+        lines.append("*Results:*")
+        for p in resolved[-5:]:
+            icon = "✅" if p["correct"] else "❌"
+            lines.append(
+                f"{icon} {p['race']}: predicted *{p['predicted']}*"
+                f", actual *{p.get('actual','?')}*")
+    else:
+        lines.append("No resolved predictions yet — check back after the next race!")
+
+    if pending:
+        lines.append("")
+        lines.append(f"_⏳ {len(pending)} prediction(s) awaiting race result_")
+        for p in pending:
+            lines.append(f"  • {p['race']}: *{p['predicted']}* (pending)")
+
+    try:
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(re.sub(r"[*_]", "", "\n".join(lines)))
 
 
 async def cmd_live(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4444,11 +4632,13 @@ def main():
     app.add_handler(CommandHandler("standings",      cmd_standings))
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
     app.add_handler(CommandHandler("season",         cmd_season))
+    app.add_handler(CommandHandler("schedule",       cmd_schedule))
     app.add_handler(CommandHandler("lastrace",       cmd_lastrace))
     app.add_handler(CommandHandler("live",           cmd_live))
     app.add_handler(CommandHandler("predict",        cmd_predict))
     app.add_handler(CommandHandler("winner",         cmd_winner))
     app.add_handler(CommandHandler("compare",        cmd_compare))
+    app.add_handler(CommandHandler("mypredictions",  cmd_mypredictions))
     app.add_handler(CommandHandler("debate",         cmd_debate))
     app.add_handler(CommandHandler("hottake",        cmd_hottake))
     app.add_handler(CommandHandler("wouldyourather", cmd_wouldyourather))
