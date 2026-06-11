@@ -4958,8 +4958,8 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         )) if _app_ref[0] else None
         return "⚠️ Too many requests right now. Try again in a moment!"
     except Exception as e:
-        log.error(f"Claude error: {e}")
-        return "⚠️ Something went wrong. Try again in a sec."
+        log.error(f"Claude API error: {type(e).__name__}: {e}", exc_info=True)
+        return f"⚠️ Error calling Claude: {type(e).__name__}: {str(e)[:80]}"
 
 # ═════════════════════════════════════════════════════════════
 #  WEATHER ENGINE — Open-Meteo (free, no API key)
@@ -6672,9 +6672,9 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     re.sub(r"[*_`]","",part))
 
     except Exception as e:
-        log.error(f"cmd_winner error: {e}")
+        log.error(f"cmd_winner error: {type(e).__name__}: {e}", exc_info=True)
         await update.message.reply_text(
-            "⚠️ Something went wrong with the prediction. Try again in a moment.")
+            f"⚠️ Error: {type(e).__name__}: {str(e)[:100]}")
 
 
 
