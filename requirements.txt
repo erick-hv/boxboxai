@@ -2,7 +2,7 @@ python-telegram-bot==22.7
 anthropic
 requests
 
-# Predictor dependencies
+# Elite data layer
 fastf1
 pandas
 numpy
