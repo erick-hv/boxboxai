@@ -4129,8 +4129,9 @@ def update_user_history(sessions: dict, user_id: str,
         }
     sessions[user_id]["history"].append({"role": role, "content": content})
     sessions[user_id]["last_seen"] = datetime.now().isoformat()
-    # Keep last 20 messages per user
-    sessions[user_id]["history"] = sessions[user_id]["history"][-20:]
+    # Keep last 6 messages (3 exchanges) — enough for conversational context
+    # without burning tokens on old history
+    sessions[user_id]["history"] = sessions[user_id]["history"][-6:]
 
     # Track stats for user messages only
     if role == "user":
@@ -4302,9 +4303,9 @@ def build_system_prompt(mem: dict, news_context: str = "",
     Core: ~400 tokens always. Context: injected only when needed.
     Total typical: 600-900 tokens vs old 2400+.
     """
-    # ── Compact race memory ───────────────────────────────────
+    # ── Compact race memory (last 8 races max) ───────────────
     ep_lines = []
-    for r in mem.get("episodic", []):
+    for r in mem.get("episodic", [])[-8:]:
         quali  = r.get("qualifying", {})
         sprint = r.get("sprint", {})
         dnfs   = r.get("dnfs", [])
@@ -4336,27 +4337,27 @@ def build_system_prompt(mem: dict, news_context: str = "",
     # ── Dynamic context blocks (only when not empty) ──────────
     ctx_blocks = []
     if news_context:
-        ctx_blocks.append(f"NEWS:{news_context[:600]}")
+        ctx_blocks.append(f"NEWS:{news_context[:300]}")
     if live_search_context:
-        ctx_blocks.append(f"LIVE SEARCH:{live_search_context[:1200]}")
+        ctx_blocks.append(f"LIVE SEARCH:{live_search_context[:800]}")
     if fia_docs_context:
-        ctx_blocks.append(f"FIA STEWARDS DOCS:{fia_docs_context[:1000]}")
+        ctx_blocks.append(f"FIA STEWARDS DOCS:{fia_docs_context[:600]}")
     if weather_context:
-        ctx_blocks.append(f"WEATHER:{weather_context[:300]}")
+        ctx_blocks.append(f"WEATHER:{weather_context[:150]}")
     if live_context:
-        ctx_blocks.append(f"LIVE SESSION:{live_context[:400]}")
+        ctx_blocks.append(f"LIVE SESSION:{live_context[:200]}")
     if practice_context:
-        ctx_blocks.append(f"SESSION DATA:{practice_context[:600]}")
+        ctx_blocks.append(f"SESSION DATA:{practice_context[:300]}")
     if circuit_guide:
-        ctx_blocks.append(f"CIRCUIT:{circuit_guide[:500]}")
+        ctx_blocks.append(f"CIRCUIT:{circuit_guide[:300]}")
     if driver_stats:
-        ctx_blocks.append(f"DRIVER STATS:{driver_stats[:400]}")
+        ctx_blocks.append(f"DRIVER STATS:{driver_stats[:300]}")
     if historical_context:
-        ctx_blocks.append(f"HISTORY:{historical_context[:400]}")
+        ctx_blocks.append(f"HISTORY:{historical_context[:200]}")
     if prediction_accuracy:
-        ctx_blocks.append(f"PREDICTION RECORD:{prediction_accuracy[:200]}")
+        ctx_blocks.append(f"PREDICTION RECORD:{prediction_accuracy[:150]}")
     if user_profile:
-        ctx_blocks.append(f"USER:{user_profile[:200]}")
+        ctx_blocks.append(f"USER:{user_profile[:150]}")
 
     ctx_str = "\n\n".join(ctx_blocks)
 
