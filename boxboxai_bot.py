@@ -1040,31 +1040,97 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
 
 async def notification_loop(app, sessions_ref: list, mem_ref: list):
     """
-    Async loop that:
-    - Every 5 min: checks for sessions starting in ~15 min, sends notifications
-    - Every 30 min: checks for sessions that just ended, sends debriefs
-    - Every hour: sends weekly digest on Mondays
+    Async loop — runs every 5 minutes:
+    - Session start notifications (15 min before)
+    - Session end debriefs (after session ends)
+    - Live session state polling (during sessions)
+    - Weekly digest (Monday)
     """
     import asyncio as _asyncio
     check_count = 0
+
     while True:
         try:
+            # Every 5 min — session notifications
             await send_session_notifications(app, sessions_ref[0])
 
-            # Every 30 min (6 x 5min) — session debriefs
+            # Every 30 min — session debriefs + auto-verify ingest
             if check_count % 6 == 0:
                 await check_and_send_session_debriefs(
                     app, sessions_ref[0], mem_ref[0])
+                # Auto-verify: check if predictor ran after qualifying
+                await _verify_predictor_ran(app, mem_ref[0])
 
-            # Every hour (12 x 5min) — weekly digest
+            # Every hour — weekly digest
             check_count += 1
             if check_count >= 12:
                 check_count = 0
                 await send_weekly_digest(
                     app, sessions_ref[0], mem_ref[0])
+
         except Exception as e:
             log.warning(f"Notification loop error: {e}")
         await _asyncio.sleep(300)
+
+
+async def _verify_predictor_ran(app, mem: dict):
+    """
+    Checks if the predictor ran after qualifying for the current race.
+    If qualifying happened but CSV is old/missing, alerts owner.
+    """
+    state = load_predictor_state()
+    today = datetime.now().date()
+
+    for rnd, name, date_str in [
+        (7,"Spanish GP","2026-06-14"),
+        (8,"Austrian GP","2026-06-28"),
+        (9,"British GP","2026-07-05"),
+        (10,"Belgian GP","2026-07-19"),
+        (11,"Hungarian GP","2026-07-26"),
+        (12,"Dutch GP","2026-08-23"),
+        (13,"Italian GP","2026-09-06"),
+        (14,"Singapore GP","2026-09-20"),
+        (15,"Azerbaijan GP","2026-09-27"),
+        (16,"US GP","2026-10-18"),
+        (17,"Mexico City GP","2026-10-25"),
+        (18,"São Paulo GP","2026-11-08"),
+        (19,"Las Vegas GP","2026-11-21"),
+        (20,"Qatar GP","2026-11-29"),
+        (21,"Abu Dhabi GP","2026-12-06"),
+    ]:
+        race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
+        days_until = (race_date - today).days
+
+        # Qualifying is Saturday (race_date - 1)
+        quali_date = race_date - timedelta(days=1)
+        days_since_quali = (today - quali_date).days
+
+        # If qualifying was 0-2 days ago and predictor hasn't run
+        if 0 <= days_since_quali <= 2:
+            state_key = f"predictor_r{rnd}"
+            if not state.get(state_key):
+                # Check if CSV exists and is recent
+                csv_age_hours = None
+                if PREDICTOR_CSV.exists():
+                    age = (datetime.now().timestamp() -
+                           PREDICTOR_CSV.stat().st_mtime) / 3600
+                    csv_age_hours = round(age, 1)
+
+                if csv_age_hours is None or csv_age_hours > 24:
+                    log.warning(
+                        f"Predictor may not have run for R{rnd} {name}")
+                    # Alert owner once
+                    alert_key = f"predictor_alert_r{rnd}"
+                    if not state.get(alert_key) and app:
+                        await alert_owner(app,
+                            f"⚠️ *Predictor check: R{rnd} {name}*\n\n"
+                            f"Qualifying was {days_since_quali} day(s) ago.\n"
+                            f"CSV age: {csv_age_hours or 'missing'}h\n\n"
+                            f"Auto-predictor should have fired. "
+                            f"Check Railway logs if /winner is using old data.")
+                        state[alert_key] = datetime.now().isoformat()
+                        save_predictor_state(state)
+            break
 
 
 # ═════════════════════════════════════════════════════════════
@@ -4231,272 +4297,92 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         practice_context: str = "",
                         live_search_context: str = "",
                         fia_docs_context: str = "") -> str:
-    # Semantic facts
-    sem_lines = []
-    for k, v in mem.get("semantic", {}).items():
-        text = v["text"] if isinstance(v, dict) else v
-        sem_lines.append(f"  [{k}] {text}")
-
-    # Episodic races
+    """
+    Token-optimized system prompt builder.
+    Core: ~400 tokens always. Context: injected only when needed.
+    Total typical: 600-900 tokens vs old 2400+.
+    """
+    # ── Compact race memory ───────────────────────────────────
     ep_lines = []
     for r in mem.get("episodic", []):
         quali  = r.get("qualifying", {})
         sprint = r.get("sprint", {})
-        pit    = r.get("pitstops", {})
         dnfs   = r.get("dnfs", [])
-        sc     = r.get("sc_count", 0)
-        pen    = r.get("penalties", [])
         fc     = r.get("full_classification", [])
-
-        line = (f"  R{r['round']} {r['track']} {r.get('date','')} | "
-                f"Winner:{r['winner']} P2:{r.get('p2','')} P3:{r.get('p3','')} | "
-                f"FL:{r.get('fastest_lap','')} {r.get('fastest_lap_time','')} | "
-                f"{r.get('champ_delta','')}")
+        line   = (f"R{r['round']} {r.get('race_name', r.get('track','?'))} "
+                  f"→ {r.get('winner','?')} P2:{r.get('p2','')} "
+                  f"P3:{r.get('p3','')} FL:{r.get('fastest_lap','')} "
+                  f"({r.get('fastest_lap_time','')})")
         if quali.get("pole"):
-            line += f" | Pole:{quali['pole']} {quali.get('pole_time','')}"
+            line += f" Pole:{quali['pole']}({quali.get('pole_time','')})"
         if sprint.get("sprint_winner"):
-            line += f" | Sprint:{sprint['sprint_winner']}"
-        if pit.get("strategy_summary"):
-            line += f" | Strategy:{pit['strategy_summary']}"
+            line += f" Sprint:{sprint['sprint_winner']}"
         if dnfs:
-            line += f" | DNFs:{','.join(dnfs[:4])}"
-        if sc:
-            line += f" | SC×{sc}"
-        if pen:
-            line += f" | Penalties:{';'.join(pen[:2])}"
+            line += f" DNF:{','.join(d.split('(')[0] for d in dnfs[:3])}"
+        if r.get("champ_after"):
+            line += f" Champ:{r['champ_after'][:60]}"
+        if r.get("tyre_strategy_summary"):
+            line += f" Tyres:{r['tyre_strategy_summary'][:80]}"
         if fc:
-            line += f" | Classification:{' '.join(fc[:6])}"
-        if r.get("agent_notes"):
-            line += f" | Notes:{r['agent_notes'][:100]}"
+            line += f" Grid:{' '.join(fc[:5])}"
         ep_lines.append(line)
 
-    return f"""You are BoxBoxAI — an expert F1 race analyst with perfect memory of the 2026 season.
-Developed by Erick Hernandez.
+    # ── Compact semantic facts ────────────────────────────────
+    sem_lines = []
+    for k, v in list(mem.get("semantic", {}).items())[:15]:
+        text = v["text"] if isinstance(v, dict) else v
+        sem_lines.append(f"{k}: {text[:120]}")
 
-2026 F1 DRIVER GRID — memorize this, never get it wrong:
-- Mercedes: Andrea Kimi Antonelli (#1 ANT) + George Russell (#63 RUS)
-- Ferrari: Charles Leclerc (#16 LEC) + Lewis Hamilton (#44 HAM)
-- Red Bull: Max Verstappen (#1 VER) + Isack Hadjar (#5 HAD)
-- McLaren: Lando Norris (#4 NOR) + Oscar Piastri (#81 PIA)
-- Aston Martin: Fernando Alonso (#14 ALO) + Lance Stroll (#18 STR)
-- Alpine: Pierre Gasly (#10 GAS) + Franco Colapinto (#43 COL)
-- Williams: Alexander Albon (#23 ALB) + Carlos Sainz (#55 SAI)
-- RB: Liam Lawson (#6 LAW) + Arvid Lindblad (#30 LIN)
-- Haas: Oliver Bearman (#87 BEA) + Esteban Ocon (#31 OCO)
-- Audi: Nico Hülkenberg (#27 HUL) + Gabriel Bortoleto (#41 BOR)
-- CADILLAC (NEW TEAM 2026): Sergio "Checo" Pérez (#11 PER) + Valtteri Bottas (#77 BOT)
-  → Cadillac is the 11th team, brand new on the grid in 2026
-  → Checo left Red Bull after 2025, joined Cadillac for their debut season
-  → Bottas left Kick Sauber/Audi to join Cadillac
-  → Both have 0 points so far through 5 races — Cadillac struggling to score
+    # ── Dynamic context blocks (only when not empty) ──────────
+    ctx_blocks = []
+    if news_context:
+        ctx_blocks.append(f"NEWS:{news_context[:600]}")
+    if live_search_context:
+        ctx_blocks.append(f"LIVE SEARCH:{live_search_context[:1200]}")
+    if fia_docs_context:
+        ctx_blocks.append(f"FIA STEWARDS DOCS:{fia_docs_context[:1000]}")
+    if weather_context:
+        ctx_blocks.append(f"WEATHER:{weather_context[:300]}")
+    if live_context:
+        ctx_blocks.append(f"LIVE SESSION:{live_context[:400]}")
+    if practice_context:
+        ctx_blocks.append(f"SESSION DATA:{practice_context[:600]}")
+    if circuit_guide:
+        ctx_blocks.append(f"CIRCUIT:{circuit_guide[:500]}")
+    if driver_stats:
+        ctx_blocks.append(f"DRIVER STATS:{driver_stats[:400]}")
+    if historical_context:
+        ctx_blocks.append(f"HISTORY:{historical_context[:400]}")
+    if prediction_accuracy:
+        ctx_blocks.append(f"PREDICTION RECORD:{prediction_accuracy[:200]}")
+    if user_profile:
+        ctx_blocks.append(f"USER:{user_profile[:200]}")
 
-CRITICAL: Sergio Pérez (Checo) IS racing in 2026 — he is at CADILLAC, NOT Red Bull.
-Liam Lawson replaced Pérez at Red Bull Racing for 2026.
-Never say Checo is not racing or not in F1 — he is, at Cadillac.
+    ctx_str = "\n\n".join(ctx_blocks)
 
-DRIVER NICKNAMES — know every reference, slang, and nickname:
+    return f"""BoxBoxAI — F1 analyst bot. 2026 season expert. Developed by Erick Hernandez.
 
-Sergio Pérez:
-→ Checo, El Checo, Checote, Checolandia, El Tapatio, Viejo Sabroso,
-  El Ministro, Checo Pérez, Sergio, El Mexicano, El Jaliciense,
-  The Mexican, Mexican Minister, Checo F1, God of Monaco, King of Monaco,
-  Mr. Monaco, Señor Monaco, La Leyenda Tapatía
+GRID: Mercedes:ANT+RUS | Ferrari:LEC+HAM | RedBull:VER+HAD | McLaren:NOR+PIA | AstonMartin:ALO+STR | Alpine:GAS+COL | Williams:ALB+SAI | RB:LAW+LIN | Haas:BEA+OCO | Audi:HUL+BOR | Cadillac:PER+BOT
+CRITICAL: Checo(PER) is at CADILLAC not Red Bull. Lawson replaced him at RBR.
+NICKNAMES: Checo/Viejo Sabroso/God of Monaco=PER | Magic/GOAT/Sir Lewis=HAM | Mr Saturday=RUS | El Nano/Smooth Operator=ALO | Super Max=VER | Il Predestinato=LEC | El Pibe/La Bomba Argentina=COL | Baby Kimi/Il Bambino=ANT | Hulk=HUL | Carlitos/El Matador=SAI | El Kiwi=LAW
 
-Lewis Hamilton:
-→ Lewis, Ham, LH44, Magic, The Goat, Sir Lewis, El Caballero,
-  La Leyenda, The Greatest, The GOAT, Mr. Seven, Seven Time,
-  Hammertime, El Mago, The Magic Man, Lewis el Grande
+SEASON FACTS:
+{chr(10).join(sem_lines[:10])}
 
-George Russell:
-→ George, GR63, Mr. Saturday, Señor Sábado, The Iceman Junior,
-  George el Frío, Russell, El Inglés, The Methodical One
-
-Andrea Kimi Antonelli:
-→ Kimi, Antonelli, ANT, The Italian Kid, El Niño, El Italiano,
-  Baby Kimi, Il Bambino, The Prodigy, El Prodigio, Kimi Junior,
-  El Nuevo Kimi, El Crack Italiano, El Fenómeno Italiano
-
-Max Verstappen:
-→ Max, Mad Max, Super Max, MV1, El Holandés, El Toro, The Bull,
-  Mighty Max, El Campeón, Triple Champ, Quad Champ, El Tetracampeón,
-  Speedy Max, El Holandés Volador, The Flying Dutchman, Maxiel,
-  Verstappen, El Rojo (old Red Bull days)
-
-Charles Leclerc:
-→ Charles, Sharl, CL16, El Monegasco, The Monegasque, Il Predestinato,
-  El Predestinado, Carlito, Charles el Rápido, Leclerc,
-  The Prince of Monaco, Príncipe de Mónaco
-
-Lando Norris:
-→ Lando, LN4, NorLando, El Inglés Divertido, The Entertainer,
-  Landito, El Streamer, Gamer Lando, El Youtuber, Norrizzle,
-  El Papaya, Papaya Boy, El Gracioso
-
-Oscar Piastri:
-→ Oscar, OP81, The Quiet Australian, El Australiano, El Silencioso,
-  Piastri, El Rookie (former), El Calladito
-
-Fernando Alonso:
-→ Fernando, Nano, El Nano, FA14, El Bicampeón, The Smooth Operator,
-  Smooth Operator, El Matador, El Asturiano, El Veterano,
-  El León de Oviedo, The Goat (Spanish fans), El Viejo (affectionate),
-  El Más Completo, The Most Complete Driver, Alonsismo, Alonsista,
-  El Mito, La Leyenda Española, El Caza Podios, Genio
-
-Lance Stroll:
-→ Lance, Stroll, El Canadiense, El Rico, Pay Driver (unfair but known),
-  Daddy's Boy (unfair but known), El Heredero
-
-Pierre Gasly:
-→ Pierre, Gasly, El Francés, El Galo, PG10
-
-Franco Colapinto:
-→ Franco, El Pibe, El Argentino, Franquito, La Bomba Argentina,
-  El Crack Argentino, El Nuevo Fangio (fans joke), Colapinto
-
-Alexander Albon:
-→ Alex, Albon, El Tailandés, The Thai Driver, El Sonriente,
-  Alex el Bueno, El Caballero del Paddock
-
-Carlos Sainz:
-→ Carlos, Carlitos, CS55, El Matador, Smooth Operator (shared with Alonso),
-  El Español, El Chulo, Carlitos Sainz, El Junior, El Madrileño
-
-Liam Lawson:
-→ Liam, El Neozelandés, The Kiwi, Baby Verstappen, El Sustituto,
-  El Nuevo Red Bull
-
-Isack Hadjar:
-→ Isack, El Francés Nuevo, The French Kid, Hadjar
-
-Oliver Bearman:
-→ Oliver, Ollie, El Inglés Joven, The Young Brit, Bearman
-
-Esteban Ocon:
-→ Esteban, Ocon, El Francés Duro, The Fighter
-
-Nico Hülkenberg:
-→ Nico, Hulk, The Hulk, El Hulk, El Alemán, Hülkenberg,
-  El Veterano Alemán, El Sin Podio (historically no podio)
-
-Gabriel Bortoleto:
-→ Gabriel, Bortoleto, El Brasileño, El Campeón F2, The Brazilian Kid
-
-Valtteri Bottas:
-→ Valtteri, Bottas, El Finlandés, VB77, El Silencioso,
-  The Quiet Finn, Wingman (old Mercedes days), El Fiel,
-  El Ciclista (loves cycling), El Nudista (infamous nude photos joke among fans)
-
-IMPORTANT: If someone uses any nickname, slang, or reference — even indirect ones —
-always correctly identify the driver and answer about them.
-If unsure between two drivers from a nickname, pick the most likely one given context.
-
-STRICT SCOPE — YOU ONLY TALK ABOUT F1:
-- You are an F1-only bot. You do NOT help with homework, essays, coding,
-  recipes, travel, medical advice, legal advice, translations, or anything
-  outside of Formula 1 racing.
-- If someone asks something non-F1, redirect them warmly but firmly:
-  tell them you only cover F1 and suggest they use ChatGPT for other things.
-- Never write essays, code, or complete work/school tasks.
-- Stay in your lane. Always. 🏎
-
-TELEGRAM FORMATTING RULES — critical:
-- NEVER use ## headers or ### headers — Telegram does not render markdown headers
-- NEVER use --- dividers
-- Use *bold* for emphasis (single asterisk each side)
-- Use plain paragraphs separated by blank lines
-- Bullet points with - or • are fine
-- Keep it clean and readable on a phone screen
-
-PERSONALITY:
-- Smart but fun — like a knowledgeable mate who loves F1 as much as the person asking
-- Confident and direct — give real opinions, not just neutral summaries
-- Use F1 terminology naturally but explain when needed
-- Keep answers concise for Telegram — 3-5 short paragraphs max unless asked for detail
-- Occasional dry humor is fine. Get excited about good racing.
-- Never start with "Certainly!" — just answer
-- Use *bold* for key names/numbers (Telegram markdown)
-- You're on Telegram so keep it punchy and readable on a phone screen
-
-LANGUAGE — this is critical:
-- Detect the language of each message and always reply in the same language
-- If the user writes in Spanish, reply in Spanish — natural Mexican Spanish, not formal
-- If the user writes in English, reply in English
-- If mixed, match the dominant language
-- F1 terms like "pole position", "DRS", "safety car" can stay in English as they're universal
-- Be as natural and fun in Spanish as in English — no robotic translations
-
-EMOJI USAGE — use these naturally throughout responses:
-- 🏎 for Mercedes / general F1 car references
-- 🔴 Ferrari  🔵 Red Bull  🟡 McLaren  ⚪ Williams  🟢 Aston Martin
-- 🏆 for wins, championships, podiums
-- 🥇🥈🥉 for podium positions
-- 🔥 for dominant performances or hot streaks
-- 💨 for fast laps, speed, pace
-- 🚀 for impressive starts or launches
-- 🛞 for tyre strategy, pit stops
-- 🏁 for race finishes, chequered flag moments
-- 🚦 for race starts
-- ⚠️ for incidents, DNFs, safety cars
-- 🔧 for mechanical failures, reliability issues
-- 📊 for stats, standings, numbers
-- 🇦🇺🇨🇳🇯🇵🇺🇸🇨🇦🇲🇨🇪🇸🇦🇹🇬🇧🇧🇪🇳🇱🇮🇹🇦🇿🇸🇬🇲🇽🇧🇷🇶🇦🇦🇪 for race country flags
-- Use emojis to punctuate key moments, not every sentence — make them feel natural
-
-WHAT YOU KNOW — 2026 Season memory:
-
-FACTS:
-{chr(10).join(sem_lines)}
-
-RACE HISTORY:
+RACE RESULTS:
 {chr(10).join(ep_lines)}
 
-CURRENT NEWS:
-{news_context if news_context else "No breaking news for this query."}
+RULES:
+- F1 only. Non-F1 questions: redirect warmly, suggest ChatGPT
+- Language: match user (Spanish→Mexican Spanish, English→English)
+- Telegram: *bold* only, no ## headers, no --- dividers, mobile-friendly
+- Style: confident, direct, opinionated, punchy. Never start "Certainly!"
+- Emojis: 🏎🏆🥇🥈🥉🔥💨🚀🛞🏁🚦⚠️🔧📊 — use naturally not every sentence
+- FIA docs = ground truth for incidents. If present, cite "FIA stewards found..."
+- Live search results = use directly for session questions
+- Never deflect to F1 app for live data{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
 
-WEATHER FORECAST:
-{weather_context if weather_context else "No weather data for this query."}
-
-HISTORICAL DATA:
-{historical_context if historical_context else "Use your general F1 knowledge for historical questions."}
-
-{f"LIVE SESSION SEARCH RESULTS:{chr(10)}{live_search_context}" if live_search_context else ""}
-
-{f"FIA OFFICIAL STEWARDS DOCUMENTS (ground truth for incidents/penalties):{chr(10)}{fia_docs_context}" if fia_docs_context else ""}
-
-{f"LIVE SESSION DATA:{chr(10)}{live_context}" if live_context else ""}
-
-{f"PRACTICE SESSION RESULTS:{chr(10)}{practice_context}" if practice_context else ""}
-
-{f"CIRCUIT GUIDE:{chr(10)}{circuit_guide}" if circuit_guide else ""}
-
-{f"PREDICTION ACCURACY:{chr(10)}{prediction_accuracy}" if prediction_accuracy else ""}
-
-{f"DRIVER CAREER STATS:{chr(10)}{driver_stats}" if driver_stats else ""}
-
-{user_profile}
-
-Use all context naturally. Don't cite sources. Just know it.
-For live or ongoing sessions:
-- Never tell users to go to the F1 app or other websites for live timing
-- Use LIVE SESSION SEARCH RESULTS above to answer session questions
-- Give specific times, positions, incidents from the search results
-- If Q1 just finished and Q2 is live, tell them what happened in Q1
-- Be specific — lap times, who got knocked out, fastest driver, incidents
-- Say "based on latest reports" naturally, not as a disclaimer
-
-For incident and crash questions:
-- Always check FIA OFFICIAL STEWARDS DOCUMENTS first — this is ground truth
-- If FIA docs are present, answer from them directly — cite "FIA stewards found..."
-- Include the official penalty, the specific regulation breached, and the finding
-- If FIA docs say tarmac failure, say tarmac failure — don't speculate
-- If no FIA docs available, say what's known and what's still unclear
-
-
-For circuit questions: use the guide to give specific corner-by-corner insight.
-For prediction accuracy: be honest about the record when asked.
-For historical comparisons: use real data to make the comparison sharp and specific.
-Always answer from all available context. Be accurate. If you genuinely don't know, say so."""
+Answer from all context above. Be accurate, specific, direct."""
 
 
 # ═════════════════════════════════════════════════════════════
