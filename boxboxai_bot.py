@@ -976,20 +976,26 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
     p3        = last_race.get("p3", "?")
     story     = last_race.get("story", "")
     champ     = last_race.get("champ_after", "")
+    dnfs      = last_race.get("dnfs", [])
+    sc        = last_race.get("sc_count", 0)
+    pit       = last_race.get("pitstops", {})
 
-    # Generate AI debrief
+    # Generate AI debrief using Ruth's voice format
     try:
         prompt = (
-            f"Write a punchy Monday race debrief for {race_name}. "
-            f"Result: {winner} won, {p2} P2, {p3} P3. {story} "
-            f"Championship after: {champ}. "
-            f"Cover: the decisive moment, who impressed, who disappointed, "
-            f"championship picture, one thing to watch next race. "
-            f"Keep it under 200 words. No headers. Engaging and opinionated. "
-            f"Use emojis naturally."
+            f"{RUTH_DEBRIEF_PROMPT}\n\n"
+            f"RACE DATA:\n"
+            f"Race: {race_name}\n"
+            f"Result: {winner} won | P2: {p2} | P3: {p3}\n"
+            f"Story: {story}\n"
+            f"DNFs: {', '.join(dnfs) if dnfs else 'none'}\n"
+            f"Safety cars: {sc}\n"
+            f"Strategy: {pit.get('strategy_summary','')}\n"
+            f"Championship: {champ}\n\n"
+            f"Now write the debrief in the exact format above."
         )
         resp = get_client().messages.create(
-            model=MODEL, max_tokens=400,
+            model=MODEL, max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
         debrief = resp.content[0].text if resp.content else story
@@ -1004,7 +1010,7 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
         next_str  = f"\n\n🔜 *Next up: {next_name}* — {next_date}\n_/predict_ for my full preview"
 
     msg = (
-        f"🏁 *{race_name} — Monday Debrief*\n"
+        f"📋 *Monday Debrief — {race_name}*\n"
         f"_BoxBoxAI Race Analysis_\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🥇 *{winner}*  🥈 {p2}  🥉 {p3}\n\n"
@@ -1015,6 +1021,9 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
 
     sent = 0
     for uid in active_users:
+        user_prefs = sessions.get(uid, {}).get("notification_prefs", {})
+        if not user_prefs.get("weekly_debrief", True):
+            continue
         try:
             await app.bot.send_message(
                 chat_id=uid, text=msg, parse_mode="Markdown")
@@ -1033,16 +1042,21 @@ async def notification_loop(app, sessions_ref: list, mem_ref: list):
     """
     Async loop that:
     - Every 5 min: checks for sessions starting in ~15 min, sends notifications
+    - Every 30 min: checks for sessions that just ended, sends debriefs
     - Every hour: sends weekly digest on Mondays
     """
     import asyncio as _asyncio
     check_count = 0
     while True:
         try:
-            # Every 5 minutes — session start notifications
             await send_session_notifications(app, sessions_ref[0])
 
-            # Every hour (12 x 5min checks) — weekly digest
+            # Every 30 min (6 x 5min) — session debriefs
+            if check_count % 6 == 0:
+                await check_and_send_session_debriefs(
+                    app, sessions_ref[0], mem_ref[0])
+
+            # Every hour (12 x 5min) — weekly digest
             check_count += 1
             if check_count >= 12:
                 check_count = 0
@@ -1050,7 +1064,7 @@ async def notification_loop(app, sessions_ref: list, mem_ref: list):
                     app, sessions_ref[0], mem_ref[0])
         except Exception as e:
             log.warning(f"Notification loop error: {e}")
-        await _asyncio.sleep(300)  # check every 5 minutes
+        await _asyncio.sleep(300)
 
 
 # ═════════════════════════════════════════════════════════════
@@ -2539,30 +2553,25 @@ Just ask me anything. Some ideas:
 
 Let's talk F1 🚀"""
 
-HELP_TEXT = """*BoxBoxAI Commands*
+HELP_TEXT = """*BoxBoxAI — F1 Race Analyst* 🏎
 _Developed by Erick Hernandez_
-━━━━━━━━━━━━━━━━━━━━━━
 
-/start — welcome & intro
-/timezone — 🌍 Set your timezone
-/standings — 🏆 Driver championship standings
+*Commands:*
+/standings — 🏆 Driver championship
 /constructors — 🏗 Constructor standings
-/season — 📅 Full 2026 season results
-/schedule — 🗓 Upcoming race schedule (your timezone)
-/lastrace — 🏁 Latest race summary
-/live — 🔴 Live session timing
-/predict — 🎯 Next race preview
-/winner — 🥇 Quick winner prediction
-/compare — ⚖️ Compare two drivers
-/mypredictions — 🎯 Bot prediction accuracy
-/news — 📰 Latest F1 headlines
-/debate — 🔥 Random F1 debate topic
-/hottake — 🌶️ Spicy F1 hot take
-/wouldyourather — 🤔 F1 strategy dilemma
-/mystats — 📊 Your personal stats
-/help — this menu
+/winner — 🥇 Race winner prediction
+/predict — 🎯 Full race preview
+/help — This menu
 
-Or just *ask anything* in English or Spanish 💬🇲🇽🇺🇸"""
+*Just talk to me:*
+Ask me anything about F1 — drivers, races, strategy, championship, history. I'll answer.
+
+_Examples:_
+"Who will win Monaco?"
+"Tell me about Antonelli"
+"What happened in Canada?"
+"Can Verstappen still win the championship?"
+"""
 
 # ═════════════════════════════════════════════════════════════
 #  MEMORY LOADER
@@ -2574,7 +2583,6 @@ def load_f1_memory() -> dict:
             return json.loads(MEMORY_FILE.read_text())
         except Exception:
             pass
-    # Fallback: minimal hardcoded memory
     return {
         "semantic": {
             "season/2026_summary": {
@@ -2598,6 +2606,7 @@ def save_f1_memory(mem: dict):
 
 
 AUTO_INGEST_FILE = Path(__file__).parent / "boxboxai_auto_ingest.json"
+F1_CACHE_DIR     = Path(__file__).parent / "f1_cache"
 
 def load_ingest_state() -> dict:
     if AUTO_INGEST_FILE.exists():
@@ -2605,7 +2614,7 @@ def load_ingest_state() -> dict:
             return json.loads(AUTO_INGEST_FILE.read_text())
         except Exception:
             pass
-    return {"last_ingested_round": 0}
+    return {}
 
 def save_ingest_state(state: dict):
     try:
@@ -2614,7 +2623,864 @@ def save_ingest_state(state: dict):
         log.error(f"Failed to save ingest state: {e}")
 
 
+# ═════════════════════════════════════════════════════════════
+#  ELITE DATA LAYER
+#  FastF1 + OpenF1 + Jolpica — triple source, ground truth
+#  Every session loaded with full detail:
+#  lap times, sectors, tyres, pit stops, incidents, full grid
+# ═════════════════════════════════════════════════════════════
+
+# FastF1 availability check
+_FF1_AVAILABLE = False
+try:
+    import fastf1
+    import pandas as pd
+    import numpy as np
+    F1_CACHE_DIR.mkdir(exist_ok=True)
+    fastf1.Cache.enable_cache(str(F1_CACHE_DIR))
+    _FF1_AVAILABLE = True
+    log.info("FastF1 available ✅")
+except ImportError:
+    log.warning("FastF1 not installed — using Jolpica+OpenF1 only")
+
+
+def _safe_ff1_load(year: int, round_num: int,
+                   session_type: str) -> object | None:
+    """Safely loads a FastF1 session. Returns None if unavailable."""
+    if not _FF1_AVAILABLE:
+        return None
+    try:
+        import fastf1 as _ff1
+        sess = _ff1.get_session(year, round_num, session_type)
+        sess.load(laps=True, telemetry=False,
+                  weather=True, messages=True)
+        if sess.laps is None or len(sess.laps) == 0:
+            return None
+        return sess
+    except Exception as e:
+        log.debug(f"FastF1 load failed R{round_num} {session_type}: {e}")
+        return None
+
+
+def _ff1_session_summary(sess) -> dict:
+    """
+    Extracts rich summary from a FastF1 session object.
+    Returns structured dict with everything needed for memory.
+    """
+    import pandas as pd
+    import numpy as np
+
+    summary = {
+        "source": "fastf1",
+        "top5_times": [],
+        "full_order": [],
+        "fastest_lap": {"driver": "", "time": "", "lap": 0},
+        "sector_bests": {},
+        "tyre_stints": {},
+        "pit_stops": {},
+        "weather": {},
+        "incidents": [],
+    }
+
+    try:
+        laps = sess.laps
+
+        # Full finishing/classification order
+        results = sess.results
+        if results is not None and not results.empty:
+            code_col = next((c for c in
+                ["Abbreviation","abbreviation","Driver"] if c in results.columns), None)
+            pos_col  = next((c for c in
+                ["Position","ClassifiedPosition","position"] if c in results.columns), None)
+            if code_col and pos_col:
+                ordered = results.sort_values(pos_col)
+                summary["full_order"] = ordered[code_col].tolist()[:20]
+
+        # Fastest lap overall
+        valid = laps.dropna(subset=["LapTime"])
+        valid = valid[valid["LapTime"].notna()]
+        if not valid.empty:
+            fl_idx  = valid["LapTime"].idxmin()
+            fl_row  = valid.loc[fl_idx]
+            fl_secs = fl_row["LapTime"].total_seconds()
+            mins    = int(fl_secs // 60)
+            secs    = fl_secs % 60
+            summary["fastest_lap"] = {
+                "driver": str(fl_row.get("Driver", "")),
+                "time":   f"{mins}:{secs:06.3f}",
+                "lap":    int(fl_row.get("LapNumber", 0)),
+            }
+
+        # Top 5 fastest laps per driver
+        best_per_driver = (
+            valid.groupby("Driver")["LapTime"]
+            .min()
+            .sort_values()
+            .head(5)
+        )
+        ref = best_per_driver.iloc[0].total_seconds() if not best_per_driver.empty else 0
+        for drv, lt in best_per_driver.items():
+            secs   = lt.total_seconds()
+            mins   = int(secs // 60)
+            s_part = secs % 60
+            delta  = secs - ref
+            summary["top5_times"].append({
+                "driver": str(drv),
+                "time":   f"{mins}:{s_part:06.3f}",
+                "delta":  f"+{delta:.3f}" if delta > 0 else "leader",
+            })
+
+        # Sector bests
+        for s_col, s_name in [
+            ("Sector1Time","S1"),
+            ("Sector2Time","S2"),
+            ("Sector3Time","S3"),
+        ]:
+            if s_col in laps.columns:
+                sv = laps.dropna(subset=[s_col])
+                if not sv.empty:
+                    best_idx = sv[s_col].idxmin()
+                    best_row = sv.loc[best_idx]
+                    t = best_row[s_col].total_seconds()
+                    summary["sector_bests"][s_name] = {
+                        "driver": str(best_row.get("Driver","")),
+                        "time":   f"{t:.3f}s",
+                    }
+
+        # Tyre stints
+        if "Compound" in laps.columns and "Stint" in laps.columns:
+            for (drv, stint), grp in laps.groupby(["Driver","Stint"]):
+                compound = grp["Compound"].iloc[0] if not grp.empty else "?"
+                n_laps   = len(grp)
+                if str(drv) not in summary["tyre_stints"]:
+                    summary["tyre_stints"][str(drv)] = []
+                summary["tyre_stints"][str(drv)].append({
+                    "compound": str(compound),
+                    "laps":     n_laps,
+                })
+
+        # Pit stops (from laps PitInTime/PitOutTime)
+        if "PitInTime" in laps.columns:
+            pit_laps = laps[laps["PitInTime"].notna()]
+            for drv, grp in pit_laps.groupby("Driver"):
+                summary["pit_stops"][str(drv)] = len(grp)
+
+        # Weather summary
+        try:
+            weather = sess.weather_data
+            if weather is not None and not weather.empty:
+                summary["weather"] = {
+                    "air_temp":   round(float(weather["AirTemp"].mean()), 1),
+                    "track_temp": round(float(weather["TrackTemp"].mean()), 1),
+                    "rainfall":   bool(weather["Rainfall"].any()),
+                    "humidity":   round(float(weather["Humidity"].mean()), 1),
+                }
+        except Exception:
+            pass
+
+        # Race control messages (incidents, SC, flags)
+        try:
+            rc = sess.race_control_messages
+            if rc is not None and not rc.empty:
+                for _, msg in rc.iterrows():
+                    text = str(msg.get("Message",""))
+                    cat  = str(msg.get("Category",""))
+                    lap  = msg.get("Lap", "?")
+                    if any(kw in text.upper() for kw in
+                           ["SAFETY CAR","RED FLAG","RETIRED",
+                            "PENALTY","INCIDENT","VSC","BLACK"]):
+                        summary["incidents"].append(
+                            f"L{lap} [{cat}]: {text[:100]}")
+        except Exception:
+            pass
+
+    except Exception as e:
+        log.warning(f"FF1 summary extraction error: {e}")
+
+    return summary
+
+
+def _openf1_session_summary(round_num: int,
+                             session_type: str = "Race") -> dict:
+    """
+    OpenF1 fallback when FastF1 is unavailable.
+    Returns same structure as _ff1_session_summary.
+    """
+    summary = {
+        "source": "openf1",
+        "top5_times": [], "full_order": [],
+        "fastest_lap": {"driver":"","time":"","lap":0},
+        "sector_bests": {}, "tyre_stints": {},
+        "pit_stops": {}, "weather": {}, "incidents": [],
+    }
+
+    try:
+        # Get session key
+        sessions_data = fetch_openf1("sessions", {
+            "year": SEASON, "session_name": session_type})
+        if not sessions_data:
+            return summary
+
+        race_sessions = sorted(
+            [s for s in sessions_data
+             if s.get("session_name") == session_type],
+            key=lambda x: x.get("date_start","")
+        )
+        if round_num > len(race_sessions):
+            return summary
+        sk = race_sessions[round_num-1].get("session_key")
+        if not sk:
+            return summary
+
+        # Lap times
+        laps = fetch_openf1("laps", {"session_key": sk})
+        if laps:
+            driver_best = {}
+            for lap in laps:
+                dur = lap.get("lap_duration")
+                drv = str(lap.get("driver_number",""))
+                if dur and drv:
+                    try:
+                        dur_f = float(dur)
+                        if dur_f > 0:
+                            if drv not in driver_best or dur_f < driver_best[drv]:
+                                driver_best[drv] = dur_f
+                    except Exception:
+                        pass
+
+            # Map driver numbers to codes
+            driver_map_data = fetch_openf1("drivers",
+                                            {"session_key": sk})
+            num_to_code = {}
+            if driver_map_data:
+                for d in driver_map_data:
+                    num  = str(d.get("driver_number",""))
+                    code = d.get("name_acronym","")
+                    if num and code:
+                        num_to_code[num] = code
+
+            if driver_best:
+                sorted_drivers = sorted(
+                    driver_best.items(), key=lambda x: x[1])
+                ref = sorted_drivers[0][1]
+                for num, t in sorted_drivers[:5]:
+                    code  = num_to_code.get(num, num)
+                    mins  = int(t // 60)
+                    secs  = t % 60
+                    delta = t - ref
+                    summary["top5_times"].append({
+                        "driver": code,
+                        "time":   f"{mins}:{secs:06.3f}",
+                        "delta":  f"+{delta:.3f}" if delta > 0 else "leader",
+                    })
+                # Fastest lap
+                fl_num, fl_t = sorted_drivers[0]
+                fl_code = num_to_code.get(fl_num, fl_num)
+                mins    = int(fl_t // 60)
+                secs    = fl_t % 60
+                summary["fastest_lap"] = {
+                    "driver": fl_code,
+                    "time":   f"{mins}:{secs:06.3f}",
+                    "lap":    0,
+                }
+
+        # Stints / tyres
+        stints = fetch_openf1("stints", {"session_key": sk})
+        if stints:
+            for st in stints:
+                num      = str(st.get("driver_number",""))
+                code     = num_to_code.get(num, num)
+                compound = st.get("compound","?")
+                lap_s    = st.get("lap_start",0) or 0
+                lap_e    = st.get("lap_end",0)   or 0
+                n_laps   = max(0, int(lap_e) - int(lap_s))
+                if code not in summary["tyre_stints"]:
+                    summary["tyre_stints"][code] = []
+                summary["tyre_stints"][code].append({
+                    "compound": str(compound), "laps": n_laps})
+
+        # Race control
+        rc = fetch_openf1("race_control", {"session_key": sk})
+        if rc:
+            for msg in rc:
+                text = str(msg.get("message",""))
+                lap  = msg.get("lap_number","?")
+                if any(kw in text.upper() for kw in
+                       ["SAFETY CAR","RED FLAG","RETIRED",
+                        "PENALTY","INCIDENT","VSC"]):
+                    summary["incidents"].append(
+                        f"L{lap}: {text[:100]}")
+
+    except Exception as e:
+        log.warning(f"OpenF1 summary error R{round_num} {session_type}: {e}")
+
+    return summary
+
+
+def enrich_episode_with_telemetry(episode: dict,
+                                   round_num: int) -> dict:
+    """
+    Enriches a race episode with full telemetry from FastF1/OpenF1.
+    Adds: full lap times, sector bests, tyre strategies, weather,
+    incidents, pit stop counts, full classification order.
+    """
+    log.info(f"Enriching R{round_num} with telemetry...")
+
+    # Try FastF1 first
+    sess = _safe_ff1_load(SEASON, round_num, "Race")
+    if sess:
+        telemetry = _ff1_session_summary(sess)
+        log.info(f"R{round_num} enriched via FastF1 ✅")
+    else:
+        telemetry = _openf1_session_summary(round_num, "Race")
+        log.info(f"R{round_num} enriched via OpenF1")
+
+    if not telemetry:
+        return episode
+
+    # Merge into episode
+    if telemetry.get("full_order"):
+        episode["full_classification"] = [
+            f"P{i+1}:{c}" for i, c in
+            enumerate(telemetry["full_order"])]
+
+    if telemetry.get("fastest_lap", {}).get("driver"):
+        fl = telemetry["fastest_lap"]
+        episode["fastest_lap"]      = fl["driver"]
+        episode["fastest_lap_time"] = fl["time"]
+
+    if telemetry.get("top5_times"):
+        episode["top5_lap_times"] = telemetry["top5_times"]
+
+    if telemetry.get("sector_bests"):
+        episode["sector_bests"] = telemetry["sector_bests"]
+
+    if telemetry.get("tyre_stints"):
+        # Build strategy summary
+        strategies = []
+        for drv, stints in list(telemetry["tyre_stints"].items())[:8]:
+            strat = "→".join(
+                f"{s['compound'][:1]}({s['laps']})" for s in stints)
+            strategies.append(f"{drv}:{strat}")
+        episode.setdefault("pitstops", {})["tyre_strategies"] = \
+            " | ".join(strategies[:6])
+        episode["pitstops"]["stop_counts"] = {
+            drv: len(stints) - 1
+            for drv, stints in telemetry["tyre_stints"].items()
+            if len(stints) > 1
+        }
+
+    if telemetry.get("weather"):
+        w = telemetry["weather"]
+        episode["weather"] = w
+        weather_str = (
+            f"Air {w.get('air_temp','?')}°C, "
+            f"Track {w.get('track_temp','?')}°C"
+            + (", 🌧 Rain" if w.get("rainfall") else ", ☀ Dry")
+        )
+        episode.setdefault("pitstops",{})["weather"] = weather_str
+
+    if telemetry.get("incidents"):
+        episode["race_control"] = telemetry["incidents"][:15]
+
+    episode["telemetry_source"] = telemetry.get("source","unknown")
+    episode["telemetry_loaded"] = datetime.now().isoformat()
+
+    return episode
+
+
+def enrich_qualifying_with_telemetry(episode: dict,
+                                      round_num: int) -> dict:
+    """Enriches qualifying data with full sector times and lap data."""
+    log.info(f"Enriching R{round_num} qualifying with telemetry...")
+
+    sess = _safe_ff1_load(SEASON, round_num, "Qualifying")
+    if not sess:
+        return episode
+
+    try:
+        import pandas as pd
+        laps  = sess.laps
+        valid = laps.dropna(subset=["LapTime"])
+
+        # Best lap per driver in Q3, Q2, Q1
+        q_data = {"Q3": {}, "Q2": {}, "Q1": {}}
+        if "Session" in laps.columns:
+            for q_sess in ["Q3","Q2","Q1"]:
+                q_laps = valid[valid["Session"] == q_sess] \
+                    if "Session" in valid.columns else valid
+                if q_laps.empty:
+                    continue
+                best = q_laps.groupby("Driver")["LapTime"].min()
+                for drv, lt in best.items():
+                    t    = lt.total_seconds()
+                    mins = int(t // 60)
+                    secs = t % 60
+                    q_data[q_sess][str(drv)] = f"{mins}:{secs:06.3f}"
+        else:
+            # No session column — use all laps
+            best = valid.groupby("Driver")["LapTime"].min()
+            for drv, lt in best.items():
+                t    = lt.total_seconds()
+                mins = int(t // 60)
+                secs = t % 60
+                q_data["Q3"][str(drv)] = f"{mins}:{secs:06.3f}"
+
+        # Build rich qualifying summary
+        quali = episode.setdefault("qualifying", {})
+
+        # Full Q3 order
+        if q_data["Q3"]:
+            sorted_q3 = sorted(q_data["Q3"].items(), key=lambda x: x[1])
+            quali["full_q3"] = [
+                f"P{i+1}:{drv}({t})"
+                for i,(drv,t) in enumerate(sorted_q3)]
+            if sorted_q3:
+                quali["pole"]      = sorted_q3[0][0]
+                quali["pole_time"] = sorted_q3[0][1]
+
+        # Q2 elimination (P11-P15)
+        if q_data["Q2"]:
+            sorted_q2 = sorted(q_data["Q2"].items(), key=lambda x: x[1])
+            q2_drivers = [d for d,_ in sorted_q2]
+            q3_drivers = set(q_data["Q3"].keys())
+            eliminated_q2 = [d for d in q2_drivers if d not in q3_drivers]
+            quali["eliminated_q2"] = eliminated_q2[:5]
+
+        # Q1 elimination (P16-P20)
+        if q_data["Q1"]:
+            sorted_q1 = sorted(q_data["Q1"].items(), key=lambda x: x[1])
+            q1_drivers = [d for d,_ in sorted_q1]
+            q2_drivers = set(q_data["Q2"].keys()) | set(q_data["Q3"].keys())
+            eliminated_q1 = [d for d in q1_drivers if d not in q2_drivers]
+            quali["eliminated_q1"] = eliminated_q1[:5]
+
+        # Sector bests across all quali laps
+        for s_col, s_name in [
+            ("Sector1Time","S1"),
+            ("Sector2Time","S2"),
+            ("Sector3Time","S3"),
+        ]:
+            if s_col in laps.columns:
+                sv = laps.dropna(subset=[s_col])
+                if not sv.empty:
+                    best_idx = sv[s_col].idxmin()
+                    best_row = sv.loc[best_idx]
+                    t = best_row[s_col].total_seconds()
+                    quali.setdefault("sector_bests",{})[s_name] = {
+                        "driver": str(best_row.get("Driver","")),
+                        "time":   f"{t:.3f}s",
+                    }
+
+        episode["qualifying"] = quali
+        log.info(f"R{round_num} qualifying enriched via FastF1 ✅")
+
+    except Exception as e:
+        log.warning(f"Qualifying enrichment error R{round_num}: {e}")
+
+    return episode
+
+
+def build_rich_story(episode: dict) -> str:
+    """
+    Builds a detailed narrative story from all available data.
+    This is what Claude reads to answer questions accurately.
+    """
+    parts = []
+    rname = episode.get("race_name", episode.get("track","?"))
+    rnd   = episode.get("round","?")
+
+    # Result
+    parts.append(
+        f"R{rnd} {rname}: {episode.get('winner','?')} wins. "
+        f"P2: {episode.get('p2','?')}. P3: {episode.get('p3','?')}.")
+
+    # Fastest lap
+    if episode.get("fastest_lap"):
+        parts.append(
+            f"Fastest lap: {episode['fastest_lap']} "
+            f"({episode.get('fastest_lap_time','')}).")
+
+    # Qualifying
+    quali = episode.get("qualifying",{})
+    if quali.get("pole"):
+        parts.append(
+            f"Pole: {quali['pole']} ({quali.get('pole_time','')}).")
+    if quali.get("eliminated_q2"):
+        parts.append(
+            f"Q2 eliminations: {', '.join(quali['eliminated_q2'])}.")
+    if quali.get("eliminated_q1"):
+        parts.append(
+            f"Q1 eliminations: {', '.join(quali['eliminated_q1'])}.")
+
+    # Top 5 lap times
+    if episode.get("top5_lap_times"):
+        times_str = " | ".join(
+            f"{t['driver']} {t['time']} ({t['delta']})"
+            for t in episode["top5_lap_times"][:5])
+        parts.append(f"Fastest laps: {times_str}.")
+
+    # Tyre strategies
+    pit = episode.get("pitstops",{})
+    if pit.get("tyre_strategies"):
+        parts.append(f"Tyre strategies: {pit['tyre_strategies']}.")
+
+    # Weather
+    if pit.get("weather"):
+        parts.append(f"Conditions: {pit['weather']}.")
+
+    # DNFs
+    if episode.get("dnfs"):
+        parts.append(f"DNFs: {', '.join(episode['dnfs'][:5])}.")
+
+    # Safety cars from race control
+    rc = episode.get("race_control",[])
+    sc_msgs = [m for m in rc if "SAFETY CAR" in m.upper() or "VSC" in m.upper()]
+    if sc_msgs:
+        parts.append(f"Safety car: {' | '.join(sc_msgs[:3])}.")
+
+    # Penalties
+    pen_msgs = [m for m in rc if "PENALTY" in m.upper()]
+    if pen_msgs:
+        parts.append(f"Penalties: {' | '.join(pen_msgs[:3])}.")
+
+    # Championship
+    if episode.get("champ_after"):
+        parts.append(f"Championship: {episode['champ_after']}.")
+
+    # Sprint
+    sprint = episode.get("sprint",{})
+    if sprint.get("sprint_winner"):
+        parts.append(
+            f"Sprint: {sprint['sprint_winner']} won "
+            f"({sprint.get('sprint_top3','')}).")
+
+    # Sector bests
+    sect = quali.get("sector_bests",{})
+    if sect:
+        sect_str = " | ".join(
+            f"{s}: {d['driver']} {d['time']}"
+            for s, d in sect.items())
+        parts.append(f"Sector bests (quali): {sect_str}.")
+
+    return " ".join(parts)
+
+
 def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
+    """Fetches full race result from Jolpica."""
+    try:
+        data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/results.json")
+        if not data:
+            return None
+        races = data.get("MRData",{}).get(
+            "RaceTable",{}).get("Races",[])
+        if not races:
+            return None
+        race    = races[0]
+        results = race.get("Results",[])
+        if not results:
+            return None
+
+        def get_driver(r):
+            d = r.get("Driver",{})
+            return d.get("code", d.get("familyName","?")[:3].upper())
+
+        p1 = get_driver(results[0]) if len(results)>0 else "?"
+        p2 = get_driver(results[1]) if len(results)>1 else "?"
+        p3 = get_driver(results[2]) if len(results)>2 else "?"
+
+        dnfs = [
+            f"{get_driver(r)}({r.get('status','')})"
+            for r in results
+            if r.get("status","Finished") not in
+               ["Finished","+1 Lap","+2 Laps","+3 Laps",
+                "+4 Laps","+5 Laps","+6 Laps"]
+        ]
+
+        fl    = next((get_driver(r) for r in results
+                      if r.get("FastestLap",{}).get("rank")=="1"), None)
+        fl_t  = next((r.get("FastestLap",{}).get("Time",{}).get("time","")
+                      for r in results
+                      if r.get("FastestLap",{}).get("rank")=="1"), "")
+        pole  = next((get_driver(r) for r in results
+                      if r.get("grid")=="1"), None)
+
+        # Live standings after this race
+        sd = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/driverStandings.json")
+        champ_str = ""
+        if sd:
+            standings = (sd.get("MRData",{})
+                          .get("StandingsTable",{})
+                          .get("StandingsLists",[{}])[0]
+                          .get("DriverStandings",[]))
+            if standings:
+                champ_str = " | ".join(
+                    f"{s['Driver']['code']} {s['points']}pts"
+                    for s in standings[:5])
+
+        full_classification = [
+            f"P{r.get('position','?')}:{get_driver(r)}"
+            for r in results if r.get("position")]
+
+        return {
+            "round":              round_num,
+            "track":              race.get("Circuit",{}).get(
+                                    "Location",{}).get("locality","?"),
+            "race_name":          race.get("raceName",""),
+            "date":               race.get("date",""),
+            "winner":             p1,
+            "p2":                 p2,
+            "p3":                 p3,
+            "pole":               pole or "",
+            "fastest_lap":        fl or "",
+            "fastest_lap_time":   fl_t,
+            "dnfs":               dnfs,
+            "full_classification":full_classification,
+            "champ_after":        champ_str,
+            "ingested_at":        datetime.now().isoformat(),
+        }
+    except Exception as e:
+        log.error(f"fetch_race_result R{round_num}: {e}")
+        return None
+
+
+def fetch_qualifying_result(round_num: int,
+                             season: int = SEASON) -> dict | None:
+    """Fetches qualifying results from Jolpica."""
+    try:
+        data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/qualifying.json")
+        if not data:
+            return None
+        races = data.get("MRData",{}).get(
+            "RaceTable",{}).get("Races",[])
+        if not races:
+            return None
+        race    = races[0]
+        results = race.get("QualifyingResults",[])
+        if not results:
+            return None
+
+        def get_driver(r):
+            d = r.get("Driver",{})
+            return d.get("code", d.get("familyName","?")[:3].upper())
+
+        pole      = get_driver(results[0]) if results else "?"
+        pole_time = (results[0].get("Q3") or
+                     results[0].get("Q2") or
+                     results[0].get("Q1","")) if results else ""
+
+        top10 = []
+        for r in results[:10]:
+            code  = get_driver(r)
+            best  = r.get("Q3") or r.get("Q2") or r.get("Q1","")
+            top10.append(f"P{r.get('position','?')}:{code}({best})")
+
+        return {
+            "round":      round_num,
+            "race_name":  race.get("raceName",""),
+            "pole":       pole,
+            "pole_time":  pole_time,
+            "grid_top10": top10,
+            "date":       race.get("date",""),
+        }
+    except Exception as e:
+        log.error(f"fetch_qualifying_result R{round_num}: {e}")
+        return None
+
+
+def fetch_sprint_result(round_num: int,
+                         season: int = SEASON) -> dict | None:
+    """Fetches sprint results from Jolpica."""
+    try:
+        data = safe_get(
+            f"{JOLPICA}/{season}/{round_num}/sprint.json")
+        if not data:
+            return None
+        races = data.get("MRData",{}).get(
+            "RaceTable",{}).get("Races",[])
+        if not races:
+            return None
+        race    = races[0]
+        results = race.get("SprintResults",[])
+        if not results:
+            return None
+
+        def get_driver(r):
+            d = r.get("Driver",{})
+            return d.get("code", d.get("familyName","?")[:3].upper())
+
+        return {
+            "round":     round_num,
+            "race_name": race.get("raceName",""),
+            "winner":    get_driver(results[0]) if results else "?",
+            "p2":        get_driver(results[1]) if len(results)>1 else "?",
+            "p3":        get_driver(results[2]) if len(results)>2 else "?",
+            "story":     f"Sprint: {get_driver(results[0])} wins.",
+        }
+    except Exception as e:
+        log.error(f"fetch_sprint_result R{round_num}: {e}")
+        return None
+
+
+SPRINT_ROUNDS_2026 = {2, 4, 8, 16, 18, 20}
+
+
+async def auto_ingest_loop(mem_ref: list, app=None,
+                           sessions_ref: list = None):
+    """Background loop — checks every 30 min for new data."""
+    while True:
+        try:
+            await _check_and_ingest(mem_ref, app, sessions_ref)
+        except Exception as e:
+            log.warning(f"Auto-ingest loop error: {e}")
+        await asyncio.sleep(1800)
+
+
+async def _check_and_ingest(mem_ref: list, app=None,
+                             sessions_ref: list = None):
+    """
+    Elite ingestion — Jolpica results + FastF1/OpenF1 telemetry.
+    After every session: full lap times, sectors, tyres, incidents.
+    """
+    state = load_ingest_state()
+    today = datetime.now().date()
+
+    RACE_CALENDAR = [
+        (1,"Australian GP","2026-03-15"),
+        (2,"Chinese GP","2026-03-22"),
+        (3,"Japanese GP","2026-04-06"),
+        (4,"Miami GP","2026-05-04"),
+        (5,"Canadian GP","2026-05-24"),
+        (6,"Monaco GP","2026-06-07"),
+        (7,"Spanish GP","2026-06-14"),
+        (8,"Austrian GP","2026-06-28"),
+        (9,"British GP","2026-07-05"),
+        (10,"Belgian GP","2026-07-19"),
+        (11,"Hungarian GP","2026-07-26"),
+        (12,"Dutch GP","2026-08-23"),
+        (13,"Italian GP","2026-09-06"),
+        (14,"Singapore GP","2026-09-20"),
+        (15,"Azerbaijan GP","2026-09-27"),
+        (16,"US GP","2026-10-18"),
+        (17,"Mexico City GP","2026-10-25"),
+        (18,"São Paulo GP","2026-11-08"),
+        (19,"Las Vegas GP","2026-11-21"),
+        (20,"Qatar GP","2026-11-29"),
+        (21,"Abu Dhabi GP","2026-12-06"),
+    ]
+
+    for rnd, name, date_str in RACE_CALENDAR:
+        race_date  = datetime.strptime(date_str,"%Y-%m-%d").date()
+        days_since = (today - race_date).days
+
+        if days_since < 0:
+            break
+        if days_since > 7:
+            continue
+
+        mem      = mem_ref[0]
+        episodes = mem.get("episodic",[])
+        episode  = next(
+            (e for e in episodes if e.get("round")==rnd), None)
+        if episode is None:
+            episode = {"round": rnd, "race_name": name}
+
+        changed = False
+
+        # ── Qualifying (Saturday, days_since >= 1) ──────────
+        if days_since >= 1 and not episode.get("pole"):
+            quali = fetch_qualifying_result(rnd, SEASON)
+            if quali:
+                episode["pole"]       = quali["pole"]
+                episode["pole_time"]  = quali.get("pole_time","")
+                episode["grid_top10"] = quali.get("grid_top10",[])
+                episode.setdefault("qualifying",{}).update({
+                    "pole":      quali["pole"],
+                    "pole_time": quali.get("pole_time",""),
+                    "top10":     " | ".join(quali.get("grid_top10",[])),
+                })
+                # Enrich with FastF1 sector times
+                episode = enrich_qualifying_with_telemetry(episode, rnd)
+                changed = True
+                log.info(f"✅ Qualifying ingested R{rnd}: pole={quali['pole']}")
+
+        # ── Sprint (sprint weekends, days_since >= 1) ───────
+        if rnd in SPRINT_ROUNDS_2026 and days_since >= 1 \
+                and not episode.get("sprint_winner"):
+            sprint = fetch_sprint_result(rnd, SEASON)
+            if sprint:
+                episode["sprint_winner"] = sprint["winner"]
+                episode["sprint_p2"]     = sprint["p2"]
+                episode["sprint_p3"]     = sprint["p3"]
+                episode["sprint"]        = {
+                    "sprint_winner": sprint["winner"],
+                    "sprint_p2":     sprint["p2"],
+                    "sprint_p3":     sprint["p3"],
+                    "sprint_top3":   f"P1:{sprint['winner']} P2:{sprint['p2']} P3:{sprint['p3']}",
+                }
+                changed = True
+                log.info(f"✅ Sprint ingested R{rnd}: winner={sprint['winner']}")
+
+        # ── Race (Sunday, days_since >= 0) ──────────────────
+        if days_since >= 0 and not episode.get("winner"):
+            result = fetch_race_result(rnd, SEASON)
+            if result:
+                episode.update(result)
+                # Enrich with FastF1/OpenF1 telemetry
+                episode = enrich_episode_with_telemetry(episode, rnd)
+                # Build rich story from all data
+                episode["story"] = build_rich_story(episode)
+                changed = True
+                log.info(
+                    f"✅ Race ingested R{rnd}: "
+                    f"winner={result['winner']}, "
+                    f"source={episode.get('telemetry_source','jolpica')}")
+
+                # Notify users
+                if app and sessions_ref:
+                    await _notify_race_result(
+                        app, sessions_ref[0], result)
+                    await alert_owner(app,
+                        f"✅ *Auto-ingest complete: R{rnd} {name}*\n\n"
+                        f"🥇 {result.get('winner','?')} | "
+                        f"🥈 {result.get('p2','?')} | "
+                        f"🥉 {result.get('p3','?')}\n"
+                        f"Data: {episode.get('telemetry_source','jolpica')} "
+                        f"({'FastF1 full telemetry ✅' if episode.get('telemetry_source')=='fastf1' else 'OpenF1/Jolpica'})")
+
+        # Save if changed
+        if changed:
+            existing = next(
+                (i for i,e in enumerate(episodes)
+                 if e.get("round")==rnd), None)
+            if existing is not None:
+                episodes[existing] = episode
+            else:
+                episodes.append(episode)
+                episodes.sort(key=lambda x: x.get("round",0))
+
+            mem["episodic"] = episodes
+
+            # Update semantic memory with key facts
+            mem.setdefault("semantic",{})[f"r{rnd}_summary"] = {
+                "text": episode.get("story",""),
+                "tags": [name.lower(), str(rnd)],
+            }
+            if episode.get("champ_after"):
+                mem["semantic"][f"standings/after_r{rnd}"] = {
+                    "text": f"After R{rnd} {name}: {episode['champ_after']}"
+                }
+
+            save_f1_memory(mem)
+            mem_ref[0] = mem
+
+            state[f"r{rnd}_changed"] = datetime.now().isoformat()
+            save_ingest_state(state)
+
+
     """
     Fetches full race result for a given round from Jolpica.
     Returns structured dict ready for memory storage.
@@ -3684,16 +4550,20 @@ def _is_weather_query(text: str) -> bool:
 def ask_claude(user_msg: str, history: list, mem: dict,
                user_data: dict = None) -> str:
     """Calls Claude with all available context."""
-    news_ctx        = ""
-    weather_ctx     = ""
-    historical_ctx  = ""
-    live_ctx        = ""
-    circuit_ctx     = ""
-    pred_accuracy   = ""
-    driver_stats_ctx= ""
-    user_profile_ctx= ""
-    practice_ctx    = ""
-    live_search_ctx = ""
+    news_ctx          = ""
+    weather_ctx       = ""
+    historical_ctx    = ""
+    live_ctx          = ""
+    circuit_ctx       = ""
+    pred_accuracy     = ""
+    driver_stats_ctx  = ""
+    user_profile_ctx  = ""
+    practice_ctx      = ""
+    live_search_ctx   = ""
+    race_replay_ctx   = ""
+    champ_scenario_ctx= ""
+    fan_ctx           = ""
+    driver_deep_ctx   = ""
 
     # Universal live search — triggers for ANY session question
     if _is_live_session_question(user_msg):
@@ -3711,12 +4581,12 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         if not news_ctx:
             news_ctx = get_news_context(user_msg)
 
-    # Weather — use current race weekend not next race
+    # Weather
     if _is_weather_query(user_msg):
         current_race = fetch_current_race()
         weather_ctx  = get_weather_context(user_msg, current_race)
 
-    # Universal session handler — FP1/FP2/FP3/Quali/Sprint/live/past
+    # Universal session handler
     session_ctx = get_session_context(user_msg)
     if session_ctx:
         practice_ctx = session_ctx
@@ -3729,13 +4599,13 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     # Historical comparisons
     historical_ctx = get_historical_context(user_msg)
 
-    # Live session — always check (cheap call)
+    # Live session
     live_ctx = get_live_session_context()
 
     # Circuit guide
     circuit_ctx = get_circuit_guide(user_msg)
 
-    # Prediction accuracy — inject when predictions are discussed
+    # Prediction accuracy
     if any(w in user_msg.lower() for w in
            ["predict", "accuracy", "correct", "wrong", "prediction",
             "predicción", "acertaste", "fallaste"]):
@@ -3746,9 +4616,37 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     if drv_code:
         driver_stats_ctx = fetch_driver_career_stats(drv_code)
 
+    # FEATURE 3 — Driver deep dive
+    deep_dive_code = _is_driver_deep_dive(user_msg)
+    if deep_dive_code:
+        driver_deep_ctx = build_driver_profile(deep_dive_code, mem)
+
+    # FEATURE 4 — Race replay intelligence
+    race_replay_ctx = get_race_replay_context(user_msg, mem)
+
+    # FEATURE 5 — Championship scenarios
+    if _is_championship_scenario(user_msg):
+        champ_scenario_ctx = build_championship_scenarios(user_msg, mem)
+
+    # FEATURE 8 — Fan/rival tracking context
+    if user_data:
+        fan_ctx = build_fan_context(user_data, user_msg)
+
     # User personalization
     if user_data:
         user_profile_ctx = build_user_profile(user_data)
+
+    # Combine all extra context
+    extra_ctx = "\n\n".join(filter(None, [
+        driver_deep_ctx,
+        race_replay_ctx,
+        champ_scenario_ctx,
+        fan_ctx,
+    ]))
+
+    # Merge extra into user_profile_ctx
+    if extra_ctx:
+        user_profile_ctx = (user_profile_ctx + "\n\n" + extra_ctx).strip()
 
     system   = build_system_prompt(
         mem, news_ctx, weather_ctx, historical_ctx,
@@ -4392,10 +5290,844 @@ async def cmd_lastrace(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ═════════════════════════════════════════════════════════════
-#  PREDICTOR INTEGRATION
-#  Reads f1_2026_predicciones.csv generated by f1_2026_predictor.py
-#  Run predictor on your Mac, commit CSV to repo, Railway picks it up.
 # ═════════════════════════════════════════════════════════════
+#  FEATURE 1 — RACE WEEKEND LIVE COMPANION
+#  Auto-sends session debriefs after FP1/FP2/FP3/Qualifying/Race
+#  without users having to ask. Proactive, not reactive.
+# ═════════════════════════════════════════════════════════════
+
+SESSION_DEBRIEF_FILE = Path(__file__).parent / "boxboxai_debriefs.json"
+
+
+def load_debrief_state() -> dict:
+    if SESSION_DEBRIEF_FILE.exists():
+        try:
+            return json.loads(SESSION_DEBRIEF_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def save_debrief_state(state: dict):
+    try:
+        SESSION_DEBRIEF_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
+
+
+async def send_session_debrief(app, sessions: dict, mem: dict,
+                                race_name: str, session_name: str,
+                                round_num: int):
+    """
+    Generates and sends a proactive session debrief after each session ends.
+    Uses live news + memory to write a punchy 3-4 sentence summary.
+    """
+    state = load_debrief_state()
+    key   = f"r{round_num}_{session_name.replace(' ','_')}"
+    if state.get(key):
+        return  # already sent
+
+    active_users = get_active_user_ids(sessions)
+    if not active_users:
+        return
+
+    # Pull latest news for this session
+    news = get_news_context(f"{race_name} {session_name} 2026")
+
+    # Session-specific prompts
+    session_prompts = {
+        "FP1": (
+            f"Write a 3-sentence FP1 debrief for {race_name}. "
+            f"Cover: who looked fast, any surprises, one thing to watch in FP2. "
+            f"News context: {news[:500] if news else 'No data yet'}. "
+            f"Punchy, opinionated, no filler."
+        ),
+        "FP2": (
+            f"Write a 3-sentence FP2 debrief for {race_name}. "
+            f"FP2 = race simulation data. Cover: long run pace leaders, "
+            f"tyre strategy clues, who's sandbagging. "
+            f"News: {news[:500] if news else 'No data yet'}. "
+            f"This is the most important practice session — treat it that way."
+        ),
+        "FP3": (
+            f"Write a 2-sentence FP3 debrief for {race_name}. "
+            f"Final tune-up before qualifying. Who's looking dangerous? "
+            f"News: {news[:400] if news else 'No data yet'}."
+        ),
+        "Qualifying": (
+            f"Write a 4-sentence qualifying debrief for {race_name}. "
+            f"Cover: pole sitter and time, biggest surprise, who got knocked out in Q2, "
+            f"and what the grid means for race strategy. "
+            f"News: {news[:600] if news else 'No data yet'}. "
+            f"This is critical — be specific about grid positions."
+        ),
+        "Sprint Qualifying": (
+            f"Write a 3-sentence sprint qualifying debrief for {race_name}. "
+            f"Who's on sprint pole, any surprises, what it means for Sunday. "
+            f"News: {news[:400] if news else 'No data yet'}."
+        ),
+        "Sprint Race": (
+            f"Write a 3-sentence sprint race debrief for {race_name}. "
+            f"Who won, key moments, championship points gained. "
+            f"News: {news[:400] if news else 'No data yet'}."
+        ),
+        "Race": (
+            f"Write a 5-sentence race debrief for {race_name}. "
+            f"Cover: winner and how they won, decisive moment, biggest story, "
+            f"championship impact, and one line about next race. "
+            f"News: {news[:800] if news else 'No data yet'}. "
+            f"This is the main event — be thorough and opinionated."
+        ),
+    }
+
+    prompt = session_prompts.get(session_name, session_prompts.get("FP1"))
+
+    session_emojis_map = {
+        "FP1": "🔧", "FP2": "🔧", "FP3": "🔧",
+        "Qualifying": "⏱", "Sprint Qualifying": "⏱",
+        "Sprint Race": "🏃", "Race": "🏁",
+    }
+    emoji = session_emojis_map.get(session_name, "🏎")
+
+    try:
+        resp = get_client().messages.create(
+            model=MODEL, max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        debrief_text = resp.content[0].text if resp.content else ""
+    except Exception as e:
+        log.error(f"Session debrief generation failed: {e}")
+        return
+
+    if not debrief_text:
+        return
+
+    msg = (
+        f"{emoji} *{race_name} — {session_name} Debrief*\n\n"
+        f"{debrief_text}\n\n"
+        f"_Ask me anything about the session_ 💬"
+    )
+
+    # Send to users based on notification preferences
+    sent = 0
+    for uid in active_users:
+        user_prefs = sessions.get(uid, {}).get("notification_prefs", {})
+        # Check if user wants session debriefs (default: yes)
+        if not user_prefs.get("session_debriefs", True):
+            continue
+        try:
+            await app.bot.send_message(
+                chat_id=uid, text=msg, parse_mode="Markdown")
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+
+    state[key] = datetime.now().isoformat()
+    save_debrief_state(state)
+    log.info(f"Session debrief sent for {race_name} {session_name} to {sent} users")
+
+
+async def check_and_send_session_debriefs(app, sessions: dict, mem: dict):
+    """
+    Checks if any session ended in the last 2 hours and sends a debrief.
+    Runs every 30 minutes via notification_loop.
+    """
+    now_utc = datetime.utcnow()
+
+    for entry in SESSION_SCHEDULE_2026:
+        rnd, race_name, circuit_tz, session_list = entry
+        race_date_str = RACE_DATES_2026.get(rnd)
+        if not race_date_str:
+            continue
+
+        race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
+
+        for session_name, weekday_offset, utc_h, utc_m in session_list:
+            days_before  = 6 - weekday_offset
+            session_date = race_date - timedelta(days=days_before)
+
+            # Estimated session end (start + ~90 min for race, ~60 for others)
+            duration_mins = 120 if session_name == "Race" else 75
+            session_start = datetime(session_date.year, session_date.month,
+                                     session_date.day, utc_h, utc_m)
+            session_end   = session_start + timedelta(minutes=duration_mins)
+
+            # Check if session ended 0-120 minutes ago
+            mins_since_end = (now_utc - session_end).total_seconds() / 60
+            if not (0 <= mins_since_end <= 120):
+                continue
+
+            await send_session_debrief(
+                app, sessions, mem, race_name, session_name, rnd)
+
+
+# ═════════════════════════════════════════════════════════════
+#  FEATURE 3 — DRIVER/TEAM DEEP DIVES
+#  /driver <name> — full profile from memory + live Jolpica data
+#  /team <name>   — team profile with both drivers
+# ═════════════════════════════════════════════════════════════
+
+DRIVER_CODE_MAP = {
+    # Mercedes
+    "antonelli": "ANT", "kimi": "ANT", "ant": "ANT", "el niño": "ANT",
+    "russell": "RUS", "george": "RUS", "rus": "RUS", "mr saturday": "RUS",
+    # Ferrari
+    "leclerc": "LEC", "charles": "LEC", "lec": "LEC", "sharl": "LEC",
+    "hamilton": "HAM", "lewis": "HAM", "ham": "HAM", "sir lewis": "HAM",
+    # Red Bull
+    "verstappen": "VER", "max": "VER", "ver": "VER", "super max": "VER",
+    "hadjar": "HAD", "isack": "HAD", "had": "HAD",
+    # McLaren
+    "norris": "NOR", "lando": "NOR", "nor": "NOR",
+    "piastri": "PIA", "oscar": "PIA", "pia": "PIA",
+    # Aston Martin
+    "alonso": "ALO", "fernando": "ALO", "alo": "ALO", "nano": "ALO",
+    "stroll": "STR", "lance": "STR", "str": "STR",
+    # Alpine
+    "gasly": "GAS", "pierre": "GAS", "gas": "GAS",
+    "colapinto": "COL", "franco": "COL", "col": "COL", "el pibe": "COL",
+    # Williams
+    "albon": "ALB", "alex": "ALB", "alb": "ALB",
+    "sainz": "SAI", "carlos": "SAI", "sai": "SAI", "carlitos": "SAI",
+    # RB
+    "lawson": "LAW", "liam": "LAW", "law": "LAW",
+    "lindblad": "LIN", "arvid": "LIN", "lin": "LIN",
+    # Haas
+    "bearman": "BEA", "oliver": "BEA", "bea": "BEA",
+    "ocon": "OCO", "esteban": "OCO", "oco": "OCO",
+    # Audi
+    "hulkenberg": "HUL", "nico": "HUL", "hul": "HUL", "el hulk": "HUL",
+    "bortoleto": "BOR", "gabriel": "BOR", "bor": "BOR",
+    # Cadillac
+    "perez": "PER", "checo": "PER", "per": "PER", "sergio": "PER",
+    "bottas": "BOT", "valtteri": "BOT", "bot": "BOT",
+}
+
+DRIVER_FULL_NAMES = {
+    "ANT": "Andrea Kimi Antonelli", "RUS": "George Russell",
+    "HAM": "Lewis Hamilton",        "LEC": "Charles Leclerc",
+    "VER": "Max Verstappen",        "HAD": "Isack Hadjar",
+    "NOR": "Lando Norris",          "PIA": "Oscar Piastri",
+    "ALO": "Fernando Alonso",       "STR": "Lance Stroll",
+    "GAS": "Pierre Gasly",          "COL": "Franco Colapinto",
+    "ALB": "Alexander Albon",       "SAI": "Carlos Sainz",
+    "LAW": "Liam Lawson",           "LIN": "Arvid Lindblad",
+    "BEA": "Oliver Bearman",        "OCO": "Esteban Ocon",
+    "HUL": "Nico Hülkenberg",       "BOR": "Gabriel Bortoleto",
+    "PER": "Sergio Pérez",          "BOT": "Valtteri Bottas",
+}
+
+DRIVER_TEAMS = {
+    "ANT": "Mercedes",  "RUS": "Mercedes",
+    "HAM": "Ferrari",   "LEC": "Ferrari",
+    "VER": "Red Bull",  "HAD": "Red Bull",
+    "NOR": "McLaren",   "PIA": "McLaren",
+    "ALO": "Aston Martin", "STR": "Aston Martin",
+    "GAS": "Alpine",    "COL": "Alpine",
+    "ALB": "Williams",  "SAI": "Williams",
+    "LAW": "RB",        "LIN": "RB",
+    "BEA": "Haas",      "OCO": "Haas",
+    "HUL": "Audi",      "BOR": "Audi",
+    "PER": "Cadillac",  "BOT": "Cadillac",
+}
+
+
+def resolve_driver_code(text: str) -> str | None:
+    """Resolves any driver name/nickname to a 3-letter code."""
+    t = text.lower().strip()
+    if t in DRIVER_CODE_MAP:
+        return DRIVER_CODE_MAP[t]
+    for key, code in DRIVER_CODE_MAP.items():
+        if key in t:
+            return code
+    return None
+
+
+def build_driver_profile(code: str, mem: dict) -> str:
+    """
+    Builds a rich driver profile from memory + season data.
+    Used to give Claude rich context for deep dive responses.
+    """
+    full_name = DRIVER_FULL_NAMES.get(code, code)
+    team      = DRIVER_TEAMS.get(code, "?")
+    episodes  = mem.get("episodic", [])
+
+    wins   = [e for e in episodes if e.get("winner") == code]
+    p2s    = [e for e in episodes if e.get("p2") == code]
+    p3s    = [e for e in episodes if e.get("p3") == code]
+    dnfs   = [e for e in episodes if any(code in d for d in e.get("dnfs", []))]
+    poles  = [e for e in episodes if e.get("qualifying", {}).get("pole") == code]
+    fl     = [e for e in episodes if e.get("fastest_lap") == code]
+    sprints= [e for e in episodes if e.get("sprint", {}).get("sprint_winner") == code]
+
+    # Points from standings
+    drivers, _ = fetch_standings()
+    pts   = "?"
+    pos   = "?"
+    for s in drivers:
+        d = s.get("Driver", {})
+        if d.get("code") == code:
+            pts = s.get("points", "?")
+            pos = s.get("position", "?")
+            break
+
+    lines = [
+        f"DRIVER PROFILE: {full_name} ({code}) — {team}",
+        f"Championship: P{pos} with {pts}pts",
+        f"2026 Season: {len(wins)}W {len(p2s)+len(p3s)} podiums "
+        f"{len(poles)} poles {len(fl)} fastest laps",
+    ]
+
+    if wins:
+        win_tracks = [e.get("race_name", e.get("track","?")) for e in wins]
+        lines.append(f"Wins: {', '.join(win_tracks)}")
+
+    if poles:
+        pole_tracks = [e.get("race_name", e.get("track","?")) for e in poles]
+        pole_times  = [e.get("qualifying",{}).get("pole_time","") for e in poles]
+        lines.append(f"Poles: {', '.join(f'{t} ({tm})' for t,tm in zip(pole_tracks,pole_times) if t)}")
+
+    if dnfs:
+        dnf_details = []
+        for e in dnfs:
+            for d in e.get("dnfs", []):
+                if code in d:
+                    dnf_details.append(f"{e.get('race_name','?')}: {d}")
+        lines.append(f"DNFs: {', '.join(dnf_details)}")
+
+    if sprints:
+        sprint_tracks = [e.get("race_name","?") for e in sprints]
+        lines.append(f"Sprint wins: {', '.join(sprint_tracks)}")
+
+    # Race by race results
+    results_by_round = []
+    for e in sorted(episodes, key=lambda x: x.get("round", 0)):
+        if e.get("winner") == code:       pos_str = "P1 🏆"
+        elif e.get("p2") == code:         pos_str = "P2"
+        elif e.get("p3") == code:         pos_str = "P3"
+        elif any(code in d for d in e.get("dnfs", [])): pos_str = "DNF"
+        else:                             pos_str = "?"
+        fc = e.get("full_classification", [])
+        for item in fc:
+            if f":{code}" in item:
+                pos_str = item.split(":")[0]
+                break
+        results_by_round.append(
+            f"R{e.get('round','?')} {e.get('track','?')}: {pos_str}")
+    if results_by_round:
+        lines.append(f"Race results: {' | '.join(results_by_round)}")
+
+    return "\n".join(lines)
+
+
+def _is_driver_deep_dive(text: str) -> str | None:
+    """
+    Detects if a message is asking for a driver deep dive.
+    Returns driver code or None.
+    Triggers on: 'tell me about X', 'everything about X',
+    'driver profile X', 'who is X', 'stats for X'
+    """
+    t = text.lower()
+    deep_dive_triggers = [
+        "tell me about", "everything about", "driver profile",
+        "who is", "stats for", "profile of", "cuéntame sobre",
+        "todo sobre", "perfil de", "quién es",
+        "how is", "how has", "season of", "temporada de",
+    ]
+    if not any(trigger in t for trigger in deep_dive_triggers):
+        return None
+    return resolve_driver_code(t)
+
+
+# ═════════════════════════════════════════════════════════════
+#  FEATURE 4 — RACE REPLAY INTELLIGENCE
+#  Rich context injection for "why did X happen" questions
+# ═════════════════════════════════════════════════════════════
+
+def get_race_replay_context(query: str, mem: dict) -> str:
+    """
+    Detects race replay questions and injects deep episode context.
+    Covers: why retirements happened, how strategies unfolded,
+    specific incidents, lap-by-lap narrative.
+    """
+    t = query.lower()
+
+    replay_triggers = [
+        "why did", "how did", "what happened", "walk me through",
+        "explain", "tell me about the race", "the undercut", "the overtake",
+        "the crash", "the incident", "retire", "dnf", "safety car",
+        "strategy", "pit stop", "por qué", "cómo fue", "qué pasó",
+        "explícame", "cuéntame la carrera",
+    ]
+    if not any(tr in t for tr in replay_triggers):
+        return ""
+
+    episodes = mem.get("episodic", [])
+    if not episodes:
+        return ""
+
+    # Find most relevant episode
+    best_ep    = None
+    best_score = 0
+
+    for ep in episodes:
+        score = 0
+        track    = ep.get("track", "").lower()
+        racename = ep.get("race_name", "").lower()
+        if track in t or any(w in t for w in racename.split() if len(w) > 4):
+            score += 5
+        for driver in [ep.get("winner",""), ep.get("p2",""), ep.get("p3","")]:
+            if driver.lower() in t:
+                score += 3
+        for dnf in ep.get("dnfs", []):
+            code = dnf.split("(")[0].strip().lower()
+            if code in t:
+                score += 4
+        if ep.get("sc_count", 0) and ("safety car" in t or "sc" in t):
+            score += 3
+        if ep.get("sprint", {}).get("sprint_winner") and "sprint" in t:
+            score += 3
+        if score > best_score:
+            best_score = score
+            best_ep    = ep
+
+    # Default to most recent race
+    if not best_ep and episodes:
+        best_ep = sorted(episodes, key=lambda x: x.get("round", 0))[-1]
+
+    if not best_ep:
+        return ""
+
+    ep      = best_ep
+    quali   = ep.get("qualifying", {})
+    sprint  = ep.get("sprint", {})
+    pit     = ep.get("pitstops", {})
+    sc      = ep.get("sc_periods", [])
+    pen     = ep.get("penalties", [])
+    dnfs    = ep.get("dnfs", [])
+    fc      = ep.get("full_classification", [])
+    champ   = ep.get("champ_after", "")
+    notes   = ep.get("agent_notes", "")
+    briefing= ep.get("briefing", "")
+
+    context_parts = [
+        f"RACE REPLAY DATA — R{ep.get('round','?')} {ep.get('race_name', ep.get('track','?'))} "
+        f"({ep.get('date','')}):",
+        f"Winner: {ep.get('winner','?')} | P2: {ep.get('p2','?')} | P3: {ep.get('p3','?')}",
+        f"Fastest lap: {ep.get('fastest_lap','')} {ep.get('fastest_lap_time','')}",
+    ]
+
+    if dnfs:
+        context_parts.append(f"DNFs with causes: {', '.join(dnfs)}")
+
+    if sc:
+        sc_str = " | ".join(
+            f"{s.get('type','SC')} laps {s.get('lap_in','?')}-{s.get('lap_out','?')}"
+            for s in sc)
+        context_parts.append(f"Safety cars: {sc_str}")
+
+    if pit.get("strategy_summary"):
+        context_parts.append(f"Strategy: {pit['strategy_summary']}")
+        if pit.get("fastest_stop_driver"):
+            context_parts.append(
+                f"Fastest pit: {pit['fastest_stop_driver']} {pit.get('fastest_stop_time','')}s")
+
+    if quali.get("pole"):
+        context_parts.append(
+            f"Pole: {quali['pole']} ({quali.get('pole_time','')}) | "
+            f"Grid top5: {' '.join(fc[:5]) if fc else quali.get('top10','')[:60]}")
+
+    if sprint.get("sprint_winner"):
+        context_parts.append(
+            f"Sprint: {sprint['sprint_winner']} won ({sprint.get('sprint_top3','')})")
+
+    if pen:
+        context_parts.append(f"Penalties: {'; '.join(pen[:3])}")
+
+    if fc:
+        context_parts.append(f"Full classification: {' '.join(fc[:10])}")
+
+    if champ:
+        context_parts.append(f"Championship after: {champ}")
+
+    if notes:
+        context_parts.append(f"Key notes: {notes[:200]}")
+
+    if briefing:
+        context_parts.append(f"Post-race analysis: {briefing[:400]}")
+
+    context_parts.append(
+        f"Story: {ep.get('story', '')}")
+
+    return "\n".join(context_parts)
+
+
+# ═════════════════════════════════════════════════════════════
+#  FEATURE 5 — CHAMPIONSHIP SCENARIOS
+#  "What does X need to win the championship?"
+#  Does the live math from Jolpica standings
+# ═════════════════════════════════════════════════════════════
+
+def _is_championship_scenario(text: str) -> bool:
+    """Detects championship scenario questions."""
+    t = text.lower()
+    triggers = [
+        "what does", "what do", "can", "mathematically",
+        "championship", "title", "win the championship",
+        "clinch", "extend his lead", "close the gap",
+        "campeonato", "título", "qué necesita", "puede ganar",
+        "matemáticamente", "puntos necesita",
+        "scenarios", "scenario", "escenario",
+        "how many points", "cuántos puntos",
+    ]
+    scenario_words = [
+        "championship", "title", "campeonato", "título",
+        "lead", "gap", "puntos", "points needed",
+        "clinch", "mathematically",
+    ]
+    has_trigger  = any(tr in t for tr in triggers)
+    has_scenario = any(sw in t for sw in scenario_words)
+    return has_trigger and has_scenario
+
+
+def build_championship_scenarios(query: str, mem: dict) -> str:
+    """
+    Fetches live standings and builds championship math scenarios.
+    Covers: points gaps, races remaining, what each driver needs.
+    """
+    drivers, _ = fetch_standings()
+    if not drivers or len(drivers) < 3:
+        return ""
+
+    episodes       = mem.get("episodic", [])
+    races_done     = len(episodes)
+    total_races    = 21
+    races_left     = total_races - races_done
+    max_pts_left   = races_left * 26  # 25 for win + 1 for fastest lap
+
+    leader     = drivers[0]
+    leader_d   = leader.get("Driver", {})
+    leader_code= leader_d.get("code", "?")
+    leader_name= f"{leader_d.get('givenName','')} {leader_d.get('familyName','')}".strip()
+    leader_pts = float(leader.get("points", 0))
+
+    lines = [
+        f"CHAMPIONSHIP SCENARIOS — Live from Jolpica API",
+        f"Races completed: {races_done}/{total_races} | Races remaining: {races_left}",
+        f"Max points still available: {max_pts_left}",
+        "",
+        f"CURRENT STANDINGS:",
+    ]
+
+    gaps = []
+    for i, s in enumerate(drivers[:8]):
+        d    = s.get("Driver", {})
+        code = d.get("code", "?")
+        name = f"{d.get('givenName','')} {d.get('familyName','')}".strip()
+        pts  = float(s.get("points", 0))
+        gap  = int(leader_pts - pts)
+        wins = s.get("wins", "0")
+
+        if gap == 0:
+            status = "LEADER 🔥"
+        elif gap > max_pts_left:
+            status = f"MATHEMATICALLY ELIMINATED ❌"
+        elif gap <= races_left * 8:
+            status = f"-{gap}pts (ALIVE ✅)"
+        else:
+            status = f"-{gap}pts (needs miracle ⚠️)"
+
+        lines.append(f"  P{i+1}. {name} ({code}): {int(pts)}pts {wins}W — {status}")
+        gaps.append((code, name, pts, gap))
+
+    lines.append("")
+    lines.append("SCENARIO ANALYSIS:")
+
+    # For leader — what to clinch
+    if races_left > 0:
+        # Clinch if gap > max remaining for P2
+        p2_pts = float(drivers[1].get("points", 0))
+        p2_code= drivers[1].get("Driver", {}).get("code","?")
+        p2_gap = int(leader_pts - p2_pts)
+        clinch_gap = races_left * 26
+        if p2_gap > clinch_gap:
+            lines.append(f"  ✅ {leader_name} has already clinched the title!")
+        else:
+            pts_to_clinch = clinch_gap - p2_gap + 1
+            races_to_clinch = max(1, pts_to_clinch // 26)
+            lines.append(
+                f"  🏆 {leader_name} clinches if {p2_code} scores 0 and "
+                f"{leader_name} wins next {min(races_to_clinch, races_left)} races")
+            lines.append(
+                f"  📊 P2 ({p2_code}) needs {p2_gap} points swing in {races_left} races to catch up")
+
+    # Detect who's being asked about
+    t = query.lower()
+    for code, name, pts, gap in gaps:
+        if code.lower() in t or any(n.lower() in t
+                                     for n in name.lower().split()):
+            if gap == 0:
+                lines.append(f"\n  {name}: Already leads — needs to protect {int(pts)}pts")
+            elif gap > max_pts_left:
+                lines.append(f"\n  {name}: Mathematically out — {gap}pts behind with "
+                             f"only {max_pts_left} available")
+            else:
+                wins_needed = gap // 25 + 1
+                lines.append(
+                    f"\n  {name}: Needs to find {gap}pts in {races_left} races")
+                lines.append(
+                    f"  Best case: {leader_name} scores 0, {name} wins all "
+                    f"{races_left} remaining = gap closed")
+                lines.append(
+                    f"  Realistic: needs {leader_name} to have bad run AND "
+                    f"{name} to win {min(wins_needed, races_left)}+ races")
+            break
+
+    return "\n".join(lines)
+
+
+# ═════════════════════════════════════════════════════════════
+#  FEATURE 6 — VOICE OF RUTH (WEEKLY DEBRIEF UPGRADE)
+#  Consistent analytical voice, structured format every Monday
+# ═════════════════════════════════════════════════════════════
+
+RUTH_DEBRIEF_PROMPT = """You are writing the weekly F1 debrief for BoxBoxAI in the style of 
+The Race Strategy Society newsletter. Analytical, opinionated, precise. 
+Never vague. Always has a clear point of view.
+
+STRICT FORMAT — follow this every week, no exceptions:
+
+🏁 [RACE NAME] — [ONE LINE VERDICT]
+[Blank line]
+THE DECISIVE MOMENT
+[2 sentences on the exact moment that won or lost the race. Specific lap, specific action.]
+[Blank line]
+THE STRATEGY STORY
+[2 sentences on what the pit wall got right or wrong. Be opinionated — someone got it wrong.]
+[Blank line]
+WHO IMPRESSED
+[1 sentence. One driver who did more than expected.]
+[Blank line]
+WHO DISAPPOINTED
+[1 sentence. One driver or team who underdelivered.]
+[Blank line]
+CHAMPIONSHIP PICTURE
+[1-2 sentences. What this race changed in the title fight.]
+[Blank line]
+WATCH FOR NEXT RACE
+[1 sentence. The most important thing to monitor heading into the next round.]
+
+Keep each section tight. No filler. No "great race by". Just analysis."""
+
+
+# ═════════════════════════════════════════════════════════════
+#  FEATURE 7 — PUSH NOTIFICATION OPT-IN
+#  Users control what they receive
+# ═════════════════════════════════════════════════════════════
+
+NOTIFICATION_OPTIONS = {
+    "all":          "Everything — sessions, race results, debriefs 🏎",
+    "race_only":    "Race start + result only 🏁",
+    "quali_race":   "Qualifying + Race only ⏱🏁",
+    "results_only": "Results only (no session alerts) 📊",
+    "off":          "No notifications 🔕",
+}
+
+NOTIFICATION_CONFIG = {
+    "all": {
+        "session_notifications": True,
+        "session_debriefs":      True,
+        "race_results":          True,
+        "weekly_debrief":        True,
+    },
+    "race_only": {
+        "session_notifications": False,
+        "session_debriefs":      False,
+        "race_results":          True,
+        "weekly_debrief":        True,
+    },
+    "quali_race": {
+        "session_notifications": True,  # only for Quali + Race sessions
+        "session_debriefs":      True,  # only for Quali + Race
+        "race_results":          True,
+        "weekly_debrief":        True,
+        "quali_race_only":       True,  # flag to filter
+    },
+    "results_only": {
+        "session_notifications": False,
+        "session_debriefs":      False,
+        "race_results":          True,
+        "weekly_debrief":        True,
+    },
+    "off": {
+        "session_notifications": False,
+        "session_debriefs":      False,
+        "race_results":          False,
+        "weekly_debrief":        False,
+    },
+}
+
+
+def get_user_notif_prefs(user_data: dict) -> dict:
+    """Returns user's notification config. Defaults to 'all'."""
+    pref_key = user_data.get("notification_pref", "all")
+    return NOTIFICATION_CONFIG.get(pref_key, NOTIFICATION_CONFIG["all"])
+
+
+async def cmd_notifications(update: Update,
+                             ctx: ContextTypes.DEFAULT_TYPE):
+    """Lets users control their notification preferences."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    user_id   = str(update.effective_user.id)
+    user_data = sessions.get(user_id, {})
+    current   = user_data.get("notification_pref", "all")
+
+    keyboard = []
+    for key, label in NOTIFICATION_OPTIONS.items():
+        tick = "✅ " if key == current else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{tick}{label}",
+            callback_data=f"notif:{key}"
+        )])
+
+    await update.message.reply_text(
+        "🔔 *Notification Preferences*\n\n"
+        "Choose what you want to receive from BoxBoxAI:",
+        parse_mode=constants.ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_notification_callback(update: Update,
+                                        ctx: ContextTypes.DEFAULT_TYPE):
+    """Handles notification preference selection."""
+    query   = update.callback_query
+    user_id = str(query.from_user.id)
+
+    if not query.data.startswith("notif:"):
+        return
+
+    await query.answer()
+    pref_key = query.data.split(":", 1)[1]
+
+    if pref_key not in NOTIFICATION_OPTIONS:
+        return
+
+    if user_id not in sessions:
+        sessions[user_id] = {"history": [], "first_seen": datetime.now().isoformat(),
+                              "stats": {}}
+
+    sessions[user_id]["notification_pref"]  = pref_key
+    sessions[user_id]["notification_prefs"] = NOTIFICATION_CONFIG[pref_key]
+    save_sessions(sessions)
+
+    label = NOTIFICATION_OPTIONS[pref_key]
+    await query.edit_message_text(
+        f"✅ Notifications set to:\n*{label}*\n\n"
+        f"You can change this anytime with /notifications",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
+
+# ═════════════════════════════════════════════════════════════
+#  FEATURE 8 — RIVAL/FAN TRACKING
+#  User says "I'm a Ferrari fan" once → personalized forever
+# ═════════════════════════════════════════════════════════════
+
+TEAM_KEYWORDS = {
+    "mercedes":     ["mercedes", "merc", "w16", "silver arrows", "petronas"],
+    "ferrari":      ["ferrari", "sf-25", "scuderia", "tifosi", "maranello", "roja"],
+    "red bull":     ["red bull", "redbull", "rb21", "oracle red bull"],
+    "mclaren":      ["mclaren", "mcl39", "papaya", "woking"],
+    "aston martin": ["aston martin", "aston", "amr25", "green car"],
+    "alpine":       ["alpine", "a525", "renault", "french team"],
+    "williams":     ["williams", "grove", "fw47"],
+    "rb":           ["rb", "racing bulls", "vcarb", "faenza"],
+    "haas":         ["haas", "vf-25", "american team"],
+    "audi":         ["audi", "sauber", "swiss team"],
+    "cadillac":     ["cadillac", "andretti", "american team cadillac"],
+}
+
+FAN_DECLARATION_TRIGGERS = [
+    "i'm a", "i am a", "i support", "i follow", "my team is",
+    "my favorite", "my favourite", "i root for", "i love",
+    "soy fan", "soy de", "mi equipo", "mi favorito",
+    "apoyo a", "sigo a", "me gusta",
+]
+
+DRIVER_FAN_TRIGGERS = [
+    "my driver", "i love", "my favorite driver", "favourite driver",
+    "i follow", "i support", "mi piloto", "mi favorito",
+]
+
+
+def detect_fan_declaration(text: str) -> tuple[str | None, str | None]:
+    """
+    Detects if user is declaring team/driver fandom.
+    Returns (team, driver_code) — either can be None.
+    """
+    t = text.lower()
+
+    # Check for declaration trigger
+    has_trigger = any(tr in t for tr in FAN_DECLARATION_TRIGGERS)
+    if not has_trigger:
+        return None, None
+
+    # Detect team
+    detected_team = None
+    for team, keywords in TEAM_KEYWORDS.items():
+        if any(kw in t for kw in keywords):
+            detected_team = team
+            break
+
+    # Detect driver
+    detected_driver = None
+    for name, code in DRIVER_CODE_MAP.items():
+        if name in t and len(name) > 3:
+            detected_driver = code
+            break
+
+    return detected_team, detected_driver
+
+
+def build_fan_context(user_data: dict, query: str) -> str:
+    """
+    Builds personalization context based on user's fan preferences.
+    Injected into system prompt to personalize responses.
+    """
+    fan_team   = user_data.get("fan_team", "")
+    fan_driver = user_data.get("fan_driver", "")
+
+    if not fan_team and not fan_driver:
+        return ""
+
+    parts = ["USER FAN PROFILE (personalize responses around this):"]
+
+    if fan_team:
+        team_drivers = [code for code, team in DRIVER_TEAMS.items()
+                        if team.lower() == fan_team.lower()]
+        parts.append(f"Supports: {fan_team.title()} "
+                     f"({' + '.join(team_drivers)})")
+        parts.append(
+            f"Lead with {fan_team.title()} news and results. "
+            f"Frame championship around their team's position.")
+
+    if fan_driver:
+        full_name = DRIVER_FULL_NAMES.get(fan_driver, fan_driver)
+        team      = DRIVER_TEAMS.get(fan_driver, "")
+        parts.append(f"Favourite driver: {full_name} ({fan_driver}) — {team}")
+        parts.append(
+            f"Always mention {fan_driver}'s result and performance. "
+            f"Build narrative around their championship journey.")
+
+    return "\n".join(parts)
+
+
+#  ─── WIRE FAN DETECTION INTO handle_message ─────────────────
+#  (fan detection runs inside handle_message, see below)
+
+
 
 PREDICTOR_CSV   = Path(__file__).parent / "f1_2026_predicciones.csv"
 _PREDICTOR_CACHE: dict = {}
@@ -4979,6 +6711,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+    # ── 4b. Fan/rival declaration detection ───────────────
+    fan_team, fan_driver = detect_fan_declaration(text)
+    if fan_team or fan_driver:
+        if fan_team:
+            sessions[user_id]["fan_team"] = fan_team
+        if fan_driver:
+            sessions[user_id]["fan_driver"] = fan_driver
+        save_sessions(sessions)
+        # Silently store — Claude will acknowledge naturally in response
+
     # ── 5. Off-topic guardrail ────────────────────────────
     if is_off_topic(text):
         reply = get_off_topic_response(text)
@@ -5085,23 +6827,12 @@ def main():
     from telegram.ext import CallbackQueryHandler
     app.add_handler(CommandHandler("start",          cmd_start))
     app.add_handler(CommandHandler("help",           cmd_help))
-    app.add_handler(CommandHandler("timezone",       cmd_timezone))
     app.add_handler(CommandHandler("standings",      cmd_standings))
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
-    app.add_handler(CommandHandler("season",         cmd_season))
-    app.add_handler(CommandHandler("schedule",       cmd_schedule))
-    app.add_handler(CommandHandler("lastrace",       cmd_lastrace))
-    app.add_handler(CommandHandler("live",           cmd_live))
     app.add_handler(CommandHandler("predict",        cmd_predict))
     app.add_handler(CommandHandler("winner",         cmd_winner))
-    app.add_handler(CommandHandler("compare",        cmd_compare))
-    app.add_handler(CommandHandler("mypredictions",  cmd_mypredictions))
-    app.add_handler(CommandHandler("debate",         cmd_debate))
-    app.add_handler(CommandHandler("hottake",        cmd_hottake))
-    app.add_handler(CommandHandler("wouldyourather", cmd_wouldyourather))
-    app.add_handler(CommandHandler("news",           cmd_news))
-    app.add_handler(CommandHandler("mystats",        cmd_mystats))
-    app.add_handler(CallbackQueryHandler(handle_timezone_callback, pattern="^tz:"))
+    app.add_handler(CallbackQueryHandler(handle_timezone_callback,    pattern="^tz:"))
+    app.add_handler(CallbackQueryHandler(handle_notification_callback, pattern="^notif:"))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(handle_error)
