@@ -6455,11 +6455,6 @@ def format_predictor_for_claude(rows: list) -> str:
                 except: parts.append(f"{label}={v}")
         lines.append("  " + "  ".join(parts))
 
-    try:
-        mtime = datetime.fromtimestamp(PREDICTOR_CSV.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-        lines.append(f"\nCSV generated: {mtime}")
-    except Exception:
-        pass
     return "\n".join(lines)
 
 
@@ -6553,12 +6548,10 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if has_pred:
             lines = [
                 f"🎯 *{race_name} — Predictor Preview*",
-                "_Developed by Erick Hernandez_",
                 "━━━━━━━━━━━━━━━━━━━━━━",
                 "",
                 predictor_winner_summary(pred_rows),
                 "",
-                "_Model: f1_2026_predictor.py v7.0 · 10,000 MC sims_",
                 "_/predict full for complete analysis_",
             ]
             try:
