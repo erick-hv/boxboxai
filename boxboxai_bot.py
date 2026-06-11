@@ -6575,63 +6575,106 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await ctx.bot.send_chat_action(
-        chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
+        chat_id=update.effective_chat.id,
+        action=constants.ChatAction.TYPING)
 
-    next_race = fetch_next_race()
-    race_name = next_race.get("raceName","next race") if next_race else "next race"
-    history   = get_user_history(sessions, user_id)
-    user_data = sessions.get(user_id, {})
-    pred_block, pred_rows = get_predictor_context()
-    has_pred  = bool(pred_block and pred_rows)
+    try:
+        next_race = fetch_next_race()
+        # Fallback: if no "next" race from API, use upcoming from calendar
+        if not next_race:
+            today = datetime.now().date()
+            for rnd, name, date_str in [
+                (7,"Spanish GP","2026-06-14"),
+                (8,"Austrian GP","2026-06-28"),
+                (9,"British GP","2026-07-05"),
+            ]:
+                if datetime.strptime(date_str,"%Y-%m-%d").date() >= today:
+                    next_race = {"raceName": name, "round": str(rnd),
+                                 "date": date_str}
+                    break
 
-    if has_pred:
-        r      = pred_rows[0]
-        name   = r.get("FullName", r.get("code","?"))
-        p2     = pred_rows[1].get("FullName","?") if len(pred_rows)>1 else "?"
-        p3     = pred_rows[2].get("FullName","?") if len(pred_rows)>2 else "?"
-        try:    win_str = f"{float(r.get('win_mc_pct','?')):.1f}%"
-        except: win_str = "?"
-        try:    pod_str = f"{float(r.get('podium_mc_pct','?')):.1f}%"
-        except: pod_str = "?"
-        quali  = r.get("quali_pos_next","")
-        form   = r.get("recent_form","")
-        cscor  = r.get("circuit_score","")
-        mech   = r.get("mechanical_risk","")
-        try:    qstr = f"P{int(float(quali))}" if quali not in ("","nan","NaN") else ""
-        except: qstr = ""
-        try:    mstr = f"{float(mech)*100:.1f}% mech risk" if mech not in ("","nan","NaN") else ""
-        except: mstr = ""
+        race_name = next_race.get("raceName","next race") if next_race \
+                    else "next race"
+        history   = get_user_history(sessions, user_id)
+        user_data = sessions.get(user_id, {})
 
-        prompt = (
-            f"f1_2026_predictor.py says {name} wins {race_name} "
-            f"with {win_str} probability ({pod_str} podium). "
-            f"P2: {p2}, P3: {p3}. "
-            f"Key: quali={qstr}, recent_form={form}, circuit_score={cscor}. {mstr}. "
-            f"In 2-3 sentences: confirm this pick, main reason why, and ONE driver "
-            f"who could realistically upset it. Use the exact {win_str} number. Be direct."
-        )
-        reply = ask_claude(prompt, history, mem, user_data)
-        save_prediction(race_name, r.get("code", "?"))
-
-    else:
-        reply = ask_claude(
-            f"Who will win the {race_name}? 2-3 sentences max — "
-            f"winner, main reason why, one driver who could upset it.",
-            history, mem, user_data
-        )
-        for code in ["ANT","RUS","HAM","LEC","VER","NOR","PIA","ALO","SAI","GAS"]:
-            if code in reply.upper()[:100]:
-                save_prediction(race_name, code)
-                break
-
-    update_user_history(sessions, user_id, "user", f"/winner {race_name}")
-    update_user_history(sessions, user_id, "assistant", reply)
-    save_sessions(sessions)
-    for part in split_message(reply):
         try:
-            await update.message.reply_text(part, parse_mode=constants.ParseMode.MARKDOWN)
+            pred_block, pred_rows = get_predictor_context()
+            has_pred = bool(pred_block and pred_rows)
         except Exception:
-            await update.message.reply_text(re.sub(r"[*_`]","",part))
+            has_pred = False
+            pred_rows = []
+
+        reply = ""
+
+        if has_pred:
+            r      = pred_rows[0]
+            name   = r.get("FullName", r.get("code","?"))
+            p2     = pred_rows[1].get("FullName","?") if len(pred_rows)>1 else "?"
+            p3     = pred_rows[2].get("FullName","?") if len(pred_rows)>2 else "?"
+            try:    win_str = f"{float(r.get('win_mc_pct','?')):.1f}%"
+            except: win_str = "?"
+            try:    pod_str = f"{float(r.get('podium_mc_pct','?')):.1f}%"
+            except: pod_str = "?"
+            quali  = r.get("quali_pos_next","")
+            form   = r.get("recent_form","")
+            cscor  = r.get("circuit_score","")
+            mech   = r.get("mechanical_risk","")
+            try:    qstr = f"P{int(float(quali))}" if quali not in ("","nan","NaN") else ""
+            except: qstr = ""
+            try:    mstr = f"{float(mech)*100:.1f}% mech risk" if mech not in ("","nan","NaN") else ""
+            except: mstr = ""
+
+            prompt = (
+                f"f1_2026_predictor.py says {name} wins {race_name} "
+                f"with {win_str} probability ({pod_str} podium). "
+                f"P2: {p2}, P3: {p3}. "
+                f"Key: quali={qstr}, recent_form={form}, "
+                f"circuit_score={cscor}. {mstr}. "
+                f"In 2-3 sentences: confirm this pick, main reason why, "
+                f"and ONE driver who could realistically upset it. "
+                f"Use the exact {win_str} number. Be direct."
+            )
+            reply = ask_claude(prompt, history, mem, user_data)
+            try:
+                save_prediction(race_name, r.get("code","?"))
+            except Exception:
+                pass
+
+        if not reply:
+            reply = ask_claude(
+                f"Who will win the {race_name}? 2-3 sentences max — "
+                f"winner, main reason why, one driver who could upset it.",
+                history, mem, user_data
+            )
+            for code in ["ANT","RUS","HAM","LEC","VER",
+                         "NOR","PIA","ALO","SAI","GAS"]:
+                if code in reply.upper()[:100]:
+                    try:
+                        save_prediction(race_name, code)
+                    except Exception:
+                        pass
+                    break
+
+        if not reply:
+            reply = "⚠️ Having trouble fetching the prediction right now. Try again in a moment."
+
+        update_user_history(sessions, user_id, "user", f"/winner {race_name}")
+        update_user_history(sessions, user_id, "assistant", reply)
+        save_sessions(sessions)
+
+        for part in split_message(reply):
+            try:
+                await update.message.reply_text(
+                    part, parse_mode=constants.ParseMode.MARKDOWN)
+            except Exception:
+                await update.message.reply_text(
+                    re.sub(r"[*_`]","",part))
+
+    except Exception as e:
+        log.error(f"cmd_winner error: {e}")
+        await update.message.reply_text(
+            "⚠️ Something went wrong with the prediction. Try again in a moment.")
 
 
 
