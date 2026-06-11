@@ -1079,7 +1079,260 @@ F1_TRUSTED_DOMAINS = [
     "crash.net", "gpfans.com", "formula1.com",
 ]
 
-def google_search_f1(query: str, num_results: int = 5) -> list:
+# ═════════════════════════════════════════════════════════════
+#  FIA STEWARDS DOCUMENTS
+#  Official incident decisions, penalties, technical findings
+#  URL: fia.com/system/files/decision-document/
+#  These are the ground truth for WHY incidents happened
+# ═════════════════════════════════════════════════════════════
+
+FIA_DOCS_BASE  = "https://www.fia.com/system/files/decision-document"
+FIA_DOCS_INDEX = "https://www.fia.com/documents/championships/fia-formula-one-world-championship-14"
+
+# Cache so we don't re-fetch on every message
+_FIA_DOC_CACHE: dict = {}   # {race_key: [doc_text, ...]}
+
+# URL slug patterns for each race
+FIA_RACE_SLUGS = {
+    "australian": "2026_australian_grand_prix",
+    "chinese":    "2026_chinese_grand_prix",
+    "japanese":   "2026_japanese_grand_prix",
+    "miami":      "2026_miami_grand_prix",
+    "canadian":   "2026_canadian_grand_prix",
+    "monaco":     "2026_monaco_grand_prix",
+    "spanish":    "2026_spanish_grand_prix",
+    "barcelona":  "2026_spanish_grand_prix",
+    "austrian":   "2026_austrian_grand_prix",
+    "british":    "2026_british_grand_prix",
+    "silverstone":"2026_british_grand_prix",
+    "belgian":    "2026_belgian_grand_prix",
+    "hungarian":  "2026_hungarian_grand_prix",
+    "dutch":      "2026_dutch_grand_prix",
+    "italian":    "2026_italian_grand_prix",
+    "singapore":  "2026_singapore_grand_prix",
+    "azerbaijan": "2026_azerbaijan_grand_prix",
+    "baku":       "2026_azerbaijan_grand_prix",
+    "us":         "2026_united_states_grand_prix",
+    "usa":        "2026_united_states_grand_prix",
+    "austin":     "2026_united_states_grand_prix",
+    "mexico":     "2026_mexico_city_grand_prix",
+    "brazil":     "2026_sao_paulo_grand_prix",
+    "paulo":      "2026_sao_paulo_grand_prix",
+    "vegas":      "2026_las_vegas_grand_prix",
+    "qatar":      "2026_qatar_grand_prix",
+    "abu":        "2026_abu_dhabi_grand_prix",
+}
+
+# Document types that contain useful incident info
+FIA_USEFUL_DOC_TYPES = [
+    "infringement",
+    "decision",
+    "investigation",
+    "incident",
+    "collision",
+    "causing",
+    "penalty",
+    "unsafe",
+    "technical",
+    "protest",
+]
+
+
+def _fetch_fia_pdf_text(url: str) -> str:
+    """Fetches a FIA PDF and extracts text."""
+    try:
+        r = requests.get(url, timeout=12, headers={
+            "User-Agent": "Mozilla/5.0 BoxBoxAI/1.0"
+        })
+        if r.status_code != 200:
+            return ""
+        # For PDFs we need to parse the binary
+        # Use pdfminer if available, otherwise return raw text attempt
+        try:
+            import io
+            try:
+                from pdfminer.high_level import extract_text_to_fp
+                from pdfminer.layout import LAParams
+                output = io.StringIO()
+                extract_text_to_fp(
+                    io.BytesIO(r.content), output,
+                    laparams=LAParams(), output_type="text",
+                    codec="utf-8")
+                return output.getvalue().strip()
+            except ImportError:
+                pass
+            # Fallback: pypdf
+            try:
+                import pypdf
+                reader = pypdf.PdfReader(io.BytesIO(r.content))
+                return "\n".join(
+                    page.extract_text() for page in reader.pages
+                    if page.extract_text()).strip()
+            except ImportError:
+                pass
+            # Last resort: decode as text (works for some FIA PDFs)
+            text = r.content.decode("latin-1", errors="ignore")
+            # Extract readable text portions
+            readable = re.findall(r'[A-Za-z][A-Za-z0-9 .,:\-\'()]{10,}', text)
+            return " ".join(readable[:100])
+        except Exception:
+            return ""
+    except Exception as e:
+        log.debug(f"FIA PDF fetch failed {url}: {e}")
+        return ""
+
+
+def _build_fia_doc_urls(race_slug: str,
+                         doc_numbers: list) -> list:
+    """
+    Builds FIA document URLs for a race.
+    Tries common document name patterns for incident decisions.
+    """
+    urls = []
+    base = f"{FIA_DOCS_BASE}/{race_slug}"
+
+    # Known document name patterns for stewards decisions
+    patterns = [
+        f"{base}_-_infringement_-_car_*_-_causing_a_collision*.pdf",
+        f"{base}_-_decision_-_car_*_-_*.pdf",
+        f"{base}_-_infringement_-_*.pdf",
+        f"{base}_-_final_race_classification.pdf",
+        f"{base}_-_race_-_stewards_summary.pdf",
+        f"{base}_-_stewards_document*.pdf",
+    ]
+
+    # Build specific URLs for doc numbers if provided
+    for num in doc_numbers:
+        urls.append(f"{base}_-_document_{num}.pdf")
+
+    return urls
+
+
+def fetch_fia_race_documents(race_name: str,
+                              query: str = "") -> str:
+    """
+    Fetches relevant FIA stewards documents for a race.
+    Returns combined text of incident decisions.
+
+    This gives the bot ground truth for:
+    - Why crashes happened (official stewards finding)
+    - What penalties were issued and why
+    - Technical infractions
+    - Official incident classifications
+    """
+    # Detect which race
+    race_slug = None
+    q_lower   = (race_name + " " + query).lower()
+    for keyword, slug in FIA_RACE_SLUGS.items():
+        if keyword in q_lower:
+            race_slug = slug
+            break
+
+    if not race_slug:
+        return ""
+
+    # Check cache
+    cache_key = f"{race_slug}_{query[:30]}"
+    if cache_key in _FIA_DOC_CACHE:
+        return _FIA_DOC_CACHE[cache_key]
+
+    log.info(f"Fetching FIA docs for {race_slug}...")
+    collected_texts = []
+
+    # 1. Fetch the race classification (always useful — has all penalties listed)
+    classification_url = (
+        f"{FIA_DOCS_BASE}/{race_slug}_-_final_race_classification.pdf")
+    classification_text = _fetch_fia_pdf_text(classification_url)
+    if classification_text:
+        collected_texts.append(
+            f"[FIA Official Race Classification]\n{classification_text[:800]}")
+
+    # 2. Search for incident-specific documents
+    # Try Google to find the specific doc URLs for this race
+    search_query = (
+        f"site:fia.com/system/files/decision-document "
+        f"{race_slug.replace('_',' ')} collision incident infringement 2026")
+
+    google_results = google_search_f1(search_query, num_results=8)
+
+    fia_urls = []
+    for result in google_results:
+        url = result.get("url","")
+        if "fia.com/system/files/decision-document" in url:
+            # Check if it's about an incident (not just admin docs)
+            url_lower = url.lower()
+            if any(t in url_lower for t in FIA_USEFUL_DOC_TYPES):
+                fia_urls.append(url)
+
+    # 3. Fetch each incident document
+    for url in fia_urls[:5]:  # limit to 5 docs
+        text = _fetch_fia_pdf_text(url)
+        if text and len(text) > 100:
+            # Extract doc name from URL
+            doc_name = url.split("/")[-1].replace(".pdf","").replace("_"," ")
+            collected_texts.append(
+                f"[FIA Stewards Document: {doc_name}]\n{text[:600]}")
+            log.info(f"FIA doc fetched: {doc_name[:60]}")
+
+    # 4. Also try fetching the stewards summary if available
+    summary_url = (
+        f"{FIA_DOCS_BASE}/{race_slug}_-_stewards_decisions_summary.pdf")
+    summary_text = _fetch_fia_pdf_text(summary_url)
+    if summary_text:
+        collected_texts.append(
+            f"[FIA Stewards Summary]\n{summary_text[:800]}")
+
+    if not collected_texts:
+        # Fallback: try fetching FIA documents index page and scraping links
+        try:
+            r = requests.get(FIA_DOCS_INDEX, timeout=10)
+            if r.status_code == 200:
+                # Find links to PDFs matching this race
+                pdf_links = re.findall(
+                    r'href="([^"]*' + race_slug[:20] + r'[^"]*\.pdf)"',
+                    r.text, re.IGNORECASE)
+                for link in pdf_links[:3]:
+                    if not link.startswith("http"):
+                        link = "https://www.fia.com" + link
+                    text = _fetch_fia_pdf_text(link)
+                    if text:
+                        collected_texts.append(text[:400])
+        except Exception:
+            pass
+
+    result = "\n\n".join(collected_texts)
+
+    # Cache for 1 hour
+    _FIA_DOC_CACHE[cache_key] = result
+    return result
+
+
+def _needs_fia_docs(query: str) -> bool:
+    """
+    Detects if a query needs FIA stewards documents.
+    Triggers on: crash causes, penalty reasons, incident details,
+    technical violations, protest outcomes.
+    """
+    t = query.lower()
+    triggers = [
+        "why did", "why was", "what caused", "how did",
+        "crash", "collision", "incident", "penalty", "penalised",
+        "penalized", "disqualified", "dsq", "black flag",
+        "drive through", "time penalty", "grid penalty",
+        "technical infringement", "protest", "appeal",
+        "stewards", "fia decision", "investigation",
+        "retired because", "dnf because", "why retire",
+        "tarmac", "track surface", "unsafe release",
+        "track limits violation", "speeding pit lane",
+        "false start", "jump start",
+        "por qué chocaron", "por qué penalizaron",
+        "qué pasó con", "por qué se retiró",
+        "infracción", "penalización", "decisión",
+    ]
+    return any(tr in t for tr in triggers)
+
+
+
     """
     Searches Google for F1 content and returns relevant results.
     Filters for trusted F1 domains.
@@ -4245,7 +4498,8 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         prediction_accuracy: str = "",
                         driver_stats: str = "",
                         practice_context: str = "",
-                        live_search_context: str = "") -> str:
+                        live_search_context: str = "",
+                        fia_docs_context: str = "") -> str:
     # Semantic facts
     sem_lines = []
     for k, v in mem.get("semantic", {}).items():
@@ -4477,6 +4731,8 @@ HISTORICAL DATA:
 
 {f"LIVE SESSION SEARCH RESULTS:{chr(10)}{live_search_context}" if live_search_context else ""}
 
+{f"FIA OFFICIAL STEWARDS DOCUMENTS (ground truth for incidents/penalties):{chr(10)}{fia_docs_context}" if fia_docs_context else ""}
+
 {f"LIVE SESSION DATA:{chr(10)}{live_context}" if live_context else ""}
 
 {f"PRACTICE SESSION RESULTS:{chr(10)}{practice_context}" if practice_context else ""}
@@ -4497,6 +4753,13 @@ For live or ongoing sessions:
 - If Q1 just finished and Q2 is live, tell them what happened in Q1
 - Be specific — lap times, who got knocked out, fastest driver, incidents
 - Say "based on latest reports" naturally, not as a disclaimer
+
+For incident and crash questions:
+- Always check FIA OFFICIAL STEWARDS DOCUMENTS first — this is ground truth
+- If FIA docs are present, answer from them directly — cite "FIA stewards found..."
+- Include the official penalty, the specific regulation breached, and the finding
+- If FIA docs say tarmac failure, say tarmac failure — don't speculate
+- If no FIA docs available, say what's known and what's still unclear
 
 
 For circuit questions: use the guide to give specific corner-by-corner insight.
@@ -4565,10 +4828,24 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     fan_ctx           = ""
     driver_deep_ctx   = ""
 
+    fia_docs_ctx      = ""
+
     # Universal live search — triggers for ANY session question
     if _is_live_session_question(user_msg):
         live_search_ctx = live_search_f1(user_msg)
         log.info(f"Live search triggered for: {user_msg[:50]}")
+
+    # FIA stewards documents — triggers for incident/crash/penalty questions
+    if _needs_fia_docs(user_msg):
+        # Detect race name from memory context
+        episodes   = mem.get("episodic",[])
+        last_race  = episodes[-1].get("race_name","") if episodes else ""
+        next_race  = fetch_next_race()
+        next_name  = next_race.get("raceName","") if next_race else ""
+        race_ctx   = last_race or next_name
+        fia_docs_ctx = fetch_fia_race_documents(race_ctx, user_msg)
+        if fia_docs_ctx:
+            log.info(f"FIA docs fetched for: {user_msg[:50]}")
 
     # News
     if _is_news_query(user_msg):
@@ -4652,7 +4929,7 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         mem, news_ctx, weather_ctx, historical_ctx,
         user_profile_ctx, live_ctx, circuit_ctx,
         pred_accuracy, driver_stats_ctx, practice_ctx,
-        live_search_ctx
+        live_search_ctx, fia_docs_ctx
     )
     messages = history + [{"role": "user", "content": user_msg}]
 

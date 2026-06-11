@@ -9,3 +9,6 @@ numpy
 tabulate
 xgboost
 scikit-learn
+
+# FIA document parsing
+pypdf
