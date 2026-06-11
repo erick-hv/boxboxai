@@ -1080,6 +1080,87 @@ F1_TRUSTED_DOMAINS = [
 ]
 
 # ═════════════════════════════════════════════════════════════
+#  GOOGLE SEARCH + ARTICLE FETCHER
+# ═════════════════════════════════════════════════════════════
+
+def google_search_f1(query: str, num_results: int = 5) -> list:
+    """Searches Google for F1 content. Returns list of {title, url, snippet}."""
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        params = {"q": query, "num": num_results * 2, "hl": "en", "gl": "us"}
+        r = requests.get("https://www.google.com/search",
+                         params=params, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return []
+
+        results = []
+        blocks  = re.findall(
+            r'<div[^>]*class="[^"]*(?:g|MjjYud)[^"]*"[^>]*>(.*?)</div>\s*</div>',
+            r.text, re.DOTALL)
+        for block in blocks[:num_results * 3]:
+            url_match = re.search(r'href="(https?://[^"]+)"', block)
+            if not url_match:
+                continue
+            url = url_match.group(1)
+            if "google.com" in url or "youtube.com" in url:
+                continue
+            title_match = re.search(r'<h3[^>]*>([^<]+)</h3>', block)
+            title = title_match.group(1).strip() if title_match else ""
+            snippet_match = re.search(
+                r'<span[^>]*class="[^"]*(?:st|aCOpRe|hgKElc)[^"]*"[^>]*>'
+                r'([^<]+(?:<[^>]+>[^<]+</[^>]+>)*[^<]*)</span>', block)
+            snippet = ""
+            if snippet_match:
+                snippet = re.sub(r"<[^>]+>", "",
+                                 snippet_match.group(1)).strip()
+            if title or snippet:
+                results.append({
+                    "title":   title,
+                    "url":     url,
+                    "snippet": snippet[:300],
+                })
+            if len(results) >= num_results:
+                break
+        return results
+    except Exception as e:
+        log.warning(f"Google search failed: {e}")
+        return []
+
+
+def fetch_article_content(url: str, max_chars: int = 1500) -> str:
+    """Fetches and extracts clean text from an article URL."""
+    try:
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0 BoxBoxAI/1.0"})
+        if r.status_code != 200:
+            return ""
+        text = r.text
+        for tag in ["script","style","nav","header","footer","aside"]:
+            text = re.sub(rf"<{tag}[^>]*>.*?</{tag}>", "",
+                          text, flags=re.DOTALL)
+        for selector in [
+            r'<article[^>]*>(.*?)</article>',
+            r'<div[^>]*class="[^"]*(?:article|content|story)[^"]*"[^>]*>(.*?)</div>',
+            r'<main[^>]*>(.*?)</main>',
+        ]:
+            m = re.search(selector, text, re.DOTALL)
+            if m:
+                text = m.group(1)
+                break
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:max_chars]
+    except Exception:
+        return ""
+
+
+# ═════════════════════════════════════════════════════════════
 #  FIA STEWARDS DOCUMENTS
 #  Official incident decisions, penalties, technical findings
 #  URL: fia.com/system/files/decision-document/
@@ -1410,40 +1491,6 @@ def _needs_fia_docs(query: str) -> bool:
         return []
 
 
-def fetch_article_content(url: str, max_chars: int = 1500) -> str:
-    """Fetches and extracts clean text from an article URL."""
-    try:
-        r = requests.get(url, timeout=8, headers={
-            "User-Agent": "Mozilla/5.0 BoxBoxAI/1.0"
-        })
-        if r.status_code != 200:
-            return ""
-
-        text = r.text
-        # Remove scripts, styles, nav
-        for tag in ["script", "style", "nav", "header", "footer",
-                    "aside", "advertisement"]:
-            text = re.sub(
-                rf"<{tag}[^>]*>.*?</{tag}>", "", text, flags=re.DOTALL)
-
-        # Try to get article body
-        for selector in [
-            r'<article[^>]*>(.*?)</article>',
-            r'<div[^>]*class="[^"]*(?:article|content|story|post)[^"]*"[^>]*>(.*?)</div>',
-            r'<main[^>]*>(.*?)</main>',
-        ]:
-            m = re.search(selector, text, re.DOTALL)
-            if m:
-                text = m.group(1)
-                break
-
-        # Strip remaining HTML and clean up
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:max_chars]
-
-    except Exception:
-        return ""
 
 
 def live_search_f1(query: str, race_context: str = "") -> str:
@@ -1504,38 +1551,41 @@ def live_search_f1(query: str, race_context: str = "") -> str:
 
 def _is_live_session_question(text: str) -> bool:
     """
-    Detects if a question needs live search —
-    anything about what's happening in a session,
-    results, times, incidents for any session type.
+    Detects if a USER question needs live search.
+    Only triggers on actual session questions — not internal prompts.
     """
     t = text.lower()
 
-    session_keywords = [
-        # Session types
+    # Never trigger on internal predictor prompts
+    if any(skip in t for skip in [
+        "f1_2026_predictor", "monte carlo", "win probability",
+        "podium). p2:", "circuit_score", "mechanical_risk",
+        "recent_form=", "quali_pos_next", "in 2-3 sentences",
+        "confirm this pick",
+    ]):
+        return False
+
+    # Must have a session type AND an action word to trigger
+    session_types = [
         "fp1", "fp2", "fp3", "free practice",
         "qualifying", "quali", "q1", "q2", "q3",
-        "sprint quali", "sprint qualifying", "sprint race", "sprint",
-        "race", "carrera",
-        # Live/current action words
-        "what happened", "what's happening", "what is happening",
-        "results", "fastest", "fastest lap", "top time",
-        "who is leading", "who's leading", "leaderboard",
-        "times", "lap time", "sector", "red flag", "yellow flag",
-        "incident", "crash", "dnf", "retired",
-        "live", "right now", "currently", "ahora", "en vivo",
-        # Spanish equivalents
-        "qué pasó", "que paso", "qué está pasando",
-        "resultados", "tiempos", "más rápido", "clasificación",
-        "vuelta rápida", "bandera roja", "incidente",
-        "líder", "primer lugar",
-        # Practice specific
+        "sprint qualifying", "sprint race",
         "práctica", "practica", "entreno", "libre",
-        # Qualifying specific
-        "clasificación", "pole", "eliminado", "knocked out",
-        "pole position", "grid",
+        "clasificación",
+    ]
+    action_words = [
+        "what happened", "what's happening", "what is happening",
+        "who is leading", "who's leading", "right now", "currently",
+        "live", "results", "fastest", "times", "ahora", "en vivo",
+        "qué pasó", "qué está pasando", "resultados", "tiempos",
+        "red flag", "incident", "crash", "bandera roja",
+        "knocked out", "eliminado",
     ]
 
-    return any(kw in t for kw in session_keywords)
+    has_session = any(kw in t for kw in session_types)
+    has_action  = any(kw in t for kw in action_words)
+
+    return has_session and has_action
 
 
 
