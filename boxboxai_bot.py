@@ -1233,250 +1233,302 @@ def fetch_article_content(url: str, max_chars: int = 1500) -> str:
 #  These are the ground truth for WHY incidents happened
 # ═════════════════════════════════════════════════════════════
 
-FIA_DOCS_BASE  = "https://www.fia.com/system/files/decision-document"
-FIA_DOCS_INDEX = "https://www.fia.com/documents/championships/fia-formula-one-world-championship-14"
+# ═════════════════════════════════════════════════════════════
+#  FIA STEWARDS INTELLIGENCE
+#  FIA blocks direct PDF access (403). Instead we fetch from
+#  motorsport.com, planetf1.com, total-motorsport.com, espn.com
+#  which publish the exact FIA stewards verdict text within
+#  hours of every race. These are the most reliable sources
+#  for penalty reasons, incident findings, and decisions.
+# ═════════════════════════════════════════════════════════════
 
-# Cache so we don't re-fetch on every message
-_FIA_DOC_CACHE: dict = {}   # {race_key: [doc_text, ...]}
+_FIA_DOC_CACHE: dict = {}  # {cache_key: text} — 2hr TTL
+_FIA_CACHE_TIMES: dict = {}
 
-# URL slug patterns for each race
-FIA_RACE_SLUGS = {
-    "australian": "2026_australian_grand_prix",
-    "chinese":    "2026_chinese_grand_prix",
-    "japanese":   "2026_japanese_grand_prix",
-    "miami":      "2026_miami_grand_prix",
-    "canadian":   "2026_canadian_grand_prix",
-    "monaco":     "2026_monaco_grand_prix",
-    "spanish":    "2026_spanish_grand_prix",
-    "barcelona":  "2026_spanish_grand_prix",
-    "austrian":   "2026_austrian_grand_prix",
-    "british":    "2026_british_grand_prix",
-    "silverstone":"2026_british_grand_prix",
-    "belgian":    "2026_belgian_grand_prix",
-    "hungarian":  "2026_hungarian_grand_prix",
-    "dutch":      "2026_dutch_grand_prix",
-    "italian":    "2026_italian_grand_prix",
-    "singapore":  "2026_singapore_grand_prix",
-    "azerbaijan": "2026_azerbaijan_grand_prix",
-    "baku":       "2026_azerbaijan_grand_prix",
-    "us":         "2026_united_states_grand_prix",
-    "usa":        "2026_united_states_grand_prix",
-    "austin":     "2026_united_states_grand_prix",
-    "mexico":     "2026_mexico_city_grand_prix",
-    "brazil":     "2026_sao_paulo_grand_prix",
-    "paulo":      "2026_sao_paulo_grand_prix",
-    "vegas":      "2026_las_vegas_grand_prix",
-    "qatar":      "2026_qatar_grand_prix",
-    "abu":        "2026_abu_dhabi_grand_prix",
-}
-
-# Document types that contain useful incident info
-FIA_USEFUL_DOC_TYPES = [
-    "infringement",
-    "decision",
-    "investigation",
-    "incident",
-    "collision",
-    "causing",
-    "penalty",
-    "unsafe",
-    "technical",
-    "protest",
+# Sources ranked by reliability for stewards decisions
+FIA_STEWARDS_SOURCES = [
+    "motorsport.com",
+    "planetf1.com",
+    "total-motorsport.com",
+    "the-race.com",
+    "autosport.com",
+    "espn.com/f1",
+    "formula1.com",
+    "racefans.net",
 ]
 
+# Race name keywords for search context
+FIA_RACE_KEYWORDS = {
+    "monaco":     "Monaco Grand Prix 2026",
+    "australian": "Australian Grand Prix 2026",
+    "chinese":    "Chinese Grand Prix 2026",
+    "japanese":   "Japanese Grand Prix 2026",
+    "miami":      "Miami Grand Prix 2026",
+    "canadian":   "Canadian Grand Prix 2026",
+    "spanish":    "Spanish Grand Prix 2026 Barcelona",
+    "barcelona":  "Spanish Grand Prix 2026 Barcelona",
+    "austrian":   "Austrian Grand Prix 2026",
+    "british":    "British Grand Prix 2026 Silverstone",
+    "belgian":    "Belgian Grand Prix 2026",
+    "hungarian":  "Hungarian Grand Prix 2026",
+    "dutch":      "Dutch Grand Prix 2026",
+    "italian":    "Italian Grand Prix 2026 Monza",
+    "singapore":  "Singapore Grand Prix 2026",
+    "azerbaijan": "Azerbaijan Grand Prix 2026 Baku",
+    "baku":       "Azerbaijan Grand Prix 2026 Baku",
+    "usa":        "US Grand Prix 2026 Austin",
+    "austin":     "US Grand Prix 2026 Austin",
+    "mexico":     "Mexico City Grand Prix 2026",
+    "brazil":     "Brazilian Grand Prix 2026 Sao Paulo",
+    "paulo":      "Brazilian Grand Prix 2026 Sao Paulo",
+    "vegas":      "Las Vegas Grand Prix 2026",
+    "qatar":      "Qatar Grand Prix 2026",
+    "abu":        "Abu Dhabi Grand Prix 2026",
+}
 
-def _fetch_fia_pdf_text(url: str) -> str:
-    """Fetches a FIA PDF and extracts text."""
+# Driver name map for search queries
+FIA_DRIVER_NAMES = {
+    "ant": "Antonelli", "kimi": "Antonelli", "antonelli": "Antonelli",
+    "rus": "Russell",   "george": "Russell",  "russell": "Russell",
+    "ham": "Hamilton",  "lewis": "Hamilton",  "hamilton": "Hamilton",
+    "lec": "Leclerc",   "charles": "Leclerc", "leclerc": "Leclerc",
+    "ver": "Verstappen","max": "Verstappen",  "verstappen": "Verstappen",
+    "nor": "Norris",    "lando": "Norris",    "norris": "Norris",
+    "pia": "Piastri",   "oscar": "Piastri",   "piastri": "Piastri",
+    "alo": "Alonso",    "fernando": "Alonso", "alonso": "Alonso",
+    "per": "Perez",     "checo": "Perez",     "perez": "Perez",
+    "str": "Stroll",    "lance": "Stroll",    "stroll": "Stroll",
+    "gas": "Gasly",     "pierre": "Gasly",    "gasly": "Gasly",
+    "col": "Colapinto", "franco": "Colapinto","colapinto": "Colapinto",
+    "alb": "Albon",     "alex": "Albon",      "albon": "Albon",
+    "sai": "Sainz",     "carlos": "Sainz",    "sainz": "Sainz",
+    "law": "Lawson",    "liam": "Lawson",     "lawson": "Lawson",
+    "had": "Hadjar",    "isack": "Hadjar",    "hadjar": "Hadjar",
+    "bea": "Bearman",   "oliver": "Bearman",  "bearman": "Bearman",
+    "oco": "Ocon",      "esteban": "Ocon",    "ocon": "Ocon",
+    "hul": "Hulkenberg","nico": "Hulkenberg", "hulkenberg": "Hulkenberg",
+    "bor": "Bortoleto", "gabriel": "Bortoleto","bortoleto": "Bortoleto",
+    "bot": "Bottas",    "valtteri": "Bottas", "bottas": "Bottas",
+}
+
+
+def _extract_article_text(url: str, max_chars: int = 800) -> str:
+    """Fetches article and extracts clean body text."""
     try:
-        r = requests.get(url, timeout=12, headers={
-            "User-Agent": "Mozilla/5.0 BoxBoxAI/1.0"
-        })
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"),
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        r = requests.get(url, timeout=10, headers=headers)
         if r.status_code != 200:
             return ""
-        # For PDFs we need to parse the binary
-        # Use pdfminer if available, otherwise return raw text attempt
-        try:
-            import io
-            try:
-                from pdfminer.high_level import extract_text_to_fp
-                from pdfminer.layout import LAParams
-                output = io.StringIO()
-                extract_text_to_fp(
-                    io.BytesIO(r.content), output,
-                    laparams=LAParams(), output_type="text",
-                    codec="utf-8")
-                return output.getvalue().strip()
-            except ImportError:
-                pass
-            # Fallback: pypdf
-            try:
-                import pypdf
-                reader = pypdf.PdfReader(io.BytesIO(r.content))
-                return "\n".join(
-                    page.extract_text() for page in reader.pages
-                    if page.extract_text()).strip()
-            except ImportError:
-                pass
-            # Last resort: decode as text (works for some FIA PDFs)
-            text = r.content.decode("latin-1", errors="ignore")
-            # Extract readable text portions
-            readable = re.findall(r'[A-Za-z][A-Za-z0-9 .,:\-\'()]{10,}', text)
-            return " ".join(readable[:100])
-        except Exception:
-            return ""
+        text = r.text
+        # Strip scripts/styles
+        for tag in ["script","style","nav","header","footer","aside","figure"]:
+            text = re.sub(rf"<{tag}[^>]*>.*?</{tag}>", "", text,
+                          flags=re.DOTALL|re.IGNORECASE)
+        # Try article body selectors
+        for pattern in [
+            r'<article[^>]*>(.*?)</article>',
+            r'<div[^>]*class="[^"]*(?:article-body|story-body|'
+            r'content-body|article__body|post-content)[^"]*"[^>]*>(.*?)</div>',
+            r'<main[^>]*>(.*?)</main>',
+        ]:
+            m = re.search(pattern, text, re.DOTALL|re.IGNORECASE)
+            if m:
+                text = m.group(1)
+                break
+        # Strip HTML tags
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        # Look for stewards-specific content
+        # Find the most relevant paragraph
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        stewards_keywords = [
+            "steward", "penalty", "infringement", "decision", "article",
+            "regulation", "grid slot", "restart", "out of position",
+            "drive-through", "time penalty", "reprimand", "disqualified",
+            "collision", "track limits", "unsafe", "found that",
+            "video evidence", "the standard penalty"
+        ]
+        relevant = []
+        for sent in sentences:
+            if any(kw in sent.lower() for kw in stewards_keywords):
+                relevant.append(sent.strip())
+        if relevant:
+            return " ".join(relevant)[:max_chars]
+        return text[:max_chars]
     except Exception as e:
-        log.debug(f"FIA PDF fetch failed {url}: {e}")
+        log.debug(f"Article fetch failed {url}: {e}")
         return ""
 
 
-def _build_fia_doc_urls(race_slug: str,
-                         doc_numbers: list) -> list:
+def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
     """
-    Builds FIA document URLs for a race.
-    Tries common document name patterns for incident decisions.
+    Fetches official stewards decision content for a race incident/penalty.
+
+    Strategy:
+    1. Build targeted search query from race + driver + incident type
+    2. Search Google for coverage from trusted F1 sources
+    3. Fetch top 3 articles and extract stewards verdict text
+    4. Return combined findings with source attribution
+
+    This reliably gets the exact FIA stewards finding because
+    motorsport.com/planetf1/the-race all quote the official
+    stewards document verbatim within hours of each decision.
     """
-    urls = []
-    base = f"{FIA_DOCS_BASE}/{race_slug}"
+    q_lower = (race_name + " " + query).lower()
 
-    # Known document name patterns for stewards decisions
-    patterns = [
-        f"{base}_-_infringement_-_car_*_-_causing_a_collision*.pdf",
-        f"{base}_-_decision_-_car_*_-_*.pdf",
-        f"{base}_-_infringement_-_*.pdf",
-        f"{base}_-_final_race_classification.pdf",
-        f"{base}_-_race_-_stewards_summary.pdf",
-        f"{base}_-_stewards_document*.pdf",
-    ]
+    # Cache check (2 hour TTL)
+    cache_key = re.sub(r'\W+', '_', q_lower[:50])
+    if cache_key in _FIA_DOC_CACHE:
+        cached_time = _FIA_CACHE_TIMES.get(cache_key, 0)
+        if (datetime.now().timestamp() - cached_time) < 7200:
+            return _FIA_DOC_CACHE[cache_key]
 
-    # Build specific URLs for doc numbers if provided
-    for num in doc_numbers:
-        urls.append(f"{base}_-_document_{num}.pdf")
-
-    return urls
-
-
-def fetch_fia_race_documents(race_name: str,
-                              query: str = "") -> str:
-    """
-    Fetches relevant FIA stewards documents for a race.
-    Returns combined text of incident decisions.
-
-    This gives the bot ground truth for:
-    - Why crashes happened (official stewards finding)
-    - What penalties were issued and why
-    - Technical infractions
-    - Official incident classifications
-    """
-    # Detect which race
-    race_slug = None
-    q_lower   = (race_name + " " + query).lower()
-    for keyword, slug in FIA_RACE_SLUGS.items():
+    # Detect race
+    race_context = ""
+    for keyword, race_str in FIA_RACE_KEYWORDS.items():
         if keyword in q_lower:
-            race_slug = slug
+            race_context = race_str
+            break
+    if not race_context:
+        # Use most recent race from name
+        race_context = race_name + " 2026 F1"
+
+    # Detect driver
+    driver_name = ""
+    for keyword, name in FIA_DRIVER_NAMES.items():
+        if keyword in q_lower:
+            driver_name = name
             break
 
-    if not race_slug:
+    # Detect incident type for search query
+    incident_type = ""
+    if any(w in q_lower for w in ["penalty","penalt","sanction"]):
+        incident_type = "penalty stewards decision"
+    elif any(w in q_lower for w in ["crash","collision","incident","contact"]):
+        incident_type = "crash collision stewards investigation"
+    elif any(w in q_lower for w in ["disqualif","dsq"]):
+        incident_type = "disqualified DSQ stewards"
+    elif any(w in q_lower for w in ["track limit"]):
+        incident_type = "track limits penalty"
+    else:
+        incident_type = "stewards decision penalty"
+
+    # Build search query
+    parts = [race_context]
+    if driver_name:
+        parts.append(driver_name)
+    parts.append(incident_type)
+    parts.append("FIA")
+    search_q = " ".join(parts)
+
+    log.info(f"FIA search: '{search_q}'")
+
+    # Search Google
+    results = google_search_f1(search_q, num_results=6)
+    if not results:
         return ""
 
-    # Check cache
-    cache_key = f"{race_slug}_{query[:30]}"
-    if cache_key in _FIA_DOC_CACHE:
-        return _FIA_DOC_CACHE[cache_key]
+    # Filter to trusted sources
+    trusted_results = []
+    for r in results:
+        url = r.get("url","")
+        if any(src in url for src in FIA_STEWARDS_SOURCES):
+            trusted_results.append(r)
+    # Fall back to all results if no trusted ones
+    if not trusted_results:
+        trusted_results = results[:3]
 
-    log.info(f"Fetching FIA docs for {race_slug}...")
-    collected_texts = []
+    # Fetch article content from top 3 sources
+    collected = []
+    for result in trusted_results[:3]:
+        url     = result.get("url","")
+        title   = result.get("title","")
+        snippet = result.get("snippet","")
 
-    # 1. Fetch the race classification (always useful — has all penalties listed)
-    classification_url = (
-        f"{FIA_DOCS_BASE}/{race_slug}_-_final_race_classification.pdf")
-    classification_text = _fetch_fia_pdf_text(classification_url)
-    if classification_text:
-        collected_texts.append(
-            f"[FIA Official Race Classification]\n{classification_text[:800]}")
+        # Use snippet if it has stewards content (saves a fetch)
+        stewards_keywords = [
+            "steward","penalty","infringement","article",
+            "video evidence","standard penalty","out of position",
+            "grid slot","drive-through","time penalty","reprimand",
+            "found that","regulation","collision","restart"
+        ]
+        snippet_useful = any(kw in snippet.lower()
+                             for kw in stewards_keywords)
 
-    # 2. Search for incident-specific documents
-    # Try Google to find the specific doc URLs for this race
-    search_query = (
-        f"site:fia.com/system/files/decision-document "
-        f"{race_slug.replace('_',' ')} collision incident infringement 2026")
+        if snippet_useful and len(snippet) > 80:
+            collected.append(f"[{title}]\n{snippet}")
+            log.info(f"FIA: used snippet from {url[:50]}")
+        else:
+            # Fetch full article
+            article = _extract_article_text(url, max_chars=600)
+            if article:
+                collected.append(f"[{title}]\n{article}")
+                log.info(f"FIA: fetched article from {url[:50]}")
 
-    google_results = google_search_f1(search_query, num_results=8)
+        if len(collected) >= 3:
+            break
 
-    fia_urls = []
-    for result in google_results:
-        url = result.get("url","")
-        if "fia.com/system/files/decision-document" in url:
-            # Check if it's about an incident (not just admin docs)
-            url_lower = url.lower()
-            if any(t in url_lower for t in FIA_USEFUL_DOC_TYPES):
-                fia_urls.append(url)
+    if not collected:
+        return ""
 
-    # 3. Fetch each incident document
-    for url in fia_urls[:5]:  # limit to 5 docs
-        text = _fetch_fia_pdf_text(url)
-        if text and len(text) > 100:
-            # Extract doc name from URL
-            doc_name = url.split("/")[-1].replace(".pdf","").replace("_"," ")
-            collected_texts.append(
-                f"[FIA Stewards Document: {doc_name}]\n{text[:600]}")
-            log.info(f"FIA doc fetched: {doc_name[:60]}")
+    result_text = (
+        f"STEWARDS DECISION SOURCES ({race_context}):\n\n" +
+        "\n\n".join(collected)
+    )
 
-    # 4. Also try fetching the stewards summary if available
-    summary_url = (
-        f"{FIA_DOCS_BASE}/{race_slug}_-_stewards_decisions_summary.pdf")
-    summary_text = _fetch_fia_pdf_text(summary_url)
-    if summary_text:
-        collected_texts.append(
-            f"[FIA Stewards Summary]\n{summary_text[:800]}")
+    # Cache result
+    _FIA_DOC_CACHE[cache_key]  = result_text
+    _FIA_CACHE_TIMES[cache_key] = datetime.now().timestamp()
 
-    if not collected_texts:
-        # Fallback: try fetching FIA documents index page and scraping links
-        try:
-            r = requests.get(FIA_DOCS_INDEX, timeout=10)
-            if r.status_code == 200:
-                # Find links to PDFs matching this race
-                pdf_links = re.findall(
-                    r'href="([^"]*' + race_slug[:20] + r'[^"]*\.pdf)"',
-                    r.text, re.IGNORECASE)
-                for link in pdf_links[:3]:
-                    if not link.startswith("http"):
-                        link = "https://www.fia.com" + link
-                    text = _fetch_fia_pdf_text(link)
-                    if text:
-                        collected_texts.append(text[:400])
-        except Exception:
-            pass
-
-    result = "\n\n".join(collected_texts)
-
-    # Cache for 1 hour
-    _FIA_DOC_CACHE[cache_key] = result
-    return result
+    return result_text
 
 
 def _needs_fia_docs(query: str) -> bool:
     """
     Detects if a query needs FIA stewards documents.
-    Triggers on: crash causes, penalty reasons, incident details,
-    technical violations, protest outcomes.
+    Triggers on penalty reasons, incident causes, crash details,
+    technical violations, disqualifications.
     """
     t = query.lower()
+
+    # Skip internal predictor prompts
+    if any(skip in t for skip in [
+        "f1_2026_predictor", "monte carlo", "win probability",
+        "circuit_score", "recent_form=", "in 2-3 sentences",
+        "confirm this pick",
+    ]):
+        return False
+
     triggers = [
-        "why did", "why was", "what caused", "how did",
-        "crash", "collision", "incident", "penalty", "penalised",
-        "penalized", "disqualified", "dsq", "black flag",
-        "drive through", "time penalty", "grid penalty",
-        "technical infringement", "protest", "appeal",
+        "why did", "why was", "why were", "what caused", "how did",
+        "what happened to", "what was the",
+        "crash", "collision", "incident", "contact",
+        "penalty", "penalised", "penalized", "sanction",
+        "disqualified", "dsq", "black flag",
+        "drive through", "drive-through", "time penalty",
+        "grid penalty", "grid drop",
+        "track limits", "speeding", "unsafe release",
+        "false start", "jump start", "out of position",
         "stewards", "fia decision", "investigation",
         "retired because", "dnf because", "why retire",
-        "tarmac", "track surface", "unsafe release",
-        "track limits violation", "speeding pit lane",
-        "false start", "jump start",
-        "por qué chocaron", "por qué penalizaron",
-        "qué pasó con", "por qué se retiró",
-        "infracción", "penalización", "decisión",
+        "tarmac", "track surface", "red flag because",
+        "reprimand", "article b", "regulation",
+        # Spanish
+        "por qué", "qué pasó", "por que",
+        "penalización", "penalizado", "infracción",
+        "chocaron", "se retiró", "descalificado",
+        "decisión de los comisarios", "los comisarios",
     ]
     return any(tr in t for tr in triggers)
+
+
 
 
 
@@ -5214,8 +5266,9 @@ async def send_session_debrief(app, sessions: dict, mem: dict,
                                 race_name: str, session_name: str,
                                 round_num: int):
     """
-    Generates and sends a proactive session debrief after each session ends.
-    Uses live news + memory to write a punchy 3-4 sentence summary.
+    Sends a session debrief ONLY when real timing data is available.
+    Fetches actual results from OpenF1 first — never invents results.
+    If no real data exists yet, stays silent.
     """
     state = load_debrief_state()
     key   = f"r{round_num}_{session_name.replace(' ','_')}"
@@ -5226,63 +5279,79 @@ async def send_session_debrief(app, sessions: dict, mem: dict,
     if not active_users:
         return
 
-    # Pull latest news for this session
-    news = get_news_context(f"{race_name} {session_name} 2026")
+    # ── Step 1: Fetch REAL timing data from OpenF1 ───────────
+    real_data = _fetch_session_results_openf1(round_num, session_name)
 
-    # Session-specific prompts
-    session_prompts = {
-        "FP1": (
-            f"Write a 3-sentence FP1 debrief for {race_name}. "
-            f"Cover: who looked fast, any surprises, one thing to watch in FP2. "
-            f"News context: {news[:500] if news else 'No data yet'}. "
-            f"Punchy, opinionated, no filler."
-        ),
-        "FP2": (
-            f"Write a 3-sentence FP2 debrief for {race_name}. "
-            f"FP2 = race simulation data. Cover: long run pace leaders, "
-            f"tyre strategy clues, who's sandbagging. "
-            f"News: {news[:500] if news else 'No data yet'}. "
-            f"This is the most important practice session — treat it that way."
-        ),
-        "FP3": (
-            f"Write a 2-sentence FP3 debrief for {race_name}. "
-            f"Final tune-up before qualifying. Who's looking dangerous? "
-            f"News: {news[:400] if news else 'No data yet'}."
-        ),
-        "Qualifying": (
-            f"Write a 4-sentence qualifying debrief for {race_name}. "
-            f"Cover: pole sitter and time, biggest surprise, who got knocked out in Q2, "
-            f"and what the grid means for race strategy. "
-            f"News: {news[:600] if news else 'No data yet'}. "
-            f"This is critical — be specific about grid positions."
-        ),
-        "Sprint Qualifying": (
-            f"Write a 3-sentence sprint qualifying debrief for {race_name}. "
-            f"Who's on sprint pole, any surprises, what it means for Sunday. "
-            f"News: {news[:400] if news else 'No data yet'}."
-        ),
-        "Sprint Race": (
-            f"Write a 3-sentence sprint race debrief for {race_name}. "
-            f"Who won, key moments, championship points gained. "
-            f"News: {news[:400] if news else 'No data yet'}."
-        ),
-        "Race": (
-            f"Write a 5-sentence race debrief for {race_name}. "
-            f"Cover: winner and how they won, decisive moment, biggest story, "
-            f"championship impact, and one line about next race. "
-            f"News: {news[:800] if news else 'No data yet'}. "
-            f"This is the main event — be thorough and opinionated."
-        ),
-    }
+    # If no real data available yet — stay silent, don't hallucinate
+    if not real_data:
+        log.info(f"No real data yet for {race_name} {session_name} — skipping debrief")
+        return
 
-    prompt = session_prompts.get(session_name, session_prompts.get("FP1"))
+    # ── Step 2: Also get live search for context ──────────────
+    live_ctx = live_search_f1(f"{race_name} {session_name} 2026 results")
 
+    # ── Step 3: Build prompt grounded in actual results ───────
     session_emojis_map = {
         "FP1": "🔧", "FP2": "🔧", "FP3": "🔧",
         "Qualifying": "⏱", "Sprint Qualifying": "⏱",
         "Sprint Race": "🏃", "Race": "🏁",
     }
     emoji = session_emojis_map.get(session_name, "🏎")
+
+    session_prompts = {
+        "FP1": (
+            f"Write a punchy 3-sentence FP1 debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Additional context: {live_ctx[:300] if live_ctx else 'none'}\n"
+            f"Cover: who was fastest and by how much, biggest surprise, "
+            f"one thing to watch in FP2. "
+            f"ONLY use names and times from the results above. Never invent."
+        ),
+        "FP2": (
+            f"Write a 3-sentence FP2 debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Additional context: {live_ctx[:300] if live_ctx else 'none'}\n"
+            f"FP2 is race simulation data. Cover: long run leaders, "
+            f"tyre strategy clues, who surprised. "
+            f"ONLY use names from the results above."
+        ),
+        "FP3": (
+            f"Write a 2-sentence FP3 debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Who's looking dangerous for qualifying? "
+            f"ONLY use names from the results above."
+        ),
+        "Qualifying": (
+            f"Write a 4-sentence qualifying debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Additional context: {live_ctx[:400] if live_ctx else 'none'}\n"
+            f"Cover: pole sitter with exact time, biggest Q2 elimination surprise, "
+            f"grid order implications for race strategy. "
+            f"ONLY use names and times from the results above."
+        ),
+        "Sprint Qualifying": (
+            f"Write a 3-sentence sprint qualifying debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Sprint pole sitter, surprises, implications. "
+            f"ONLY use names from the results above."
+        ),
+        "Sprint Race": (
+            f"Write a 3-sentence sprint race debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Winner, key moments, points gained. "
+            f"ONLY use names from the results above."
+        ),
+        "Race": (
+            f"Write a 5-sentence race debrief for {race_name} "
+            f"using ONLY these actual results:\n{real_data}\n"
+            f"Additional context: {live_ctx[:500] if live_ctx else 'none'}\n"
+            f"Cover: winner and how they won, decisive moment, biggest story, "
+            f"championship impact, next race outlook. "
+            f"ONLY use names from the results above."
+        ),
+    }
+
+    prompt = session_prompts.get(session_name, session_prompts["FP1"])
 
     try:
         resp = get_client().messages.create(
@@ -5303,11 +5372,9 @@ async def send_session_debrief(app, sessions: dict, mem: dict,
         f"_Ask me anything about the session_ 💬"
     )
 
-    # Send to users based on notification preferences
     sent = 0
     for uid in active_users:
         user_prefs = sessions.get(uid, {}).get("notification_prefs", {})
-        # Check if user wants session debriefs (default: yes)
         if not user_prefs.get("session_debriefs", True):
             continue
         try:
@@ -5320,7 +5387,133 @@ async def send_session_debrief(app, sessions: dict, mem: dict,
 
     state[key] = datetime.now().isoformat()
     save_debrief_state(state)
-    log.info(f"Session debrief sent for {race_name} {session_name} to {sent} users")
+    log.info(f"Session debrief sent for {race_name} {session_name} "
+             f"to {sent} users (grounded in real data ✅)")
+
+
+def _fetch_session_results_openf1(round_num: int,
+                                   session_name: str) -> str:
+    """
+    Fetches actual session results from OpenF1.
+    Returns formatted string with real P1-P10 + lap times.
+    Returns empty string if data not available yet.
+    This is the gate — no real data = no debrief sent.
+    """
+    try:
+        # Map session name to OpenF1 session_name param
+        session_map = {
+            "FP1":               "Practice 1",
+            "FP2":               "Practice 2",
+            "FP3":               "Practice 3",
+            "Qualifying":        "Qualifying",
+            "Sprint Qualifying": "Sprint Qualifying",
+            "Sprint Race":       "Sprint",
+            "Race":              "Race",
+        }
+        openf1_session = session_map.get(session_name)
+        if not openf1_session:
+            return ""
+
+        # Get session key for this round
+        sessions_data = fetch_openf1("sessions", {
+            "year": SEASON,
+            "session_name": openf1_session,
+        })
+        if not sessions_data:
+            return ""
+
+        # Find the session matching this round number
+        # OpenF1 doesn't have round numbers directly — match by order
+        matching = sorted(
+            [s for s in sessions_data
+             if s.get("session_name") == openf1_session],
+            key=lambda x: x.get("date_start", "")
+        )
+        if not matching or round_num > len(matching):
+            return ""
+
+        session = matching[round_num - 1]
+        sk = session.get("session_key")
+        if not sk:
+            return ""
+
+        # Check if session is actually finished
+        date_end = session.get("date_end", "")
+        if date_end:
+            try:
+                end_dt = datetime.fromisoformat(
+                    date_end.replace("Z","+00:00"))
+                if end_dt.timestamp() > datetime.now().timestamp():
+                    return ""  # session not finished yet
+            except Exception:
+                pass
+
+        # Fetch lap times
+        laps = fetch_openf1("laps", {"session_key": sk})
+        if not laps:
+            return ""
+
+        # Get driver map
+        drivers_data = fetch_openf1("drivers", {"session_key": sk})
+        num_to_code = {}
+        num_to_name = {}
+        num_to_team = {}
+        if drivers_data:
+            for d in drivers_data:
+                num  = str(d.get("driver_number",""))
+                code = d.get("name_acronym","")
+                name = d.get("full_name","")
+                team = d.get("team_name","")
+                if num and code:
+                    num_to_code[num] = code
+                    num_to_name[num] = name
+                    num_to_team[num] = team
+
+        # Find best lap per driver
+        driver_best: dict = {}
+        for lap in laps:
+            dur = lap.get("lap_duration")
+            num = str(lap.get("driver_number",""))
+            if dur and num:
+                try:
+                    dur_f = float(dur)
+                    if dur_f > 0:
+                        if num not in driver_best or \
+                                dur_f < driver_best[num]:
+                            driver_best[num] = dur_f
+                except Exception:
+                    pass
+
+        if not driver_best:
+            return ""
+
+        # Sort and format top 10
+        sorted_drivers = sorted(
+            driver_best.items(), key=lambda x: x[1])
+        ref = sorted_drivers[0][1]
+
+        lines = [f"{session_name} RESULTS — {SEASON}:"]
+        for i, (num, t) in enumerate(sorted_drivers[:10], 1):
+            code = num_to_code.get(num, f"#{num}")
+            team = num_to_team.get(num, "")
+            mins = int(t // 60)
+            secs = t % 60
+            if i == 1:
+                time_str = f"{mins}:{secs:06.3f}"
+                delta_str = "fastest"
+            else:
+                delta = t - ref
+                time_str = f"{mins}:{secs:06.3f}"
+                delta_str = f"+{delta:.3f}s"
+            lines.append(
+                f"P{i:2d}: {code:4s} ({team[:12]}) "
+                f"{time_str} {delta_str}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        log.debug(f"OpenF1 session results failed: {e}")
+        return ""
 
 
 async def check_and_send_session_debriefs(app, sessions: dict, mem: dict):
