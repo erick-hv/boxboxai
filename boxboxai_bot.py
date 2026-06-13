@@ -4451,9 +4451,11 @@ RULES:
 - Telegram: *bold* only, no ## headers, no --- dividers, mobile-friendly
 - Style: confident, direct, opinionated, punchy. Never start "Certainly!"
 - NEVER tell users to check F1.com, the F1 app, Twitter, or any other source for session data. You have OpenF1 access. Give the answer directly.
-- NEVER say "I don't have live timing data" — use the session context provided
-- NEVER ask users to paste results for you — fetch them yourself
-- Emojis: 🏎🏆🥇🥈🥉🔥💨🚀🛞🏁🚦⚠️🔧📊 — use naturally not every sentence
+- NEVER say "I don't have live timing data" — use the SESSION DATA provided
+- NEVER ask users to paste results — you already have them in SESSION DATA
+- When SESSION DATA is present: use those exact times/positions. That IS the timing sheet.
+- When LIVE SEARCH is present but no SESSION DATA: summarize what the search found
+- Never say "give me 30 seconds" or imply you're fetching — just answer
 - FIA docs = ground truth for incidents. If present, cite "FIA stewards found..."
 - Live search results = use directly for session questions{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
 
@@ -4522,12 +4524,18 @@ def ask_claude(user_msg: str, history: list, mem: dict,
 
     fia_docs_ctx      = ""
 
-    # Universal live search — triggers for ANY session question
-    if _is_live_session_question(user_msg):
+    # ── Session data (OpenF1 direct — highest priority) ──────
+    session_ctx = get_session_context(user_msg)
+    if session_ctx:
+        practice_ctx    = session_ctx
+        live_search_ctx = ""  # OpenF1 data is better than search
+        log.info(f"OpenF1 session data fetched for: {user_msg[:40]}")
+    elif _is_live_session_question(user_msg):
+        # No OpenF1 data yet — fall back to live search
         live_search_ctx = live_search_f1(user_msg)
-        log.info(f"Live search triggered for: {user_msg[:50]}")
+        log.info(f"Live search fallback for: {user_msg[:40]}")
 
-    # FIA stewards documents — triggers for incident/crash/penalty questions
+    # FIA stewards documents
     if _needs_fia_docs(user_msg):
         # Detect race name from memory context
         episodes   = mem.get("episodic",[])
@@ -4554,16 +4562,6 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     if _is_weather_query(user_msg):
         current_race = fetch_current_race()
         weather_ctx  = get_weather_context(user_msg, current_race)
-
-    # Universal session handler
-    session_ctx = get_session_context(user_msg)
-    if session_ctx:
-        practice_ctx = session_ctx
-    elif any(kw in user_msg.lower() for kw in
-             ["fp1","fp2","fp3","practice","práctica","libre","entreno",
-              "qualifying","quali","clasificación","sprint","q1","q2","q3"]):
-        if not news_ctx:
-            news_ctx = get_news_context(user_msg)
 
     # Historical comparisons
     historical_ctx = get_historical_context(user_msg)
