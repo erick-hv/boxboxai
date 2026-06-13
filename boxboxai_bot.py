@@ -7029,7 +7029,29 @@ def main():
     mem_ref         = [mem]
     _app_ref[0]     = app  # wire for alerts
 
-MEMORY_ENRICHMENT_FILE = Path(__file__).parent / "boxboxai_enrichment.json"
+    async def _post_init(application):
+        _app_ref[0] = application
+        _asyncio.create_task(
+            notification_loop(application, sessions_ref, mem_ref))
+        _asyncio.create_task(
+            auto_ingest_loop(mem_ref, application, sessions_ref))
+        _asyncio.create_task(
+            auto_predictor_loop(application))
+        _asyncio.create_task(
+            auto_memory_enrichment_loop(mem_ref, application))
+        await alert_owner(application,
+            f"✅ *BoxBoxAI is online*\n\n"
+            f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
+            f"Users: {len(sessions)} tracked\n"
+            f"Predictor: {'✅ CSV ready' if PREDICTOR_CSV.exists() else '⏳ waiting for qualifying'}\n"
+            f"Ready to go! 🏎"
+        )
+
+    app.post_init = _post_init
+
+    print("  ✅ BoxBoxAI is LIVE. Open Telegram and message your bot.\n")
+
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 def load_enrichment_state() -> dict:
@@ -7052,17 +7074,10 @@ def save_enrichment_state(state: dict):
 async def auto_memory_enrichment_loop(mem_ref: list, app=None):
     """
     Fully automated memory enrichment — zero manual intervention.
-
-    Runs every 6 hours. After each race weekend:
-    - Waits 48h after race for FastF1 data to become available
-    - Loads full telemetry: lap times, sectors, tyres, weather,
-      race control messages, full classification
-    - Updates f1_memory_2026.json on Railway directly
-    - Alerts owner when enrichment completes
-
-    You never need to run build_2026_memory.py manually again.
+    Runs every 6 hours. Waits 48h after race for FastF1 data.
     """
     import asyncio as _asyncio
+    MEMORY_ENRICHMENT_FILE = Path(__file__).parent / "boxboxai_enrichment.json"
 
     while True:
         try:
@@ -7227,32 +7242,6 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
 
     if not enriched_any:
         log.debug("Auto-enrichment: nothing to do")
-
-
-async def _post_init(application):
-    _app_ref[0] = application
-    _asyncio.create_task(
-        notification_loop(application, sessions_ref, mem_ref))
-    _asyncio.create_task(
-        auto_ingest_loop(mem_ref, application, sessions_ref))
-    _asyncio.create_task(
-        auto_predictor_loop(application))
-    _asyncio.create_task(
-        auto_memory_enrichment_loop(mem_ref, application))
-    # Send startup alert to owner
-    await alert_owner(application,
-        f"✅ *BoxBoxAI is online*\n\n"
-        f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
-        f"Users: {len(sessions)} tracked\n"
-        f"Predictor: {'✅ CSV ready' if PREDICTOR_CSV.exists() else '⏳ waiting for qualifying'}\n"
-        f"Ready to go! 🏎"
-    )
-    app.post_init = _post_init
-
-    print("  ✅ BoxBoxAI is LIVE. Open Telegram and message your bot.\n")
-    print("  Press Ctrl+C to stop.\n")
-
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
