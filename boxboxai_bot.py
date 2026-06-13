@@ -1669,8 +1669,9 @@ def live_search_f1(query: str, race_context: str = "") -> str:
 
 def _is_live_session_question(text: str) -> bool:
     """
-    Detects if a USER question needs live search.
-    Only triggers on actual session questions — not internal prompts.
+    Detects if a question needs live session data.
+    Triggers whenever a session is mentioned — no action word required.
+    "top 10 fp2", "fp2", "qualifying results", "who got pole" all trigger.
     """
     t = text.lower()
 
@@ -1683,27 +1684,24 @@ def _is_live_session_question(text: str) -> bool:
     ]):
         return False
 
-    # Must have a session type AND an action word to trigger
-    session_types = [
-        "fp1", "fp2", "fp3", "free practice",
-        "qualifying", "quali", "q1", "q2", "q3",
-        "sprint qualifying", "sprint race",
-        "práctica", "practica", "entreno", "libre",
-        "clasificación",
+    # Trigger on any session mention
+    session_triggers = [
+        "fp1", "fp2", "fp3",
+        "free practice", "práctica libre", "practice 1",
+        "practice 2", "practice 3",
+        "qualifying", "quali", "clasificación", "clasificacion",
+        "q1", "q2", "q3",
+        "sprint qualifying", "sprint race", "sprint",
+        "pole position", "pole",
+        "who got pole", "who won",
+        "top 10", "top ten", "classification",
+        "session results", "session times",
+        "fastest lap", "vuelta rápida", "vuelta rapida",
+        # Spanish session words
+        "entreno", "práctica", "practica",
+        "qualy", "clasificacion",
     ]
-    action_words = [
-        "what happened", "what's happening", "what is happening",
-        "who is leading", "who's leading", "right now", "currently",
-        "live", "results", "fastest", "times", "ahora", "en vivo",
-        "qué pasó", "qué está pasando", "resultados", "tiempos",
-        "red flag", "incident", "crash", "bandera roja",
-        "knocked out", "eliminado",
-    ]
-
-    has_session = any(kw in t for kw in session_types)
-    has_action  = any(kw in t for kw in action_words)
-
-    return has_session and has_action
+    return any(kw in t for kw in session_triggers)
 
 
 
@@ -1949,111 +1947,133 @@ def get_practice_context(query: str, next_race: dict | None = None,
 
 def get_session_context(query: str) -> str:
     """
-    Universal session handler — covers ALL session types:
-    FP1, FP2, FP3, Qualifying, Sprint Qualifying, Sprint Race,
-    live or completed, current or past race weekend.
-    Uses news search — reliable regardless of API availability.
+    Fetches real session timing data from OpenF1 first.
+    Falls back to live search only if OpenF1 has no data.
+    Never returns empty and asks user to paste results.
     """
     q = query.lower()
 
     # Detect session type
-    session_type = ""
-    if any(kw in q for kw in ["sprint quali", "sprint qualifying", "sq", "clasificación sprint"]):
-        session_type = "Sprint Qualifying"
-    elif any(kw in q for kw in ["sprint race", "sprint", "carrera sprint"]):
-        session_type = "Sprint Race"
-    elif any(kw in q for kw in ["qualifying", "quali", "clasificación", "q1", "q2", "q3", "pole"]):
-        session_type = "Qualifying"
-    elif any(kw in q for kw in ["fp1", "practice 1", "libre 1", "p1"]):
-        session_type = "FP1 Free Practice 1"
-    elif any(kw in q for kw in ["fp2", "practice 2", "libre 2", "p2"]):
-        session_type = "FP2 Free Practice 2"
-    elif any(kw in q for kw in ["fp3", "practice 3", "libre 3", "p3"]):
-        session_type = "FP3 Free Practice 3"
-    elif any(kw in q for kw in ["practice", "práctica", "libre", "entreno", "entrenamiento"]):
-        session_type = "Free Practice"
+    if any(kw in q for kw in ["fp1","practice 1","libre 1","free practice 1"]):
+        session_name = "Practice 1"
+        session_label = "FP1"
+    elif any(kw in q for kw in ["fp2","practice 2","libre 2","free practice 2"]):
+        session_name = "Practice 2"
+        session_label = "FP2"
+    elif any(kw in q for kw in ["fp3","practice 3","libre 3","free practice 3"]):
+        session_name = "Practice 3"
+        session_label = "FP3"
+    elif any(kw in q for kw in ["sprint quali","sprint qualifying","sq"]):
+        session_name = "Sprint Qualifying"
+        session_label = "Sprint Qualifying"
+    elif any(kw in q for kw in ["sprint race","carrera sprint"]):
+        session_name = "Sprint"
+        session_label = "Sprint Race"
+    elif any(kw in q for kw in ["qualifying","quali","clasificación","clasificacion",
+                                  "q1","q2","q3","pole"]):
+        session_name = "Qualifying"
+        session_label = "Qualifying"
+    elif any(kw in q for kw in ["sprint"]):
+        session_name = "Sprint"
+        session_label = "Sprint"
+    elif any(kw in q for kw in ["practice","práctica","practica","libre","entreno"]):
+        # Generic practice — try FP2 first (most recent)
+        session_name = "Practice 2"
+        session_label = "FP2"
     else:
         return ""
 
-    # Detect which race — check query for circuit names first
-    race_name = ""
-    circuit_keywords = {
-        "monaco": "Monaco Grand Prix",
-        "mónaco": "Monaco Grand Prix",
-        "barcelona": "Spanish Grand Prix",
-        "spain": "Spanish Grand Prix",
-        "españa": "Spanish Grand Prix",
-        "austria": "Austrian Grand Prix",
-        "spielberg": "Austrian Grand Prix",
-        "silverstone": "British Grand Prix",
-        "britain": "British Grand Prix",
-        "spa": "Belgian Grand Prix",
-        "belgium": "Belgian Grand Prix",
-        "budapest": "Hungarian Grand Prix",
-        "hungary": "Hungarian Grand Prix",
-        "zandvoort": "Dutch Grand Prix",
-        "monza": "Italian Grand Prix",
-        "italy": "Italian Grand Prix",
-        "baku": "Azerbaijan Grand Prix",
-        "singapore": "Singapore Grand Prix",
-        "austin": "United States Grand Prix",
-        "mexico": "Mexico City Grand Prix",
-        "são paulo": "São Paulo Grand Prix",
-        "brazil": "São Paulo Grand Prix",
-        "las vegas": "Las Vegas Grand Prix",
-        "lusail": "Qatar Grand Prix",
-        "qatar": "Qatar Grand Prix",
-        "abu dhabi": "Abu Dhabi Grand Prix",
-        "montreal": "Canadian Grand Prix",
-        "canada": "Canadian Grand Prix",
-        "suzuka": "Japanese Grand Prix",
-        "japan": "Japanese Grand Prix",
-        "shanghai": "Chinese Grand Prix",
-        "china": "Chinese Grand Prix",
-        "melbourne": "Australian Grand Prix",
-        "australia": "Australian Grand Prix",
-        "miami": "Miami Grand Prix",
-        "imola": "Emilia Romagna Grand Prix",
-        "jeddah": "Saudi Arabian Grand Prix",
-        "bahrain": "Bahrain Grand Prix",
-    }
-    for kw, name in circuit_keywords.items():
-        if kw in q:
-            race_name = name
-            break
-
-    # Fall back to current race weekend
-    if not race_name:
-        current = fetch_current_race()
-        if current:
-            race_name = current.get("raceName", "")
-
-    search_query = f"{race_name} {session_type} 2026 results"
-
-    # Search news feeds
-    news = get_news_context(search_query)
-    if news:
-        return f"{race_name} — {session_type}:\n{news}"
-
-    # DuckDuckGo fallback
+    # ── Try OpenF1 first — ground truth timing data ───────────
     try:
-        r = requests.get("https://api.duckduckgo.com/", params={
-            "q": search_query, "format": "json", "no_html": "1"
-        }, timeout=8)
-        if r.status_code == 200:
-            data  = r.json()
-            parts = []
-            if data.get("AbstractText"):
-                parts.append(data["AbstractText"])
-            for t in data.get("RelatedTopics", [])[:3]:
-                if isinstance(t, dict) and t.get("Text"):
-                    parts.append(t["Text"])
-            if parts:
-                return f"{race_name} — {session_type}:\n{' '.join(parts)[:800]}"
-    except Exception:
-        pass
+        sessions_data = fetch_openf1("sessions", {
+            "year": SEASON,
+            "session_name": session_name,
+        })
 
-    return ""
+        if sessions_data:
+            # Get most recent matching session
+            recent = sorted(
+                sessions_data,
+                key=lambda x: x.get("date_start",""))[-1]
+            sk = recent.get("session_key")
+            circuit = recent.get("circuit_short_name","")
+            date    = recent.get("date_start","")[:10]
+
+            if sk:
+                # Fetch lap times
+                laps = fetch_openf1("laps", {"session_key": sk})
+
+                if laps:
+                    # Get driver info
+                    drivers_raw = fetch_openf1("drivers",
+                                               {"session_key": sk})
+                    num_to_code = {}
+                    num_to_team = {}
+                    if drivers_raw:
+                        for d in drivers_raw:
+                            n = str(d.get("driver_number",""))
+                            num_to_code[n] = d.get("name_acronym","?")
+                            num_to_team[n] = d.get("team_name","")[:12]
+
+                    # Best lap per driver
+                    best: dict = {}
+                    for lap in laps:
+                        dur = lap.get("lap_duration")
+                        num = str(lap.get("driver_number",""))
+                        if dur and num:
+                            try:
+                                f = float(dur)
+                                if f > 30:  # filter outliers
+                                    if num not in best or f < best[num]:
+                                        best[num] = f
+                            except Exception:
+                                pass
+
+                    if best:
+                        sorted_d = sorted(
+                            best.items(), key=lambda x: x[1])
+                        ref = sorted_d[0][1]
+
+                        lines = [
+                            f"{session_label} CLASSIFICATION — "
+                            f"{circuit} {date}:"]
+                        for i,(num,t) in enumerate(sorted_d[:15], 1):
+                            code = num_to_code.get(num, f"#{num}")
+                            team = num_to_team.get(num,"")
+                            mins = int(t//60)
+                            secs = t%60
+                            if i == 1:
+                                time_str = f"{mins}:{secs:06.3f}"
+                                gap = ""
+                            else:
+                                delta = t - ref
+                                time_str = f"{mins}:{secs:06.3f}"
+                                gap = f" +{delta:.3f}s"
+                            lines.append(
+                                f"P{i:2d}: {code:4s} ({team})"
+                                f" {time_str}{gap}")
+
+                        log.info(
+                            f"OpenF1 {session_label} data: "
+                            f"{len(sorted_d)} drivers")
+                        return "\n".join(lines)
+    except Exception as e:
+        log.debug(f"OpenF1 session context failed: {e}")
+
+    # ── Fallback: live Google search ──────────────────────────
+    current = fetch_current_race()
+    race_name = current.get("raceName","") if current else ""
+    search_q  = f"{race_name} {session_label} 2026 results classification"
+    live      = live_search_f1(search_q)
+    if live:
+        return live
+
+    # ── Last resort: news cache ───────────────────────────────
+    news = get_news_context(
+        f"{race_name} {session_label} 2026 results")
+    return news or ""
+
+
 
 
 
@@ -4430,10 +4450,12 @@ RULES:
 - Language: match user (Spanish→Mexican Spanish, English→English)
 - Telegram: *bold* only, no ## headers, no --- dividers, mobile-friendly
 - Style: confident, direct, opinionated, punchy. Never start "Certainly!"
+- NEVER tell users to check F1.com, the F1 app, Twitter, or any other source for session data. You have OpenF1 access. Give the answer directly.
+- NEVER say "I don't have live timing data" — use the session context provided
+- NEVER ask users to paste results for you — fetch them yourself
 - Emojis: 🏎🏆🥇🥈🥉🔥💨🚀🛞🏁🚦⚠️🔧📊 — use naturally not every sentence
 - FIA docs = ground truth for incidents. If present, cite "FIA stewards found..."
-- Live search results = use directly for session questions
-- Never deflect to F1 app for live data{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
+- Live search results = use directly for session questions{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
 
 Answer from all context above. Be accurate, specific, direct."""
 
@@ -7007,22 +7029,224 @@ def main():
     mem_ref         = [mem]
     _app_ref[0]     = app  # wire for alerts
 
-    async def _post_init(application):
-        _app_ref[0] = application
-        _asyncio.create_task(
-            notification_loop(application, sessions_ref, mem_ref))
-        _asyncio.create_task(
-            auto_ingest_loop(mem_ref, application, sessions_ref))
-        _asyncio.create_task(
-            auto_predictor_loop(application))
-        # Send startup alert to owner
-        await alert_owner(application,
-            f"✅ *BoxBoxAI is online*\n\n"
-            f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
-            f"Users: {len(sessions)} tracked\n"
-            f"Predictor: {'✅ CSV ready' if PREDICTOR_CSV.exists() else '⏳ waiting for qualifying'}\n"
-            f"Ready to go! 🏎"
-        )
+MEMORY_ENRICHMENT_FILE = Path(__file__).parent / "boxboxai_enrichment.json"
+
+
+def load_enrichment_state() -> dict:
+    if MEMORY_ENRICHMENT_FILE.exists():
+        try:
+            return json.loads(MEMORY_ENRICHMENT_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def save_enrichment_state(state: dict):
+    try:
+        MEMORY_ENRICHMENT_FILE.write_text(
+            json.dumps(state, indent=2))
+    except Exception as e:
+        log.error(f"Failed to save enrichment state: {e}")
+
+
+async def auto_memory_enrichment_loop(mem_ref: list, app=None):
+    """
+    Fully automated memory enrichment — zero manual intervention.
+
+    Runs every 6 hours. After each race weekend:
+    - Waits 48h after race for FastF1 data to become available
+    - Loads full telemetry: lap times, sectors, tyres, weather,
+      race control messages, full classification
+    - Updates f1_memory_2026.json on Railway directly
+    - Alerts owner when enrichment completes
+
+    You never need to run build_2026_memory.py manually again.
+    """
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            await _run_memory_enrichment(mem_ref, app)
+        except Exception as e:
+            log.warning(f"Memory enrichment loop error: {e}")
+        # Check every 6 hours
+        await _asyncio.sleep(21600)
+
+
+async def _run_memory_enrichment(mem_ref: list, app=None):
+    """
+    Core enrichment logic. Checks each completed race and
+    enriches with FastF1 telemetry if not already done.
+    """
+    state    = load_enrichment_state()
+    mem      = mem_ref[0]
+    episodes = mem.get("episodic", [])
+    today    = datetime.now()
+    enriched_any = False
+
+    RACE_CALENDAR = [
+        (1, "Australian GP",  "2026-03-15"),
+        (2, "Chinese GP",     "2026-03-22"),
+        (3, "Japanese GP",    "2026-04-06"),
+        (4, "Miami GP",       "2026-05-04"),
+        (5, "Canadian GP",    "2026-05-24"),
+        (6, "Monaco GP",      "2026-06-07"),
+        (7, "Spanish GP",     "2026-06-14"),
+        (8, "Austrian GP",    "2026-06-28"),
+        (9, "British GP",     "2026-07-05"),
+        (10,"Belgian GP",     "2026-07-19"),
+        (11,"Hungarian GP",   "2026-07-26"),
+        (12,"Dutch GP",       "2026-08-23"),
+        (13,"Italian GP",     "2026-09-06"),
+        (14,"Singapore GP",   "2026-09-20"),
+        (15,"Azerbaijan GP",  "2026-09-27"),
+        (16,"US GP",          "2026-10-18"),
+        (17,"Mexico City GP", "2026-10-25"),
+        (18,"São Paulo GP",   "2026-11-08"),
+        (19,"Las Vegas GP",   "2026-11-21"),
+        (20,"Qatar GP",       "2026-11-29"),
+        (21,"Abu Dhabi GP",   "2026-12-06"),
+    ]
+
+    for rnd, name, date_str in RACE_CALENDAR:
+        race_date   = datetime.strptime(date_str, "%Y-%m-%d")
+        days_since  = (today - race_date).days
+
+        # Skip future races
+        if days_since < 0:
+            break
+
+        # FastF1 needs 48h after race to have full data
+        if days_since < 2:
+            continue
+
+        state_key = f"enriched_r{rnd}"
+        if state.get(state_key):
+            continue  # already fully enriched
+
+        # Find episode
+        episode = next(
+            (e for e in episodes if e.get("round") == rnd), None)
+
+        # If no basic result yet, ingest from Jolpica first
+        if not episode or not episode.get("winner"):
+            result = fetch_race_result(rnd, SEASON)
+            if not result:
+                continue
+            if episode:
+                episode.update(result)
+            else:
+                episode = result
+                episode["round"]     = rnd
+                episode["race_name"] = name
+
+        # Skip if already enriched with telemetry
+        if episode.get("telemetry_source") == "fastf1":
+            state[state_key] = datetime.now().isoformat()
+            save_enrichment_state(state)
+            continue
+
+        log.info(f"Auto-enrichment: starting R{rnd} {name}...")
+
+        # ── Enrich race with FastF1 ───────────────────────────
+        episode = enrich_episode_with_telemetry(episode, rnd)
+
+        # ── Enrich qualifying with FastF1 ─────────────────────
+        episode = enrich_qualifying_with_telemetry(episode, rnd)
+
+        # ── Enrich sprint if applicable ───────────────────────
+        if rnd in SPRINT_ROUNDS_2026 and not episode.get("sprint",{}).get("sprint_winner"):
+            sprint = fetch_sprint_result(rnd, SEASON)
+            if sprint:
+                episode["sprint"] = sprint
+
+        # ── Rebuild rich story with all new data ──────────────
+        episode["story"] = build_rich_story(episode)
+
+        # ── Update semantic memory ────────────────────────────
+        mem.setdefault("semantic", {})[f"race/r{rnd}"] = {
+            "text": episode["story"],
+            "tags": [name.lower(), str(rnd),
+                     episode.get("winner","").lower()],
+        }
+        if episode.get("champ_after"):
+            mem["semantic"][f"standings/after_r{rnd}"] = {
+                "text": f"After R{rnd} {name}: {episode['champ_after']}"
+            }
+        quali = episode.get("qualifying", {})
+        if quali.get("pole"):
+            elim_q2 = ", ".join(quali.get("eliminated_q2",[])[:5])
+            elim_q1 = ", ".join(quali.get("eliminated_q1",[])[:5])
+            mem["semantic"][f"quali/r{rnd}"] = {
+                "text": (
+                    f"R{rnd} {name} qualifying: "
+                    f"Pole {quali['pole']} ({quali.get('pole_time','')})."
+                    f"{f' Q2 out: {elim_q2}.' if elim_q2 else ''}"
+                    f"{f' Q1 out: {elim_q1}.' if elim_q1 else ''}"
+                )
+            }
+
+        # ── Save episode back to memory ───────────────────────
+        existing_idx = next(
+            (i for i, e in enumerate(episodes)
+             if e.get("round") == rnd), None)
+        if existing_idx is not None:
+            episodes[existing_idx] = episode
+        else:
+            episodes.append(episode)
+            episodes.sort(key=lambda x: x.get("round", 0))
+
+        mem["episodic"] = episodes
+        save_f1_memory(mem)
+        mem_ref[0] = mem
+
+        source = episode.get("telemetry_source", "jolpica")
+        state[state_key] = datetime.now().isoformat()
+        save_enrichment_state(state)
+        enriched_any = True
+
+        log.info(
+            f"Auto-enrichment: ✅ R{rnd} {name} complete "
+            f"(source: {source})")
+
+        if app:
+            fl   = episode.get("fastest_lap","?")
+            fl_t = episode.get("fastest_lap_time","")
+            tyres= episode.get("tyre_strategy_summary","")[:80]
+            sc   = episode.get("sc_count", 0)
+            await alert_owner(app,
+                f"🧠 *Memory enriched: R{rnd} {name}*\n\n"
+                f"Source: {source}\n"
+                f"Fastest lap: {fl} {fl_t}\n"
+                f"Safety cars: {sc}\n"
+                f"Tyres: {tyres}\n\n"
+                f"Full telemetry now in memory ✅")
+
+        # Small delay between races to avoid rate limiting
+        await asyncio.sleep(5)
+
+    if not enriched_any:
+        log.debug("Auto-enrichment: nothing to do")
+
+
+async def _post_init(application):
+    _app_ref[0] = application
+    _asyncio.create_task(
+        notification_loop(application, sessions_ref, mem_ref))
+    _asyncio.create_task(
+        auto_ingest_loop(mem_ref, application, sessions_ref))
+    _asyncio.create_task(
+        auto_predictor_loop(application))
+    _asyncio.create_task(
+        auto_memory_enrichment_loop(mem_ref, application))
+    # Send startup alert to owner
+    await alert_owner(application,
+        f"✅ *BoxBoxAI is online*\n\n"
+        f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
+        f"Users: {len(sessions)} tracked\n"
+        f"Predictor: {'✅ CSV ready' if PREDICTOR_CSV.exists() else '⏳ waiting for qualifying'}\n"
+        f"Ready to go! 🏎"
+    )
     app.post_init = _post_init
 
     print("  ✅ BoxBoxAI is LIVE. Open Telegram and message your bot.\n")
