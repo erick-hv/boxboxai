@@ -1,1 +1,1 @@
-worker: /app/.venv/bin/python boxboxai_bot.py
+worker: mise exec -- python3 boxboxai_bot.py
