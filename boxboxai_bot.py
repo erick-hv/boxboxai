@@ -1432,6 +1432,14 @@ def _fetch_fia_official_docs(race_context: str, driver_name: str,
     This function must NEVER raise — every failure mode degrades
     to empty string so the bot keeps working even if this entire
     feature is broken or unavailable on the host.
+
+    IMPORTANT: Playwright's sync API cannot run inside an asyncio
+    event loop (the bot's whole call chain runs on one). The actual
+    browser work happens in `_run_fia_playwright`, executed in a
+    separate thread via ThreadPoolExecutor — that thread has no
+    event loop, satisfying Playwright's requirement, while this
+    function (called from sync code inside the bot) can block on
+    the thread's result without itself needing to be async.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -1443,17 +1451,32 @@ def _fetch_fia_official_docs(race_context: str, driver_name: str,
         log.debug("FIA official: Chromium unavailable — skipping")
         return ""
 
-    # Map race_context (e.g. "Monaco Grand Prix 2026") to FIA's
-    # event URL slug. FIA uses the season documents page and lists
-    # events by name — we search for the event link by text match.
-    season_url = (
-        "https://www.fia.com/documents/championships/"
-        "fia-formula-one-world-championship-14/season/season-2026-2072")
-
-    # Extract just "Monaco Grand Prix" etc from race_context
     race_name_clean = re.sub(r'\s*2026.*$', '', race_context).strip()
     if not race_name_clean:
         return ""
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _run_fia_playwright, race_name_clean, driver_name, incident_type)
+            return future.result(timeout=60)
+    except Exception as e:
+        log.info(f"FIA official: thread execution failed — {e}")
+        return ""
+
+
+def _run_fia_playwright(race_name_clean: str, driver_name: str,
+                         incident_type: str) -> str:
+    """
+    The actual Playwright sync-API work. Runs in its own thread
+    (no asyncio event loop) via _fetch_fia_official_docs above.
+    """
+    from playwright.sync_api import sync_playwright
+
+    season_url = (
+        "https://www.fia.com/documents/championships/"
+        "fia-formula-one-world-championship-14/season/season-2026-2072")
 
     try:
         with sync_playwright() as p:
@@ -1541,7 +1564,7 @@ def _fetch_fia_official_docs(race_context: str, driver_name: str,
         import pypdf
         reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
         text = "\n".join(
-            (page.extract_text() or "") for page in reader.pages)
+            (p.extract_text() or "") for p in reader.pages)
         text = re.sub(r'\s+', ' ', text).strip()
         if len(text) < 50:
             return ""
