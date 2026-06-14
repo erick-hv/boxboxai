@@ -4,11 +4,11 @@
   "steps": {
     "playwright": {
       "inputs": [{ "step": "install" }],
-      "commands": ["mise exec -- python3 -m playwright install --with-deps chromium"]
+      "commands": ["/app/.venv/bin/playwright install --with-deps chromium"]
     }
   },
   "deploy": {
     "inputs": [{ "step": "playwright" }],
-    "startCommand": "mise exec -- python3 boxboxai_bot.py"
+    "startCommand": "/app/.venv/bin/python3 boxboxai_bot.py"
   }
 }

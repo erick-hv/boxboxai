@@ -1,6 +1,6 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "deploy": {
-    "startCommand": "mise exec -- python3 boxboxai_bot.py"
+    "startCommand": "/app/.venv/bin/python3 boxboxai_bot.py"
   }
 }
