@@ -4781,15 +4781,86 @@ def ask_claude(user_msg: str, history: list, mem: dict,
 
     # FIA stewards documents
     if _needs_fia_docs(user_msg):
-        # Detect race name from memory context
-        episodes   = mem.get("episodic",[])
-        last_race  = episodes[-1].get("race_name","") if episodes else ""
-        next_race  = fetch_next_race()
-        next_name  = next_race.get("raceName","") if next_race else ""
-        race_ctx   = last_race or next_name
+        episodes = mem.get("episodic", [])
+        t_lower  = user_msg.lower()
+
+        # Detect race from the QUERY first — "in Monaco" should mean
+        # Monaco's episode, not whatever the most recent race is.
+        race_keywords = {
+            "monaco": "Monaco", "mónaco": "Monaco",
+            "barcelona": "Spanish", "spain": "Spanish", "spanish": "Spanish",
+            "españa": "Spanish", "catalunya": "Spanish",
+            "australia": "Australian", "australian": "Australian",
+            "china": "Chinese", "chinese": "Chinese",
+            "japan": "Japanese", "japanese": "Japanese",
+            "miami": "Miami",
+            "canada": "Canadian", "canadian": "Canadian", "montreal": "Canadian",
+            "austria": "Austrian", "austrian": "Austrian",
+            "britain": "British", "british": "British", "silverstone": "British",
+            "belgium": "Belgian", "belgian": "Belgian", "spa": "Belgian",
+            "hungary": "Hungarian", "hungarian": "Hungarian",
+            "netherlands": "Dutch", "dutch": "Dutch", "zandvoort": "Dutch",
+            "italy": "Italian", "italian": "Italian", "monza": "Italian",
+            "singapore": "Singapore",
+            "azerbaijan": "Azerbaijan", "baku": "Azerbaijan",
+            "mexico": "Mexico", "méxico": "Mexico",
+            "brazil": "São Paulo", "brasil": "São Paulo", "interlagos": "São Paulo",
+            "vegas": "Las Vegas",
+            "qatar": "Qatar",
+            "abu dhabi": "Abu Dhabi",
+        }
+        named_episode = None
+        for kw, race_word in race_keywords.items():
+            if kw in t_lower:
+                named_episode = next(
+                    (e for e in episodes
+                     if race_word.lower() in e.get("race_name","").lower()
+                     or race_word.lower() in e.get("track","").lower()),
+                    None)
+                if named_episode:
+                    break
+
+        if named_episode:
+            race_ctx = named_episode.get("race_name", "")
+        else:
+            # No specific race named — use most recent
+            last_race = episodes[-1].get("race_name","") if episodes else ""
+            next_race = fetch_next_race()
+            next_name = next_race.get("raceName","") if next_race else ""
+            race_ctx  = last_race or next_name
+
         fia_docs_ctx = fetch_fia_race_documents(race_ctx, user_msg)
         if fia_docs_ctx:
             log.info(f"FIA docs fetched for: {user_msg[:50]}")
+
+        # ── Driver finishing position grounding ───────────────
+        # If a specific driver is named and we have an episode for
+        # the race in question, surface their EXACT classification
+        # position even if FIA docs aren't available — this prevents
+        # "Checo doesn't appear in my data" when he's just outside
+        # the top-5 shown in the compact race summary.
+        if named_episode:
+            driver_code = resolve_driver_code(t_lower)
+            if driver_code:
+                fc = named_episode.get("full_classification", [])
+                position = next(
+                    (item for item in fc if f":{driver_code}" in item), None)
+                dnf_entry = next(
+                    (d for d in named_episode.get("dnfs", [])
+                     if d.startswith(driver_code)), None)
+                if position or dnf_entry:
+                    if position:
+                        detail = position
+                    else:
+                        status = dnf_entry.split("(",1)[1].rstrip(")") \
+                            if "(" in dnf_entry else dnf_entry
+                        detail = f"{driver_code} DNF ({status})"
+                    grounding = (
+                        f"CLASSIFICATION FACT: In the {race_ctx}, "
+                        f"{detail} (from official results). "
+                        f"Use this exact position when answering.")
+                    fia_docs_ctx = (fia_docs_ctx + "\n\n" + grounding).strip() \
+                        if fia_docs_ctx else grounding
 
     # News
     if _is_news_query(user_msg):
