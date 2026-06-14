@@ -1057,8 +1057,18 @@ async def notification_loop(app, sessions_ref: list, mem_ref: list):
 
             # Every 30 min — session debriefs + auto-verify ingest
             if check_count % 6 == 0:
-                await check_and_send_session_debriefs(
-                    app, sessions_ref[0], mem_ref[0])
+                # DISABLED: automatic prose debrief via send_session_debrief.
+                # The "RACE OVER!" instant notification (_notify_race_result,
+                # fired from auto-ingest) already gives users the real
+                # podium + championship standings and invites them to
+                # "ask me anything about the race". A manual debrief
+                # request goes through ask_claude with full memory/
+                # grounding context and produces a noticeably better,
+                # more accurate response than this automated path.
+                # Re-enable if a good reason comes up:
+                # await check_and_send_session_debriefs(
+                #     app, sessions_ref[0], mem_ref[0])
+
                 # Auto-verify: check if predictor ran after qualifying
                 await _verify_predictor_ran(app, mem_ref[0])
 
@@ -1736,7 +1746,7 @@ def _needs_fia_docs(query: str) -> bool:
         "why did", "why was", "why were", "what caused", "how did",
         "what happened to", "what was the",
         "crash", "collision", "incident", "contact",
-        "penalty", "penalised", "penalized", "sanction",
+        "penalt", "penalis", "sanction",
         "disqualified", "dsq", "black flag",
         "drive through", "drive-through", "time penalty",
         "grid penalty", "grid drop",
@@ -1748,7 +1758,7 @@ def _needs_fia_docs(query: str) -> bool:
         "reprimand", "article b", "regulation",
         # Spanish
         "por qué", "qué pasó", "por que",
-        "penalización", "penalizado", "infracción",
+        "penaliz", "infracción", "infraccion",
         "chocaron", "se retiró", "descalificado",
         "decisión de los comisarios", "los comisarios",
     ]
@@ -4703,6 +4713,7 @@ RULES:
 - NEVER guess or estimate times, positions, or finishing order. Made-up numbers are worse than no answer.
 - When SESSION DATA is present: use those exact times/positions only — that's the real timing sheet.
 - When no SESSION DATA and the question needs it: admit it in one honest sentence, no padding, no speculation dressed as analysis.
+- STRATEGY/TYRE QUESTIONS WITHOUT REAL DATA: CIRCUIT GUIDE info (degradation, overtaking difficulty, "usually 2-stop") is general historical knowledge — fine to share AS general knowledge. But NEVER invent specific lap numbers for pit stops, per-driver stint plans (e.g. "Stint 1: Laps 1-20"), fake statistics ("Barcelona averages 0.8 safety cars"), or confidence percentages ("90% of the field does 2 stops") when you don't have this year's tyre allocation or practice data. One paragraph of general circuit context is enough — do not pad it into a multi-driver strategy report.
 - FIA STEWARDS DOCS / STEWARDS DECISION SOURCES = ground truth for incidents and penalties. If present, cite "FIA stewards found..." with the specific finding.
 - [NEWS COVERAGE] labeled context = background only, not a timing sheet — don't extract positions/times from it, use it for storylines and reactions only.
 - If a query mentions a race/session not yet in your RACE RESULTS or SEASON FACTS, don't substitute a different race — say you don't have it yet.{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
@@ -4943,6 +4954,41 @@ def ask_claude(user_msg: str, history: list, mem: dict,
                         f"Use this exact position when answering.")
                     fia_docs_ctx = (fia_docs_ctx + "\n\n" + grounding).strip() \
                         if fia_docs_ctx else grounding
+
+                # ── Race control messages for this driver ─────────
+                # Penalties served DURING the race (e.g. 5s added to
+                # a pit stop) don't change final classification, so
+                # the CLASSIFICATION FACT above can't reveal them.
+                # Search the race's actual FIA race control feed for
+                # any message mentioning this driver's surname —
+                # this is where in-race penalties/investigations show up.
+                rc_msgs = named_episode.get("race_control", [])
+                surname = FIA_DRIVER_NAMES.get(driver_code.lower(), "")
+                driver_rc = [
+                    m for m in rc_msgs
+                    if surname and surname.upper() in m.upper()
+                ]
+                if driver_rc:
+                    rc_text = " | ".join(driver_rc[:5])
+                    rc_grounding = (
+                        f"RACE CONTROL FACT: FIA race control messages "
+                        f"mentioning {surname} in the {race_ctx}: "
+                        f"{rc_text}. Use these for any questions about "
+                        f"penalties, investigations, or incidents during "
+                        f"the race — these may not be reflected in the "
+                        f"final classification if served during a pit stop.")
+                    fia_docs_ctx = (fia_docs_ctx + "\n\n" + rc_grounding).strip() \
+                        if fia_docs_ctx else rc_grounding
+                elif rc_msgs:
+                    # We have race control data but nothing for this
+                    # driver — that's useful negative information too.
+                    no_rc_grounding = (
+                        f"RACE CONTROL FACT: FIA race control messages "
+                        f"for the {race_ctx} don't mention {surname}. "
+                        f"({len(rc_msgs)} messages on file — safety cars, "
+                        f"penalties for other drivers, etc.)")
+                    fia_docs_ctx = (fia_docs_ctx + "\n\n" + no_rc_grounding).strip() \
+                        if fia_docs_ctx else no_rc_grounding
 
     # News
     if _is_news_query(user_msg):
@@ -5810,6 +5856,16 @@ async def send_session_debrief(app, sessions: dict, mem: dict,
     try:
         resp = get_client().messages.create(
             model=MODEL, max_tokens=300,
+            system=(
+                "You are BoxBoxAI, an F1 analyst writing for Telegram. "
+                "Rules: use *bold* for emphasis only — NEVER use # or ## "
+                "markdown headers, NEVER use --- dividers. Use ONLY the "
+                "driver codes, positions, and team names given in the "
+                "results above — never invent or substitute drivers, "
+                "teams, or positions. If results show finishing order, "
+                "that IS the race result — don't confuse it with fastest "
+                "lap. Confident, punchy tone, 1-3 emojis total."
+            ),
             messages=[{"role": "user", "content": prompt}]
         )
         debrief_text = resp.content[0].text if resp.content else ""
@@ -5854,6 +5910,36 @@ def _fetch_session_results_openf1(round_num: int,
     This is the gate — no real data = no debrief sent.
     """
     try:
+        # ── Race / Sprint Race: use FINISHING CLASSIFICATION from
+        # Jolpica, not "fastest single lap" from OpenF1. These are
+        # fundamentally different things — a driver's fastest lap
+        # has nothing to do with where they finished, and the
+        # previous implementation conflated them, producing
+        # debriefs where "P1/P2/P3" were actually fastest-lap
+        # rankings, not race results.
+        if session_name in ("Race", "Sprint Race"):
+            result = fetch_race_result(round_num, SEASON)
+            if not result or not result.get("full_classification"):
+                return ""
+
+            fc    = result["full_classification"]
+            dnfs  = result.get("dnfs", [])
+            fl    = result.get("fastest_lap", "")
+            fl_t  = result.get("fastest_lap_time", "")
+
+            lines = [f"{session_name} RESULTS — {SEASON} (FINISHING ORDER):"]
+            for item in fc[:10]:
+                # item format: "P1:ANT"
+                if ":" not in item:
+                    continue
+                pos, code = item.split(":", 1)
+                lines.append(f"{pos}: {code}")
+            if dnfs:
+                lines.append("DNFs: " + ", ".join(dnfs))
+            if fl:
+                lines.append(f"Fastest lap: {fl} {fl_t}")
+            return "\n".join(lines)
+
         # Map session name to OpenF1 session_name param
         session_map = {
             "FP1":               "Practice 1",
@@ -5876,17 +5962,52 @@ def _fetch_session_results_openf1(round_num: int,
         if not sessions_data:
             return ""
 
-        # Find the session matching this round number
-        # OpenF1 doesn't have round numbers directly — match by order
-        matching = sorted(
-            [s for s in sessions_data
-             if s.get("session_name") == openf1_session],
-            key=lambda x: x.get("date_start", "")
-        )
-        if not matching or round_num > len(matching):
-            return ""
+        # Find the session matching this round number.
+        # OpenF1 doesn't expose round numbers directly. Matching by
+        # list-index (matching[round_num - 1]) assumes OpenF1's
+        # session list has no gaps and starts at round 1 — fragile.
+        # Instead, fetch this round's actual race weekend date from
+        # Jolpica and pick the OpenF1 session closest to it (same
+        # race weekend = within ~4 days).
+        race_date_str = ""
+        try:
+            race_info = safe_get(f"{JOLPICA}/{SEASON}/{round_num}.json")
+            races = race_info.get("MRData",{}).get("RaceTable",{}).get("Races",[]) \
+                if race_info else []
+            if races:
+                race_date_str = races[0].get("date","")
+        except Exception:
+            pass
 
-        session = matching[round_num - 1]
+        if race_date_str:
+            try:
+                race_date = datetime.strptime(race_date_str, "%Y-%m-%d")
+                def _date_diff(s):
+                    try:
+                        sd = datetime.fromisoformat(
+                            s.get("date_start","").replace("Z","+00:00"))
+                        return abs((sd.replace(tzinfo=None) - race_date).days)
+                    except Exception:
+                        return 999
+                candidates = [s for s in sessions_data
+                              if s.get("session_name") == openf1_session]
+                candidates = [s for s in candidates if _date_diff(s) <= 4]
+                if not candidates:
+                    return ""
+                session = min(candidates, key=_date_diff)
+            except Exception:
+                return ""
+        else:
+            # Fallback to old index-based matching if we couldn't
+            # get the race date (better than nothing)
+            matching = sorted(
+                [s for s in sessions_data
+                 if s.get("session_name") == openf1_session],
+                key=lambda x: x.get("date_start", ""))
+            if not matching or round_num > len(matching):
+                return ""
+            session = matching[round_num - 1]
+
         sk = session.get("session_key")
         if not sk:
             return ""
