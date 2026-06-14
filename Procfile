@@ -1,1 +1,1 @@
-worker: /app/.venv/bin/python3 boxboxai_bot.py
+worker: python3 boxboxai_bot.py

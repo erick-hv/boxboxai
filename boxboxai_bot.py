@@ -1367,6 +1367,52 @@ def _extract_article_text(url: str, max_chars: int = 800) -> str:
         return ""
 
 
+def _ensure_chromium_installed() -> bool:
+    """
+    Ensures Playwright's Chromium browser is downloaded.
+
+    Railway's build step for `playwright install chromium` proved
+    unreliable across multiple builder/venv configurations (the
+    browser binary ended up in a location not present at runtime).
+    Instead, the bot installs it lazily on first use, via the SAME
+    Python interpreter that's currently running (sys.executable) —
+    this guarantees consistency since it's the same environment.
+
+    Runs once per process (cached via module-level flag). Takes
+    ~30-60s the first time; subsequent calls return immediately.
+    Returns True if Chromium is available, False if install failed.
+    """
+    global _CHROMIUM_INSTALL_ATTEMPTED, _CHROMIUM_INSTALL_OK
+    if _CHROMIUM_INSTALL_ATTEMPTED:
+        return _CHROMIUM_INSTALL_OK
+
+    _CHROMIUM_INSTALL_ATTEMPTED = True
+    try:
+        import subprocess
+        import sys
+        log.info("FIA official: installing Chromium (first use, ~30-60s)...")
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=180)
+        if result.returncode == 0:
+            log.info("FIA official: Chromium installed ✅")
+            _CHROMIUM_INSTALL_OK = True
+        else:
+            log.warning(
+                f"FIA official: Chromium install failed "
+                f"(rc={result.returncode}): {result.stderr[-300:]}")
+            _CHROMIUM_INSTALL_OK = False
+    except Exception as e:
+        log.warning(f"FIA official: Chromium install error — {e}")
+        _CHROMIUM_INSTALL_OK = False
+
+    return _CHROMIUM_INSTALL_OK
+
+
+_CHROMIUM_INSTALL_ATTEMPTED = False
+_CHROMIUM_INSTALL_OK        = False
+
+
 def _fetch_fia_official_docs(race_context: str, driver_name: str,
                               incident_type: str) -> str:
     """
@@ -1390,6 +1436,10 @@ def _fetch_fia_official_docs(race_context: str, driver_name: str,
         from playwright.sync_api import sync_playwright
     except ImportError:
         log.debug("FIA official: Playwright not installed — skipping")
+        return ""
+
+    if not _ensure_chromium_installed():
+        log.debug("FIA official: Chromium unavailable — skipping")
         return ""
 
     # Map race_context (e.g. "Monaco Grand Prix 2026") to FIA's
