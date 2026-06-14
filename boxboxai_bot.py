@@ -1480,10 +1480,15 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
 
     try:
         with sync_playwright() as p:
+            # --single-process is known to crash Chromium on launch in
+            # constrained containers (BrowserType.launch: Target page,
+            # context or browser has been closed). Removed. The other
+            # flags are the standard container-safe set.
             browser = p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage",
-                      "--disable-gpu", "--single-process"])
+                      "--disable-gpu", "--disable-setuid-sandbox",
+                      "--no-zygote"])
             try:
                 page = browser.new_page()
                 page.set_default_timeout(15000)  # 15s — fail fast
