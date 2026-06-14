@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPLOY-CHECK-MARKER: v2026-06-14-chromium-lazy-install
 """
 BoxBoxAI — F1 Race Analyst Telegram Bot
 =========================================
