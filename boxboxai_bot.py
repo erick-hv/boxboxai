@@ -1367,6 +1367,139 @@ def _extract_article_text(url: str, max_chars: int = 800) -> str:
         return ""
 
 
+def _fetch_fia_official_docs(race_context: str, driver_name: str,
+                              incident_type: str) -> str:
+    """
+    Fetches the ACTUAL FIA decision document PDF using a headless browser.
+
+    fia.com returns 403 for plain HTTP requests (requests/urllib),
+    but serves pages normally to real browsers. Playwright launches
+    headless Chromium, navigates to the FIA documents page for the
+    season, finds the document link matching the incident, downloads
+    the PDF, and extracts text with pypdf.
+
+    Returns "" on ANY failure (Playwright not installed, timeout,
+    no matching doc, etc.) — caller falls back to motorsport.com/
+    planetf1 search, which is the existing reliable path.
+
+    This function must NEVER raise — every failure mode degrades
+    to empty string so the bot keeps working even if this entire
+    feature is broken or unavailable on the host.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        log.debug("FIA official: Playwright not installed — skipping")
+        return ""
+
+    # Map race_context (e.g. "Monaco Grand Prix 2026") to FIA's
+    # event URL slug. FIA uses the season documents page and lists
+    # events by name — we search for the event link by text match.
+    season_url = (
+        "https://www.fia.com/documents/championships/"
+        "fia-formula-one-world-championship-14/season/season-2026-2072")
+
+    # Extract just "Monaco Grand Prix" etc from race_context
+    race_name_clean = re.sub(r'\s*2026.*$', '', race_context).strip()
+    if not race_name_clean:
+        return ""
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage",
+                      "--disable-gpu", "--single-process"])
+            try:
+                page = browser.new_page()
+                page.set_default_timeout(15000)  # 15s — fail fast
+
+                # ── Step 1: find the event's documents page ──────
+                page.goto(season_url, wait_until="domcontentloaded")
+                event_link = page.locator(
+                    f"a:has-text('{race_name_clean}')").first
+                if event_link.count() == 0:
+                    log.info(f"FIA official: event '{race_name_clean}' "
+                             f"not found on season page")
+                    return ""
+                event_href = event_link.get_attribute("href")
+                if not event_href:
+                    return ""
+                if event_href.startswith("/"):
+                    event_href = "https://www.fia.com" + event_href
+
+                # ── Step 2: load event documents list ─────────────
+                page.goto(event_href, wait_until="domcontentloaded")
+
+                # Build search terms for the doc link text based on
+                # incident type and driver
+                doc_keywords = ["infringement", "decision", "penalty"]
+                if "disqualif" in incident_type.lower():
+                    doc_keywords = ["disqualif", "infringement"]
+                elif "track limit" in incident_type.lower():
+                    doc_keywords = ["track limits", "infringement"]
+
+                # Find all document links on the page
+                all_links = page.locator("a[href*='decision-document']")
+                count = min(all_links.count(), 60)  # cap for safety
+
+                candidate_url  = ""
+                candidate_text = ""
+                for i in range(count):
+                    link = all_links.nth(i)
+                    text = (link.inner_text() or "").lower()
+                    if not any(kw in text for kw in doc_keywords):
+                        continue
+                    # Prefer doc mentioning the driver's car/name
+                    if driver_name and driver_name.lower() in text:
+                        candidate_url  = link.get_attribute("href")
+                        candidate_text = text
+                        break
+                    if not candidate_url:
+                        candidate_url  = link.get_attribute("href")
+                        candidate_text = text
+
+                if not candidate_url:
+                    log.info(f"FIA official: no infringement doc found "
+                             f"for {race_name_clean}")
+                    return ""
+
+                if candidate_url.startswith("/"):
+                    candidate_url = "https://www.fia.com" + candidate_url
+
+                log.info(f"FIA official: found doc '{candidate_text[:60]}'")
+
+                # ── Step 3: download the PDF via the browser context ──
+                pdf_response = page.request.get(candidate_url)
+                if pdf_response.status != 200:
+                    log.info(f"FIA official: PDF fetch returned "
+                             f"{pdf_response.status}")
+                    return ""
+                pdf_bytes = pdf_response.body()
+
+            finally:
+                browser.close()
+
+    except Exception as e:
+        log.info(f"FIA official: Playwright fetch failed — {e}")
+        return ""
+
+    # ── Step 4: extract text from PDF ─────────────────────────────
+    try:
+        import io
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        text = "\n".join(
+            (page.extract_text() or "") for page in reader.pages)
+        text = re.sub(r'\s+', ' ', text).strip()
+        if len(text) < 50:
+            return ""
+        return f"[FIA OFFICIAL DOCUMENT: {candidate_text.strip()[:80]}]\n{text[:1000]}"
+    except Exception as e:
+        log.info(f"FIA official: PDF text extraction failed — {e}")
+        return ""
+
+
 def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
     """
     Fetches official stewards decision content for a race incident/penalty.
@@ -1427,6 +1560,17 @@ def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
     parts.append(incident_type)
     parts.append("FIA")
     search_q = " ".join(parts)
+
+    # ── Try official FIA document first (Playwright) ──────────────
+    # This is the ground truth — exact regulation, exact wording.
+    # Falls back silently to motorsport.com search below if it
+    # fails for ANY reason (not installed, timeout, no match, etc.)
+    official = _fetch_fia_official_docs(race_context, driver_name, incident_type)
+    if official:
+        log.info("FIA: using OFFICIAL document ✅")
+        _FIA_DOC_CACHE[cache_key]  = official
+        _FIA_CACHE_TIMES[cache_key] = datetime.now().timestamp()
+        return official
 
     log.info(f"FIA search: '{search_q}'")
 
@@ -1527,89 +1671,6 @@ def _needs_fia_docs(query: str) -> bool:
         "decisión de los comisarios", "los comisarios",
     ]
     return any(tr in t for tr in triggers)
-
-
-
-
-
-    """
-    Searches Google for F1 content and returns relevant results.
-    Filters for trusted F1 domains.
-    Returns list of {title, url, snippet}.
-    """
-    try:
-        search_url = "https://www.google.com/search"
-        headers    = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        params = {
-            "q":    query,
-            "num":  num_results * 2,  # request more, filter down
-            "hl":   "en",
-            "gl":   "us",
-        }
-
-        r = requests.get(search_url, params=params,
-                         headers=headers, timeout=10)
-        if r.status_code != 200:
-            return []
-
-        html = r.text
-        results = []
-
-        # Extract search result blocks
-        # Google uses <div class="g"> for each result
-        blocks = re.findall(
-            r'<div[^>]*class="[^"]*(?:g|MjjYud)[^"]*"[^>]*>(.*?)</div>\s*</div>',
-            html, re.DOTALL)
-
-        for block in blocks[:num_results * 3]:
-            # Extract URL
-            url_match = re.search(r'href="(https?://[^"]+)"', block)
-            if not url_match:
-                continue
-            url = url_match.group(1)
-
-            # Skip Google internal links
-            if "google.com" in url or "youtube.com" in url:
-                continue
-
-            # Extract title
-            title_match = re.search(r'<h3[^>]*>([^<]+)</h3>', block)
-            title = title_match.group(1).strip() if title_match else ""
-
-            # Extract snippet
-            snippet_match = re.search(
-                r'<span[^>]*class="[^"]*(?:st|aCOpRe|hgKElc)[^"]*"[^>]*>'
-                r'([^<]+(?:<[^>]+>[^<]+</[^>]+>)*[^<]*)</span>',
-                block)
-            snippet = ""
-            if snippet_match:
-                snippet = re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip()
-
-            if title or snippet:
-                results.append({
-                    "title":   title,
-                    "url":     url,
-                    "snippet": snippet[:300],
-                })
-
-            if len(results) >= num_results:
-                break
-
-        return results
-
-    except Exception as e:
-        log.warning(f"Google search failed: {e}")
-        return []
-
-
-
 
 def live_search_f1(query: str, race_context: str = "") -> str:
     """
@@ -4061,12 +4122,6 @@ async def _check_and_run_predictor(app=None):
         # Qualifying is available — run the predictor
         log.info(f"Auto-predictor: qualifying detected for R{rnd} {name} — running predictor...")
 
-        if app:
-            await alert_owner(app,
-                f"🤖 *Auto-predictor starting*\n\n"
-                f"R{rnd} {name} qualifying detected\n"
-                f"Running f1_2026_predictor.py now... (takes ~5 min)")
-
         success, msg = await run_predictor_subprocess()
 
         if success:
@@ -4410,15 +4465,14 @@ def fetch_current_race() -> dict | None:
         (11, "Hungarian Grand Prix",      "2026-07-26"),
         (12, "Dutch Grand Prix",          "2026-08-23"),
         (13, "Italian Grand Prix",        "2026-09-06"),
-        (14, "Spanish Grand Prix",        "2026-09-13"),
-        (15, "Singapore Grand Prix",      "2026-09-20"),
-        (16, "Azerbaijan Grand Prix",     "2026-09-27"),
-        (17, "United States Grand Prix",  "2026-10-18"),
-        (18, "Mexico City Grand Prix",    "2026-10-25"),
-        (19, "São Paulo Grand Prix",      "2026-11-08"),
-        (20, "Las Vegas Grand Prix",      "2026-11-21"),
-        (21, "Qatar Grand Prix",          "2026-11-29"),
-        (22, "Abu Dhabi Grand Prix",      "2026-12-06"),
+        (14, "Singapore Grand Prix",      "2026-09-20"),
+        (15, "Azerbaijan Grand Prix",     "2026-09-27"),
+        (16, "United States Grand Prix",  "2026-10-18"),
+        (17, "Mexico City Grand Prix",    "2026-10-25"),
+        (18, "São Paulo Grand Prix",      "2026-11-08"),
+        (19, "Las Vegas Grand Prix",      "2026-11-21"),
+        (20, "Qatar Grand Prix",          "2026-11-29"),
+        (21, "Abu Dhabi Grand Prix",      "2026-12-06"),
     ]
 
     for rnd, name, date_str in RACE_CALENDAR_2026:
@@ -4477,7 +4531,8 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         driver_stats: str = "",
                         practice_context: str = "",
                         live_search_context: str = "",
-                        fia_docs_context: str = "") -> str:
+                        fia_docs_context: str = "",
+                        next_race_context: str = "") -> str:
     """
     Token-optimized system prompt builder.
     Core: ~400 tokens always. Context: injected only when needed.
@@ -4516,6 +4571,8 @@ def build_system_prompt(mem: dict, news_context: str = "",
 
     # ── Dynamic context blocks (only when not empty) ──────────
     ctx_blocks = []
+    if next_race_context:
+        ctx_blocks.append(next_race_context)
     if news_context:
         ctx_blocks.append(f"NEWS:{news_context[:300]}")
     if live_search_context:
@@ -4599,6 +4656,74 @@ def _is_news_query(text: str) -> bool:
     return any(kw in t for kw in news_keywords)
 
 
+def _is_next_race_query(text: str) -> bool:
+    """
+    Detects questions about the upcoming/next race weekend —
+    "what race is next", "tomorrow's race", "can X win this weekend".
+    """
+    t = text.lower()
+    triggers = [
+        "next race", "next gp", "this weekend", "tomorrow", "today's race",
+        "today's gp", "upcoming race", "upcoming gp", "which race is next",
+        "what race is next", "what's next", "whats next",
+        "race this", "gp this", "race is tomorrow", "race tomorrow",
+        # Spanish
+        "próxima carrera", "proxima carrera", "próximo gp", "proximo gp",
+        "este fin de semana", "esta semana", "mañana", "el próximo",
+        "el proximo", "carrera de mañana", "carrera de hoy",
+    ]
+    return any(kw in t for kw in triggers)
+
+
+def get_next_race_context() -> str:
+    """
+    Builds factual context about the upcoming race weekend —
+    name, circuit, country, date. Grounds "what race is next/tomorrow"
+    and "can X win this weekend" questions in real schedule data.
+    """
+    try:
+        current = fetch_current_race()  # checks if we're IN a race weekend
+        next_r  = fetch_next_race()     # Jolpica's next scheduled race
+
+        race = current or next_r
+        if not race:
+            return ""
+
+        name    = race.get("raceName", "")
+        date    = race.get("date", "")
+        circuit = race.get("Circuit", {})
+        loc     = circuit.get("Location", {})
+        locality= loc.get("locality", "")
+        country = loc.get("country", "")
+        rnd     = race.get("round", "")
+
+        today = datetime.now().date()
+        try:
+            race_date = datetime.strptime(date, "%Y-%m-%d").date()
+            delta = (race_date - today).days
+            if delta == 0:
+                timing = "TODAY"
+            elif delta == 1:
+                timing = "TOMORROW"
+            elif delta > 1:
+                timing = f"in {delta} days"
+            elif delta < 0:
+                timing = f"{-delta} days ago (this race weekend)"
+            else:
+                timing = ""
+        except Exception:
+            timing = ""
+
+        return (
+            f"NEXT/CURRENT RACE: R{rnd} {name} — {locality}, {country}. "
+            f"Race day: {date} ({timing}). "
+            f"Use this for any 'next race', 'tomorrow', 'this weekend' questions."
+        )
+    except Exception as e:
+        log.debug(f"get_next_race_context failed: {e}")
+        return ""
+
+
 def _is_weather_query(text: str) -> bool:
     """Detects if a query is asking about weather."""
     weather_keywords = [
@@ -4632,6 +4757,13 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     driver_deep_ctx   = ""
 
     fia_docs_ctx      = ""
+    next_race_ctx     = ""
+
+    # Next/upcoming race context — also feeds weather fallback
+    if _is_next_race_query(user_msg) or _is_weather_query(user_msg) \
+            or any(w in user_msg.lower() for w in
+                   ["can ", "will ", "predict", "win the", "puede ganar", "va a ganar"]):
+        next_race_ctx = get_next_race_context()
 
     # ── Session data (OpenF1 direct — highest priority) ──────
     session_ctx = get_session_context(user_msg)
@@ -4731,7 +4863,7 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         mem, news_ctx, weather_ctx, historical_ctx,
         user_profile_ctx, live_ctx, circuit_ctx,
         pred_accuracy, driver_stats_ctx, practice_ctx,
-        live_search_ctx, fia_docs_ctx
+        live_search_ctx, fia_docs_ctx, next_race_ctx
     )
     messages = history + [{"role": "user", "content": user_msg}]
 
@@ -4795,6 +4927,38 @@ CIRCUIT_COORDS = {
     "abu dhabi":     ( 24.4672,   54.6031, "Abu Dhabi, UAE"),
 }
 
+# Country/race-name aliases → circuit key. Checked BEFORE the
+# substring matching above, so "Spain" maps to "barcelona" instead
+# of accidentally substring-matching "spa" (Belgium).
+CIRCUIT_ALIASES = {
+    "australia": "melbourne", "australian": "melbourne",
+    "china": "shanghai", "chinese": "shanghai",
+    "japan": "suzuka", "japanese": "suzuka",
+    "saudi": "jeddah", "saudi arabia": "jeddah", "saudi arabian": "jeddah",
+    "emilia romagna": "imola", "romagna": "imola",
+    "canada": "montreal", "canadian": "montreal",
+    "spain": "barcelona", "spanish": "barcelona",
+    "españa": "barcelona", "catalunya": "barcelona", "catalonia": "barcelona",
+    "austria": "spielberg", "austrian": "spielberg", "red bull ring": "spielberg",
+    "britain": "silverstone", "british": "silverstone", "uk": "silverstone",
+    "england": "silverstone", "great britain": "silverstone",
+    "hungary": "budapest", "hungarian": "budapest",
+    "belgium": "spa", "belgian": "spa", "francorchamps": "spa",
+    "netherlands": "zandvoort", "dutch": "zandvoort", "holland": "zandvoort",
+    "italy": "monza", "italian": "monza",
+    "azerbaijan": "baku",
+    "usa": "austin", "us gp": "austin", "united states": "austin",
+    "texas": "austin", "cota": "austin",
+    "mexico": "mexico city", "méxico": "mexico city",
+    "brazil": "são paulo", "brasil": "são paulo", "sao paulo": "são paulo",
+    "interlagos": "são paulo",
+    "vegas": "las vegas",
+    "qatar": "lusail",
+    "uae": "abu dhabi", "abudhabi": "abu dhabi", "yas marina": "abu dhabi",
+}
+
+
+
 # Weather code → description + emoji
 WMO_CODES = {
     0:  ("Clear sky", "☀️"),
@@ -4822,16 +4986,27 @@ WMO_CODES = {
 
 
 def _match_circuit(query: str) -> tuple | None:
-    """Fuzzy matches a query string to a circuit in CIRCUIT_COORDS."""
+    """
+    Matches a query string to a circuit in CIRCUIT_COORDS using
+    word-boundary matching — avoids false positives like "Spain"
+    matching "spa" (Spa-Francorchamps) as a raw substring.
+    Checks country/race-name aliases first.
+    """
     q = query.lower()
-    # Direct match
+    # Aliases first (longest keys first, so "saudi arabia" beats "saudi")
+    for alias in sorted(CIRCUIT_ALIASES.keys(), key=len, reverse=True):
+        if re.search(rf"\b{re.escape(alias)}\b", q):
+            key = CIRCUIT_ALIASES[alias]
+            return key, CIRCUIT_COORDS[key]
+    # Word-boundary match on the full key (e.g. "mexico city")
     for key, val in CIRCUIT_COORDS.items():
-        if key in q:
+        if re.search(rf"\b{re.escape(key)}\b", q):
             return key, val
-    # Partial match
+    # Word-boundary match on each word of multi-word keys
     for key, val in CIRCUIT_COORDS.items():
-        if any(word in q for word in key.split()):
-            return key, val
+        for word in key.split():
+            if len(word) >= 4 and re.search(rf"\b{re.escape(word)}\b", q):
+                return key, val
     return None
 
 
@@ -7323,12 +7498,19 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
     """
     Core enrichment logic. Checks each completed race and
     enriches with FastF1 telemetry if not already done.
+
+    Skip-check is based on the persisted memory itself (episode
+    having real tyre/sector data), not a separate state file —
+    Railway's filesystem resets on redeploy, so a separate state
+    file can't be trusted across restarts.
+
+    All results are batched into ONE alert to the owner.
     """
     state    = load_enrichment_state()
     mem      = mem_ref[0]
     episodes = mem.get("episodic", [])
     today    = datetime.now()
-    enriched_any = False
+    enriched_results = []  # collect for single batched alert
 
     RACE_CALENDAR = [
         (1, "Australian GP",  "2026-03-15"),
@@ -7367,8 +7549,6 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
             continue
 
         state_key = f"enriched_r{rnd}"
-        if state.get(state_key):
-            continue  # already fully enriched
 
         # Find episode
         episode = next(
@@ -7386,10 +7566,19 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
                 episode["round"]     = rnd
                 episode["race_name"] = name
 
-        # Skip if already enriched with telemetry
-        if episode.get("telemetry_source") == "fastf1":
-            state[state_key] = datetime.now().isoformat()
-            save_enrichment_state(state)
+        # ── Skip check based on actual data quality, not just a flag ──
+        # An episode is "fully enriched" if it has a telemetry source
+        # AND actual substantive data (tyre strategy or sector bests) —
+        # not just a source tag with empty fields.
+        has_real_telemetry = (
+            episode.get("telemetry_source")
+            and (episode.get("pitstops", {}).get("tyre_strategies")
+                 or episode.get("sector_bests"))
+        )
+        if has_real_telemetry or state.get(state_key):
+            if not state.get(state_key):
+                state[state_key] = datetime.now().isoformat()
+                save_enrichment_state(state)
             continue
 
         log.info(f"Auto-enrichment: starting R{rnd} {name}...")
@@ -7446,32 +7635,41 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
         save_f1_memory(mem)
         mem_ref[0] = mem
 
+        # Only mark as fully enriched if we actually got real telemetry
         source = episode.get("telemetry_source", "jolpica")
-        state[state_key] = datetime.now().isoformat()
-        save_enrichment_state(state)
-        enriched_any = True
+        got_real_data = bool(
+            episode.get("pitstops", {}).get("tyre_strategies")
+            or episode.get("sector_bests"))
+        if got_real_data:
+            state[state_key] = datetime.now().isoformat()
+            save_enrichment_state(state)
 
         log.info(
-            f"Auto-enrichment: ✅ R{rnd} {name} complete "
-            f"(source: {source})")
+            f"Auto-enrichment: {'✅' if got_real_data else '⏳'} "
+            f"R{rnd} {name} processed (source: {source}, "
+            f"real_data: {got_real_data})")
 
-        if app:
-            fl   = episode.get("fastest_lap","?")
-            fl_t = episode.get("fastest_lap_time","")
-            tyres= episode.get("tyre_strategy_summary","")[:80]
-            sc   = episode.get("sc_count", 0)
-            await alert_owner(app,
-                f"🧠 *Memory enriched: R{rnd} {name}*\n\n"
-                f"Source: {source}\n"
-                f"Fastest lap: {fl} {fl_t}\n"
-                f"Safety cars: {sc}\n"
-                f"Tyres: {tyres}\n\n"
-                f"Full telemetry now in memory ✅")
+        enriched_results.append({
+            "round": rnd, "name": name, "source": source,
+            "fastest_lap": episode.get("fastest_lap","?"),
+            "fastest_lap_time": episode.get("fastest_lap_time",""),
+            "complete": got_real_data,
+        })
 
         # Small delay between races to avoid rate limiting
         await asyncio.sleep(5)
 
-    if not enriched_any:
+    # ── Single batched alert for everything that happened ────────
+    if enriched_results and app:
+        lines = [f"🧠 *Memory enrichment run* — {len(enriched_results)} race(s) processed\n"]
+        for r in enriched_results:
+            status = "✅ full telemetry" if r["complete"] else "⏳ partial (will retry)"
+            fl = f"{r['fastest_lap']} {r['fastest_lap_time']}".strip()
+            lines.append(
+                f"• R{r['round']} {r['name']}: {status}"
+                f"{f' — FL {fl}' if fl != '?' else ''}")
+        await alert_owner(app, "\n".join(lines))
+    elif not enriched_results:
         log.debug("Auto-enrichment: nothing to do")
 
 
