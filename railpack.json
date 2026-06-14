@@ -4,11 +4,11 @@
   "steps": {
     "playwright": {
       "inputs": [{ "step": "install" }],
-      "commands": ["python -m playwright install --with-deps chromium"]
+      "commands": ["python3 -m playwright install --with-deps chromium"]
     }
   },
   "deploy": {
     "inputs": [{ "step": "playwright" }],
-    "startCommand": "python boxboxai_bot.py"
+    "startCommand": "python3 boxboxai_bot.py"
   }
 }

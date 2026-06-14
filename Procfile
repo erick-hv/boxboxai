@@ -1,1 +1,1 @@
-worker: python boxboxai_bot.py
+worker: python3 boxboxai_bot.py
