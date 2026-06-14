@@ -1380,7 +1380,8 @@ def _ensure_chromium_installed() -> bool:
     this guarantees consistency since it's the same environment.
 
     Runs once per process (cached via module-level flag). Takes
-    ~30-60s the first time; subsequent calls return immediately.
+    ~60-120s the first time (downloads Chromium + apt packages);
+    subsequent calls return immediately.
     Returns True if Chromium is available, False if install failed.
     """
     global _CHROMIUM_INSTALL_ATTEMPTED, _CHROMIUM_INSTALL_OK
@@ -1391,17 +1392,19 @@ def _ensure_chromium_installed() -> bool:
     try:
         import subprocess
         import sys
-        log.info("FIA official: installing Chromium (first use, ~30-60s)...")
+        log.info("FIA official: installing Chromium + system deps "
+                 "(first use, ~60-120s)...")
         result = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True, text=True, timeout=180)
+            [sys.executable, "-m", "playwright", "install",
+             "--with-deps", "chromium"],
+            capture_output=True, text=True, timeout=240)
         if result.returncode == 0:
-            log.info("FIA official: Chromium installed ✅")
+            log.info("FIA official: Chromium + deps installed ✅")
             _CHROMIUM_INSTALL_OK = True
         else:
             log.warning(
                 f"FIA official: Chromium install failed "
-                f"(rc={result.returncode}): {result.stderr[-300:]}")
+                f"(rc={result.returncode}): {result.stderr[-400:]}")
             _CHROMIUM_INSTALL_OK = False
     except Exception as e:
         log.warning(f"FIA official: Chromium install error — {e}")
