@@ -12,3 +12,6 @@ scikit-learn
 
 # FIA document parsing
 pypdf
+
+# Official FIA document fetch (headless browser - fia.com blocks plain requests)
+playwright
