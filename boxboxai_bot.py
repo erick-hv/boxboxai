@@ -1945,6 +1945,82 @@ def get_practice_context(query: str, next_race: dict | None = None,
     return f"Searching for {race_name} {fp_type} results — check /news for latest updates."
 
 
+def get_actual_grid_for_prediction(round_num: int | None = None) -> str:
+    """
+    Fetches the ACTUAL qualifying grid for the upcoming/current race
+    so prediction prompts are grounded in reality, not invented.
+
+    Tries OpenF1 (live timing) first, then Jolpica (posted results).
+    Returns empty string if no grid is available yet — callers must
+    handle this by telling Claude qualifying hasn't happened.
+    """
+    # Try OpenF1 first — most current
+    try:
+        sessions_data = fetch_openf1("sessions", {
+            "year": SEASON, "session_name": "Qualifying"})
+        if sessions_data:
+            now_ts = datetime.now().timestamp()
+            completed = []
+            for s in sessions_data:
+                date_end = s.get("date_end", "")
+                if not date_end:
+                    continue
+                try:
+                    end_dt = datetime.fromisoformat(
+                        date_end.replace("Z", "+00:00"))
+                    if end_dt.timestamp() <= now_ts:
+                        completed.append(s)
+                except Exception:
+                    continue
+            if completed:
+                recent = sorted(completed, key=lambda x: x.get("date_end",""))[-1]
+                sk = recent.get("session_key")
+                if sk:
+                    laps = fetch_openf1("laps", {"session_key": sk})
+                    if laps:
+                        drivers_raw = fetch_openf1("drivers", {"session_key": sk})
+                        num_to_code = {}
+                        if drivers_raw:
+                            for d in drivers_raw:
+                                n = str(d.get("driver_number",""))
+                                num_to_code[n] = d.get("name_acronym","?")
+                        best: dict = {}
+                        for lap in laps:
+                            dur = lap.get("lap_duration")
+                            num = str(lap.get("driver_number",""))
+                            if dur and num:
+                                try:
+                                    f = float(dur)
+                                    if f > 30:
+                                        if num not in best or f < best[num]:
+                                            best[num] = f
+                                except Exception:
+                                    pass
+                        if best:
+                            sorted_d = sorted(best.items(), key=lambda x: x[1])
+                            grid = [num_to_code.get(num, f"#{num}")
+                                   for num, _ in sorted_d[:10]]
+                            return ("ACTUAL QUALIFYING GRID (top 10, from OpenF1): "
+                                    + ", ".join(f"P{i+1}:{c}" for i,c in enumerate(grid)))
+    except Exception as e:
+        log.debug(f"get_actual_grid_for_prediction OpenF1 failed: {e}")
+
+    # Fallback: Jolpica
+    try:
+        if round_num is None:
+            next_race = fetch_next_race()
+            round_num = int(next_race.get("round", 0)) if next_race else 0
+        if round_num:
+            quali = fetch_qualifying_result(round_num, SEASON)
+            if quali and quali.get("grid_top10"):
+                grid_str = " | ".join(quali["grid_top10"])
+                return f"ACTUAL QUALIFYING GRID (top 10, from Jolpica): {grid_str}"
+    except Exception as e:
+        log.debug(f"get_actual_grid_for_prediction Jolpica failed: {e}")
+
+    return ""
+
+
 def get_session_context(query: str) -> str:
     """
     Fetches real session timing data from OpenF1 first.
@@ -1990,75 +2066,107 @@ def get_session_context(query: str) -> str:
             "session_name": session_name,
         })
 
+        if not sessions_data:
+            log.info(f"OpenF1: no '{session_name}' sessions returned for {SEASON}")
+
         if sessions_data:
-            # Get most recent matching session
-            recent = sorted(
-                sessions_data,
-                key=lambda x: x.get("date_start",""))[-1]
-            sk = recent.get("session_key")
-            circuit = recent.get("circuit_short_name","")
-            date    = recent.get("date_start","")[:10]
+            now_ts = datetime.now().timestamp()
 
-            if sk:
-                # Fetch lap times
-                laps = fetch_openf1("laps", {"session_key": sk})
+            # Only consider sessions that have ALREADY ENDED
+            completed = []
+            for s in sessions_data:
+                date_end = s.get("date_end", "")
+                if not date_end:
+                    continue
+                try:
+                    end_dt = datetime.fromisoformat(
+                        date_end.replace("Z", "+00:00"))
+                    if end_dt.timestamp() <= now_ts:
+                        completed.append(s)
+                except Exception:
+                    continue
 
-                if laps:
-                    # Get driver info
-                    drivers_raw = fetch_openf1("drivers",
-                                               {"session_key": sk})
-                    num_to_code = {}
-                    num_to_team = {}
-                    if drivers_raw:
-                        for d in drivers_raw:
-                            n = str(d.get("driver_number",""))
-                            num_to_code[n] = d.get("name_acronym","?")
-                            num_to_team[n] = d.get("team_name","")[:12]
+            if not completed:
+                log.info(
+                    f"OpenF1: {len(sessions_data)} '{session_name}' "
+                    f"sessions found but none completed yet")
 
-                    # Best lap per driver
-                    best: dict = {}
-                    for lap in laps:
-                        dur = lap.get("lap_duration")
-                        num = str(lap.get("driver_number",""))
-                        if dur and num:
-                            try:
-                                f = float(dur)
-                                if f > 30:  # filter outliers
-                                    if num not in best or f < best[num]:
-                                        best[num] = f
-                            except Exception:
-                                pass
+            if completed:
+                # Most recently completed
+                recent = sorted(
+                    completed,
+                    key=lambda x: x.get("date_end",""))[-1]
+                sk = recent.get("session_key")
+                circuit = recent.get("circuit_short_name","")
+                date    = recent.get("date_start","")[:10]
 
-                    if best:
-                        sorted_d = sorted(
-                            best.items(), key=lambda x: x[1])
-                        ref = sorted_d[0][1]
+                log.info(
+                    f"OpenF1: using session_key={sk} "
+                    f"circuit={circuit} date={date}")
 
-                        lines = [
-                            f"{session_label} CLASSIFICATION — "
-                            f"{circuit} {date}:"]
-                        for i,(num,t) in enumerate(sorted_d[:15], 1):
-                            code = num_to_code.get(num, f"#{num}")
-                            team = num_to_team.get(num,"")
-                            mins = int(t//60)
-                            secs = t%60
-                            if i == 1:
-                                time_str = f"{mins}:{secs:06.3f}"
-                                gap = ""
-                            else:
-                                delta = t - ref
-                                time_str = f"{mins}:{secs:06.3f}"
-                                gap = f" +{delta:.3f}s"
-                            lines.append(
-                                f"P{i:2d}: {code:4s} ({team})"
-                                f" {time_str}{gap}")
+                if sk:
+                    # Fetch lap times
+                    laps = fetch_openf1("laps", {"session_key": sk})
 
-                        log.info(
-                            f"OpenF1 {session_label} data: "
-                            f"{len(sorted_d)} drivers")
-                        return "\n".join(lines)
+                    if not laps:
+                        log.info(f"OpenF1: session {sk} has no lap data")
+
+                    if laps:
+                        # Get driver info
+                        drivers_raw = fetch_openf1("drivers",
+                                                   {"session_key": sk})
+                        num_to_code = {}
+                        num_to_team = {}
+                        if drivers_raw:
+                            for d in drivers_raw:
+                                n = str(d.get("driver_number",""))
+                                num_to_code[n] = d.get("name_acronym","?")
+                                num_to_team[n] = d.get("team_name","")[:12]
+
+                        # Best lap per driver
+                        best: dict = {}
+                        for lap in laps:
+                            dur = lap.get("lap_duration")
+                            num = str(lap.get("driver_number",""))
+                            if dur and num:
+                                try:
+                                    f = float(dur)
+                                    if f > 30:  # filter outliers
+                                        if num not in best or f < best[num]:
+                                            best[num] = f
+                                except Exception:
+                                    pass
+
+                        if best:
+                            sorted_d = sorted(
+                                best.items(), key=lambda x: x[1])
+                            ref = sorted_d[0][1]
+
+                            lines = [
+                                f"{session_label} CLASSIFICATION — "
+                                f"{circuit} {date}:"]
+                            for i,(num,t) in enumerate(sorted_d[:15], 1):
+                                code = num_to_code.get(num, f"#{num}")
+                                team = num_to_team.get(num,"")
+                                mins = int(t//60)
+                                secs = t%60
+                                if i == 1:
+                                    time_str = f"{mins}:{secs:06.3f}"
+                                    gap = ""
+                                else:
+                                    delta = t - ref
+                                    time_str = f"{mins}:{secs:06.3f}"
+                                    gap = f" +{delta:.3f}s"
+                                lines.append(
+                                    f"P{i:2d}: {code:4s} ({team})"
+                                    f" {time_str}{gap}")
+
+                            log.info(
+                                f"OpenF1 {session_label} data: "
+                                f"{len(sorted_d)} drivers")
+                            return "\n".join(lines)
     except Exception as e:
-        log.debug(f"OpenF1 session context failed: {e}")
+        log.warning(f"OpenF1 session context failed: {e}")
 
     # ── Fallback: live Google search ──────────────────────────
     current = fetch_current_race()
@@ -2972,7 +3080,6 @@ _app_ref: list = [None]
 
 WELCOME = """🏎 *Welcome to BoxBoxAI!*
 _Your AI-powered F1 race analyst_
-_Developed by Erick Hernandez_
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2982,14 +3089,15 @@ Just ask me anything. Some ideas:
 • _"Who's leading the championship?"_
 • _"Why did Russell retire in Montreal?"_
 • _"Break down Antonelli's dominance"_
-• _"Who should I bet on for Monaco?"_
+• _"Who should I bet on for Spain?"_
 • _"Compare Hamilton vs Leclerc this season"_
+• _"Top 10 FP2"_
 
 *Commands:*
-/start — this menu
-/standings — live championship table
-/season — full 2026 race log
-/predict — next race prediction
+/standings — driver championship
+/constructors — constructor standings
+/winner — race winner pick
+/predict — full race prediction
 /help — all commands
 
 Let's talk F1 🚀"""
@@ -4450,12 +4558,14 @@ RULES:
 - Language: match user (Spanish→Mexican Spanish, English→English)
 - Telegram: *bold* only, no ## headers, no --- dividers, mobile-friendly
 - Style: confident, direct, opinionated, punchy. Never start "Certainly!"
-- NEVER invent lap times, positions, or results. If you don't have real data, say exactly: "I don't have the timing data for that session yet — try again in a few minutes or check the F1 app."
-- NEVER guess or estimate times. Made-up numbers are worse than no answer.
-- When SESSION DATA is present: use those exact times/positions only.
-- When no SESSION DATA: admit it clearly and briefly. One sentence. No padding.
-- FIA docs = ground truth for incidents. If present, cite "FIA stewards found..."
-- Live search results = use directly for session questions{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
+- NEVER invent lap times, positions, results, or grid order. If you don't have real data, say: "I don't have the timing data for that yet — ask again in a few minutes."
+- NEVER tell users to check F1.com, the F1 app, Twitter, or any external source. Either you have the data or you say you don't — never redirect elsewhere.
+- NEVER guess or estimate times, positions, or finishing order. Made-up numbers are worse than no answer.
+- When SESSION DATA is present: use those exact times/positions only — that's the real timing sheet.
+- When no SESSION DATA and the question needs it: admit it in one honest sentence, no padding, no speculation dressed as analysis.
+- FIA STEWARDS DOCS / STEWARDS DECISION SOURCES = ground truth for incidents and penalties. If present, cite "FIA stewards found..." with the specific finding.
+- [NEWS COVERAGE] labeled context = background only, not a timing sheet — don't extract positions/times from it, use it for storylines and reactions only.
+- If a query mentions a race/session not yet in your RACE RESULTS or SEASON FACTS, don't substitute a different race — say you don't have it yet.{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
 
 Answer from all context above. Be accurate, specific, direct."""
 
@@ -5021,20 +5131,11 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         }
         save_sessions(sessions)
 
-    await update.message.reply_text(
-        WELCOME, parse_mode=constants.ParseMode.MARKDOWN)
-
-    # Ask for timezone if not set yet
-    if "tz_offset" not in sessions.get(user_id, {}):
-        _tz_pending[user_id] = True
+    try:
         await update.message.reply_text(
-            "🌍 *One quick thing!*\n\n"
-            "In which country are you located? "
-            "Just type it and I'll set your timezone automatically "
-            "so notifications show in your local time 🕐\n\n"
-            "_Examples: Mexico, Spain, Brazil, Japan, USA..._",
-            parse_mode=constants.ParseMode.MARKDOWN
-        )
+            WELCOME, parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(re.sub(r"[*_`]", "", WELCOME))
 
 
 async def handle_timezone_callback(update: Update,
@@ -5056,8 +5157,11 @@ async def cmd_timezone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        HELP_TEXT, parse_mode=constants.ParseMode.MARKDOWN)
+    try:
+        await update.message.reply_text(
+            HELP_TEXT, parse_mode=constants.ParseMode.MARKDOWN)
+    except Exception:
+        await update.message.reply_text(re.sub(r"[*_`]", "", HELP_TEXT))
 
 async def cmd_standings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -5801,6 +5905,40 @@ def get_race_replay_context(query: str, mem: dict) -> str:
             best_score = score
             best_ep    = ep
 
+    # If the query names a specific circuit/race that ISN'T in memory yet,
+    # don't fall back to a different (most recent) race — that would
+    # confidently describe the wrong Grand Prix. Return empty instead so
+    # the live-search / session-intercept path can handle it honestly.
+    OTHER_CIRCUIT_NAMES = [
+        "spain", "spanish", "barcelona", "españa", "catalunya",
+        "austria", "austrian", "spielberg", "red bull ring",
+        "silverstone", "british", "britain",
+        "spa", "belgian", "belgium",
+        "hungary", "hungarian", "budapest",
+        "zandvoort", "dutch", "netherlands",
+        "monza", "italian", "italy",
+        "baku", "azerbaijan",
+        "singapore",
+        "austin", "cota", "united states", "us gp",
+        "mexico", "méxico",
+        "brazil", "brasil", "interlagos", "são paulo", "sao paulo",
+        "vegas", "las vegas",
+        "qatar", "lusail",
+        "abu dhabi", "yas marina",
+    ]
+    if best_score == 0:
+        for name in OTHER_CIRCUIT_NAMES:
+            if name in t:
+                # Check if any episode in memory actually covers this circuit
+                in_memory = any(
+                    name in ep.get("track","").lower()
+                    or name in ep.get("race_name","").lower()
+                    for ep in episodes)
+                if not in_memory:
+                    log.info(f"Race replay: '{name}' mentioned but not in "
+                             f"memory yet — returning empty, not Monaco fallback")
+                    return ""
+
     # Default to most recent race
     if not best_ep and episodes:
         best_ep = sorted(episodes, key=lambda x: x.get("round", 0))[-1]
@@ -6340,6 +6478,18 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 (7,"Spanish GP","2026-06-14"),
                 (8,"Austrian GP","2026-06-28"),
                 (9,"British GP","2026-07-05"),
+                (10,"Belgian GP","2026-07-19"),
+                (11,"Hungarian GP","2026-07-26"),
+                (12,"Dutch GP","2026-08-23"),
+                (13,"Italian GP","2026-09-06"),
+                (14,"Singapore GP","2026-09-20"),
+                (15,"Azerbaijan GP","2026-09-27"),
+                (16,"US GP","2026-10-18"),
+                (17,"Mexico City GP","2026-10-25"),
+                (18,"São Paulo GP","2026-11-08"),
+                (19,"Las Vegas GP","2026-11-21"),
+                (20,"Qatar GP","2026-11-29"),
+                (21,"Abu Dhabi GP","2026-12-06"),
             ]:
                 if datetime.strptime(date_str,"%Y-%m-%d").date() >= today:
                     next_race = {"raceName": name, "round": str(rnd),
@@ -6380,12 +6530,31 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"Use the actual numbers. Be specific and opinionated."
             )
         else:
-            prompt = (
-                f"Give me a full race prediction for the {race_name}: "
-                f"predicted winner with reasoning, top-5 finishing order, "
-                f"key factors that will decide it, championship implications, "
-                f"and your confidence level."
-            )
+            # No predictor CSV — ground the prompt in real grid data if available
+            actual_grid = get_actual_grid_for_prediction()
+            if actual_grid:
+                prompt = (
+                    f"{actual_grid}\n\n"
+                    f"For the {race_name}, give a race prediction based on "
+                    f"the ACTUAL qualifying grid above:\n"
+                    f"1. WINNER — pick from the grid, reasoning based on "
+                    f"starting position and recent form\n"
+                    f"2. TOP 5 — based on the actual grid order plus your "
+                    f"analysis of who can overtake/defend\n"
+                    f"3. KEY FACTORS — what will decide the race\n"
+                    f"4. CHAMPIONSHIP IMPLICATIONS\n"
+                    f"5. CONFIDENCE — 0-100\n\n"
+                    f"Use ONLY the drivers and positions listed in the grid above. "
+                    f"Do not invent grid positions."
+                )
+            else:
+                prompt = (
+                    f"Qualifying for {race_name} hasn't happened yet, and I don't "
+                    f"have predictor data. Give a brief pre-qualifying preview: "
+                    f"championship context, what to watch for, key storylines. "
+                    f"Do NOT predict a specific finishing order or grid positions — "
+                    f"those don't exist yet. Keep it to 3-4 sentences."
+                )
 
         reply = ask_claude(prompt, history, mem, user_data)
         update_user_history(sessions, user_id, "user",
@@ -6428,6 +6597,18 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 (7,"Spanish GP","2026-06-14"),
                 (8,"Austrian GP","2026-06-28"),
                 (9,"British GP","2026-07-05"),
+                (10,"Belgian GP","2026-07-19"),
+                (11,"Hungarian GP","2026-07-26"),
+                (12,"Dutch GP","2026-08-23"),
+                (13,"Italian GP","2026-09-06"),
+                (14,"Singapore GP","2026-09-20"),
+                (15,"Azerbaijan GP","2026-09-27"),
+                (16,"US GP","2026-10-18"),
+                (17,"Mexico City GP","2026-10-25"),
+                (18,"São Paulo GP","2026-11-08"),
+                (19,"Las Vegas GP","2026-11-21"),
+                (20,"Qatar GP","2026-11-29"),
+                (21,"Abu Dhabi GP","2026-12-06"),
                 (10,"Belgian GP","2026-07-19"),
                 (11,"Hungarian GP","2026-07-26"),
             ]:
@@ -6503,10 +6684,23 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 pass
 
         if not narrative:
-            narrative = ask_claude(
-                f"Who will win the {race_name}? 2-3 sentences — "
-                f"winner, main reason why, one driver who could upset it.",
-                history, mem, user_data)
+            actual_grid = get_actual_grid_for_prediction()
+            if actual_grid:
+                narrative = ask_claude(
+                    f"{actual_grid}\n\n"
+                    f"Based on this ACTUAL qualifying grid for the {race_name}, "
+                    f"who do you think wins? 2-3 sentences — winner from the grid, "
+                    f"main reason why, one driver who could upset it. "
+                    f"Use ONLY drivers/positions listed above.",
+                    history, mem, user_data)
+            else:
+                narrative = ask_claude(
+                    f"Qualifying for the {race_name} hasn't happened yet and "
+                    f"I don't have predictor data. Give a brief 2-3 sentence "
+                    f"pre-qualifying take: championship context and what to watch. "
+                    f"Do NOT name a predicted winner or grid position — "
+                    f"qualifying hasn't happened.",
+                    history, mem, user_data)
             for code in ["ANT","RUS","HAM","LEC","VER",
                          "NOR","PIA","ALO","SAI","GAS"]:
                 if code in narrative.upper()[:100]:
@@ -6848,6 +7042,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── 1. Sanitize input ─────────────────────────────────
     text = sanitize_message(text)
+    if not text:
+        return
 
     # ── 2. Rate limiting ──────────────────────────────────
     allowed, rate_msg = check_rate_limit(user_id)
@@ -6866,45 +7062,78 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
         return
 
-    # ── 4. Timezone pending — user just typed their country ──
-    if _tz_pending.get(user_id):
-        tz_result = lookup_country_tz(text)
-        if tz_result:
-            offset, label = tz_result
-            sessions[user_id]["tz_offset"] = offset
-            sessions[user_id]["tz_label"]  = label
-            save_sessions(sessions)
-            _tz_pending.pop(user_id, None)
-            # Calculate current UTC time in their timezone as example
-            now_utc = datetime.utcnow()
-            local_h = (now_utc.hour + offset) % 24
-            await update.message.reply_text(
-                f"✅ Got it — *{label}*!\n\n"
-                f"Your current local time: *{local_h:02d}:{now_utc.minute:02d}*\n\n"
-                f"I'll show all session times in your timezone from now on. "
-                f"Let's talk F1! 🏎🇲🇽",
-                parse_mode=constants.ParseMode.MARKDOWN
-            )
-            return
-        else:
-            # Country not recognized — ask again
-            await update.message.reply_text(
-                f"🤔 I didn't recognize *{text}* as a location.\n\n"
-                f"Try typing just the country name, like:\n"
-                f"_Mexico, Spain, Brazil, Japan, USA, UK, Australia..._",
-                parse_mode=constants.ParseMode.MARKDOWN
-            )
-            return
-
     # ── 4b. Fan/rival declaration detection ───────────────
     fan_team, fan_driver = detect_fan_declaration(text)
     if fan_team or fan_driver:
+        if user_id not in sessions:
+            sessions[user_id] = {
+                "history":    [],
+                "first_seen": datetime.now().isoformat(),
+                "stats":      {"total_messages": 0, "favorite_topics": {},
+                               "commands_used": {}, "last_active": None},
+            }
         if fan_team:
             sessions[user_id]["fan_team"] = fan_team
         if fan_driver:
             sessions[user_id]["fan_driver"] = fan_driver
         save_sessions(sessions)
-        # Silently store — Claude will acknowledge naturally in response
+
+    # ── 4c. Session results intercept ─────────────────────
+    # If user asks PURELY for session timing/results, fetch from OpenF1
+    # directly and format it ourselves — bypass Claude to prevent
+    # hallucination. But "why/how/explain" questions need full analysis
+    # (FIA docs, race replay) — let those go through ask_claude normally,
+    # which still has OpenF1 session data available via get_session_context.
+    _analysis_words = [
+        "why", "how", "what happened", "what caused", "explain",
+        "walk me through", "incident", "crash", "collision", "penalty",
+        "penalised", "penalized", "disqualif", "investigation",
+        "por qué", "por que", "cómo", "como", "qué pasó", "que paso",
+        "explica", "explícame",
+    ]
+    is_pure_timing_request = (
+        _is_live_session_question(text)
+        and not any(w in text.lower() for w in _analysis_words)
+    )
+
+    if is_pure_timing_request:
+        await ctx.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action=constants.ChatAction.TYPING)
+        real_data = get_session_context(text)
+        if real_data:
+            # We have real timing data — send it directly
+            # Then ask Claude to add 2-sentence commentary only
+            history   = get_user_history(sessions, user_id)
+            user_data = sessions.get(user_id, {})
+            prompt = (
+                f"Here is the OFFICIAL timing data from OpenF1:\n\n"
+                f"{real_data}\n\n"
+                f"Present this cleanly for Telegram. Show the classification "
+                f"exactly as given. Then add 2 sentences of sharp analysis: "
+                f"who impressed, one thing to watch next. "
+                f"Do NOT change any times or positions. Use *bold* for names."
+            )
+            reply = ask_claude(prompt, history, mem, user_data)
+            update_user_history(sessions, user_id, "user", text)
+            update_user_history(sessions, user_id, "assistant", reply)
+            save_sessions(sessions)
+            for part in split_message(reply):
+                try:
+                    await update.message.reply_text(
+                        part, parse_mode=constants.ParseMode.MARKDOWN)
+                except Exception:
+                    await update.message.reply_text(
+                        re.sub(r"[*_`]", "", part))
+            return
+        # No real data from OpenF1 — tell user honestly, no Claude involved
+        current = fetch_current_race()
+        race    = current.get("raceName","") if current else "current race"
+        await update.message.reply_text(
+            f"I don't have the timing data for that session yet — "
+            f"OpenF1 usually updates within 10-15 minutes of a session ending. "
+            f"Try again shortly 🏎")
+        return
 
     # ── 5. Off-topic guardrail ────────────────────────────
     if is_off_topic(text):
@@ -7053,6 +7282,9 @@ def main():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
+MEMORY_ENRICHMENT_FILE = Path(__file__).parent / "boxboxai_enrichment.json"
+
+
 def load_enrichment_state() -> dict:
     if MEMORY_ENRICHMENT_FILE.exists():
         try:
@@ -7076,7 +7308,6 @@ async def auto_memory_enrichment_loop(mem_ref: list, app=None):
     Runs every 6 hours. Waits 48h after race for FastF1 data.
     """
     import asyncio as _asyncio
-    MEMORY_ENRICHMENT_FILE = Path(__file__).parent / "boxboxai_enrichment.json"
 
     while True:
         try:
