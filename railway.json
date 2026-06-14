@@ -1,5 +1,6 @@
 {
+  "$schema": "https://railway.app/railway.schema.json",
   "deploy": {
-    "startCommand": "python boxboxai_bot.py"
+    "startCommand": "python3 boxboxai_bot.py"
   }
 }
