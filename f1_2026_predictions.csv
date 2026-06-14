@@ -1,0 +1,23 @@
+Abbreviation,FullName,TeamName,race_points,avg_finish,avg_grid,recent_form_pts,sprint_points,sprint_avg_finish,consistency_score,grid_penalty_total,wet_race_count,WinProbability,PredictionScore,ModelUsed
+RUS,George Russell,Mercedes,51.0,1.5,1.5,43.0,8.0,1.0,0.5,0,0.0,11.6,0.86,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+ANT,Andrea Kimi Antonelli,Mercedes,47.0,1.5,1.5,43.0,4.0,5.0,0.5,0,0.0,11.4,0.8478851540616247,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+LEC,Charles Leclerc,Ferrari,34.0,3.5,4.0,27.0,7.0,2.0,0.5,0,0.0,9.2,0.6844161678837758,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+HAM,Lewis Hamilton,Ferrari,33.0,3.5,5.0,27.0,6.0,3.0,0.5,0,0.0,9.0,0.6652977128094384,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+BEA,Oliver Bearman,Haas F1 Team,17.0,6.0,11.0,16.0,1.0,8.0,0.5,0,0.0,5.8,0.4284914650238571,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+NOR,Lando Norris,McLaren,15.0,12.5,6.0,10.0,5.0,4.0,0.5,0,0.0,5.5,0.40936802790061544,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+VER,Max Verstappen,Red Bull,8.0,11.0,14.0,8.0,0.0,9.0,0.5,0,0.0,4.7,0.34846781375606867,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+GAS,Pierre Gasly,Alpine F1 Team,9.0,8.0,10.5,9.0,0.0,11.0,0.5,0,0.0,4.6,0.3379648114140982,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+LAW,Liam Lawson,RB F1 Team,8.0,10.0,11.0,6.0,2.0,7.0,0.5,0,0.0,4.5,0.3360591240799371,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+HAD,Isack Hadjar,Red Bull,4.0,14.0,6.0,4.0,0.0,15.0,0.5,0,0.0,3.5,0.25562627255611425,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+LIN,Arvid Lindblad,RB F1 Team,4.0,10.0,12.0,4.0,0.0,22.0,0.5,0,0.0,3.4,0.2508445677744095,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+PIA,Oscar Piastri,McLaren,3.0,20.0,5.0,0.0,3.0,6.0,0.5,0,0.0,3.3,0.2458587665835565,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+OCO,Esteban Ocon,Haas F1 Team,0.0,12.5,13.0,0.0,0.0,10.0,0.5,0,0.0,3.2,0.23580013294299007,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+COL,Franco Colapinto,Alpine F1 Team,1.0,12.0,14.0,1.0,0.0,14.0,0.5,0,0.0,3.1,0.22637439310685356,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+SAI,Carlos Sainz,Williams,2.0,12.0,19.0,2.0,0.0,12.0,0.5,0,0.0,2.9,0.21432161492939292,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+BOR,Gabriel Bortoleto,Audi,2.0,15.0,13.0,2.0,0.0,13.0,0.5,0,0.0,2.8,0.20543536604314405,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+HUL,Nico Hülkenberg,Audi,0.0,16.5,11.0,0.0,0.0,20.0,0.5,0,0.0,2.2,0.16540653683510828,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+ALB,Alexander Albon,Williams,0.0,17.0,18.5,0.0,0.0,16.0,0.5,0,0.0,2.0,0.1453174367460082,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+PER,Sergio Pérez,Cadillac F1 Team,0.0,15.5,19.5,0.0,0.0,19.0,0.5,0,0.0,2.0,0.1453073953073953,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+ALO,Fernando Alonso,Aston Martin,0.0,17.5,17.5,0.0,0.0,17.0,0.5,0,0.0,1.9,0.1398227898227898,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+BOT,Valtteri Bottas,Cadillac F1 Team,0.0,16.0,19.0,0.0,0.0,21.0,0.5,0,0.0,1.8,0.1367933867933868,Pesos manuales → XGBoost disponible en 4 carrera(s) más
+STR,Lance Stroll,Aston Martin,0.0,17.5,21.0,0.0,0.0,18.0,0.5,0,0.0,1.7,0.12440154440154438,Pesos manuales → XGBoost disponible en 4 carrera(s) más

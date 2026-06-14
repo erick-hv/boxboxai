@@ -1,0 +1,398 @@
+{
+  "RUS": {
+    "score_multiplier": 1.4,
+    "last_error": -9.69,
+    "avg_error": -8.19,
+    "error_history": [
+      -17.15,
+      -17.22,
+      -17.06,
+      -2.22,
+      -2.22,
+      -2.21,
+      -2.2,
+      -2.18,
+      -9.77,
+      -9.69
+    ],
+    "races_tracked": 17
+  },
+  "ANT": {
+    "score_multiplier": 1.4,
+    "last_error": -12.4,
+    "avg_error": -18.3,
+    "error_history": [
+      -20.06,
+      -20.12,
+      -19.92,
+      -19.78,
+      -19.77,
+      -19.76,
+      -19.74,
+      -19.72,
+      -11.68,
+      -12.4
+    ],
+    "races_tracked": 17
+  },
+  "LEC": {
+    "score_multiplier": 1.4,
+    "last_error": -4.37,
+    "avg_error": -14.35,
+    "error_history": [
+      -18.12,
+      -18.19,
+      -13.14,
+      -17.04,
+      -17.04,
+      -17.03,
+      -17.01,
+      -16.99,
+      -4.54,
+      -4.37
+    ],
+    "races_tracked": 17
+  },
+  "HAM": {
+    "score_multiplier": 1.4,
+    "last_error": -17.86,
+    "avg_error": -17.68,
+    "error_history": [
+      -15.27,
+      -15.34,
+      -15.23,
+      -19.02,
+      -19.02,
+      -19.01,
+      -18.99,
+      -18.97,
+      -18.05,
+      -17.86
+    ],
+    "races_tracked": 17
+  },
+  "BEA": {
+    "score_multiplier": 1.4,
+    "last_error": -2.65,
+    "avg_error": -7.65,
+    "error_history": [
+      0.03,
+      0.03,
+      -10.91,
+      -12.06,
+      -12.07,
+      -12.07,
+      -12.08,
+      -12.08,
+      -2.65,
+      -2.65
+    ],
+    "races_tracked": 17
+  },
+  "NOR": {
+    "score_multiplier": 1.4,
+    "last_error": -3.51,
+    "avg_error": -7.71,
+    "error_history": [
+      -16.97,
+      -16.83,
+      -19.38,
+      -3.37,
+      -3.38,
+      -3.37,
+      -3.36,
+      -3.35,
+      -3.54,
+      -3.51
+    ],
+    "races_tracked": 17
+  },
+  "GAS": {
+    "score_multiplier": 1.4,
+    "last_error": -15.34,
+    "avg_error": -12.92,
+    "error_history": [
+      -14.54,
+      -14.55,
+      -0.7,
+      -13.74,
+      -13.75,
+      -13.74,
+      -13.74,
+      -13.74,
+      -15.38,
+      -15.34
+    ],
+    "races_tracked": 17
+  },
+  "LAW": {
+    "score_multiplier": 1.4,
+    "last_error": -17.39,
+    "avg_error": -13.61,
+    "error_history": [
+      -12.57,
+      -12.6,
+      -2.04,
+      -14.81,
+      -14.82,
+      -14.82,
+      -14.81,
+      -14.81,
+      -17.42,
+      -17.39
+    ],
+    "races_tracked": 17
+  },
+  "VER": {
+    "score_multiplier": 1.4,
+    "last_error": -0.32,
+    "avg_error": -13.58,
+    "error_history": [
+      -13.73,
+      -13.67,
+      -16.47,
+      -18.28,
+      -18.28,
+      -18.27,
+      -18.26,
+      -18.25,
+      -0.31,
+      -0.32
+    ],
+    "races_tracked": 17
+  },
+  "HAD": {
+    "score_multiplier": 1.4,
+    "last_error": -19.55,
+    "avg_error": -14.42,
+    "error_history": [
+      -9.82,
+      -9.88,
+      -0.23,
+      -17.02,
+      -17.03,
+      -17.03,
+      -17.04,
+      -17.04,
+      -19.57,
+      -19.55
+    ],
+    "races_tracked": 17
+  },
+  "LIN": {
+    "score_multiplier": 1.4,
+    "last_error": -16.68,
+    "avg_error": -5.95,
+    "error_history": [
+      -8.02,
+      -8.05,
+      -8.06,
+      -0.38,
+      -0.39,
+      -0.4,
+      -0.4,
+      -0.41,
+      -16.69,
+      -16.68
+    ],
+    "races_tracked": 17
+  },
+  "PIA": {
+    "score_multiplier": 1.4,
+    "last_error": -18.4,
+    "avg_error": -14.84,
+    "error_history": [
+      -20.01,
+      -19.88,
+      -18.58,
+      -10.62,
+      -10.62,
+      -10.62,
+      -10.61,
+      -10.61,
+      -18.42,
+      -18.4
+    ],
+    "races_tracked": 17
+  },
+  "SAI": {
+    "score_multiplier": 1.4,
+    "last_error": -6.61,
+    "avg_error": -10.6,
+    "error_history": [
+      -7.06,
+      -7.09,
+      -13.02,
+      -13.1,
+      -13.11,
+      -13.11,
+      -13.12,
+      -13.12,
+      -6.62,
+      -6.61
+    ],
+    "races_tracked": 17
+  },
+  "COL": {
+    "score_multiplier": 1.4,
+    "last_error": -8.46,
+    "avg_error": -12.35,
+    "error_history": [
+      -6.26,
+      -6.27,
+      -14.9,
+      -15.83,
+      -15.83,
+      -15.83,
+      -15.83,
+      -15.83,
+      -8.49,
+      -8.46
+    ],
+    "races_tracked": 17
+  },
+  "OCO": {
+    "score_multiplier": 1.4,
+    "last_error": -13.56,
+    "avg_error": -10.24,
+    "error_history": [
+      -11.99,
+      -11.99,
+      -9.18,
+      -8.4,
+      -8.41,
+      -8.41,
+      -8.42,
+      -8.43,
+      -13.59,
+      -13.56
+    ],
+    "races_tracked": 17
+  },
+  "HUL": {
+    "score_multiplier": 1.4,
+    "last_error": -9.79,
+    "avg_error": -9.79,
+    "error_history": [
+      -11.14,
+      -11.15,
+      -3.49,
+      -10.49,
+      -10.5,
+      -10.51,
+      -10.52,
+      -10.53,
+      -9.8,
+      -9.79
+    ],
+    "races_tracked": 17
+  },
+  "BOR": {
+    "score_multiplier": 1.4,
+    "last_error": -11.7,
+    "avg_error": -10.01,
+    "error_history": [
+      -9.49,
+      -9.4,
+      -10.58,
+      -9.53,
+      -9.43,
+      -9.41,
+      -9.42,
+      -9.43,
+      -11.71,
+      -11.7
+    ],
+    "races_tracked": 17
+  },
+  "PER": {
+    "score_multiplier": 1.4,
+    "last_error": -7.9,
+    "avg_error": -6.19,
+    "error_history": [
+      -5.51,
+      -5.52,
+      -6.58,
+      -5.67,
+      -5.68,
+      -5.69,
+      -5.7,
+      -5.72,
+      -7.9,
+      -7.9
+    ],
+    "races_tracked": 17
+  },
+  "BOT": {
+    "score_multiplier": 1.4,
+    "last_error": -2.0,
+    "avg_error": -5.04,
+    "error_history": [
+      -3.63,
+      -3.66,
+      -4.83,
+      -6.83,
+      -6.84,
+      -6.86,
+      -6.87,
+      -6.89,
+      -1.99,
+      -2.0
+    ],
+    "races_tracked": 17
+  },
+  "ALB": {
+    "score_multiplier": 1.4,
+    "last_error": -14.92,
+    "avg_error": -5.89,
+    "error_history": [
+      -3.0,
+      -3.0,
+      -12.94,
+      -2.0,
+      -2.0,
+      -2.0,
+      -2.0,
+      -2.0,
+      -15.0,
+      -14.92
+    ],
+    "races_tracked": 17
+  },
+  "ALO": {
+    "score_multiplier": 1.4,
+    "last_error": -12.91,
+    "avg_error": -5.75,
+    "error_history": [
+      -4.72,
+      -4.67,
+      -7.75,
+      -2.88,
+      -2.9,
+      -2.91,
+      -2.93,
+      -2.94,
+      -12.91,
+      -12.91
+    ],
+    "races_tracked": 17
+  },
+  "STR": {
+    "score_multiplier": 1.4,
+    "last_error": -4.98,
+    "avg_error": -5.96,
+    "error_history": [
+      -1.98,
+      -1.94,
+      -6.0,
+      -7.94,
+      -7.91,
+      -7.93,
+      -7.95,
+      -7.96,
+      -4.97,
+      -4.98
+    ],
+    "races_tracked": 17
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "steps": {
+    "playwright": {
+      "inputs": [{ "step": "install" }],
+      "commands": ["python -m playwright install --with-deps chromium"]
+    }
+  },
+  "deploy": {
+    "inputs": [{ "step": "playwright" }],
+    "startCommand": "python boxboxai_bot.py"
+  }
+}
