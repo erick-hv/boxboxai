@@ -1347,28 +1347,7 @@ def _extract_article_text(url: str, max_chars: int = 800) -> str:
         r = requests.get(url, timeout=10, headers=headers)
         if r.status_code != 200:
             return ""
-        text = r.text
-        # Strip scripts/styles
-        for tag in ["script","style","nav","header","footer","aside","figure"]:
-            text = re.sub(rf"<{tag}[^>]*>.*?</{tag}>", "", text,
-                          flags=re.DOTALL|re.IGNORECASE)
-        # Try article body selectors
-        for pattern in [
-            r'<article[^>]*>(.*?)</article>',
-            r'<div[^>]*class="[^"]*(?:article-body|story-body|'
-            r'content-body|article__body|post-content)[^"]*"[^>]*>(.*?)</div>',
-            r'<main[^>]*>(.*?)</main>',
-        ]:
-            m = re.search(pattern, text, re.DOTALL|re.IGNORECASE)
-            if m:
-                text = m.group(1)
-                break
-        # Strip HTML tags
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        # Look for stewards-specific content
-        # Find the most relevant paragraph
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        raw_html = r.text
         stewards_keywords = [
             "steward", "penalty", "infringement", "decision", "article",
             "regulation", "grid slot", "restart", "out of position",
@@ -1376,13 +1355,56 @@ def _extract_article_text(url: str, max_chars: int = 800) -> str:
             "collision", "track limits", "unsafe", "found that",
             "video evidence", "the standard penalty"
         ]
-        relevant = []
-        for sent in sentences:
-            if any(kw in sent.lower() for kw in stewards_keywords):
-                relevant.append(sent.strip())
-        if relevant:
-            return " ".join(relevant)[:max_chars]
-        return text[:max_chars]
+
+        def _filter_sentences(body: str) -> str:
+            body = re.sub(r"\s+", " ", body).strip()
+            sentences = re.split(r'(?<=[.!?])\s+', body)
+            relevant = [s.strip() for s in sentences
+                        if any(kw in s.lower() for kw in stewards_keywords)]
+            return (" ".join(relevant) if relevant else body)[:max_chars]
+
+        # 1. JSON-LD extraction (fastest and cleanest — most news sites embed
+        #    NewsArticle schema with a pre-stripped "articleBody" field)
+        for ld_match in re.finditer(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            raw_html, re.DOTALL | re.IGNORECASE
+        ):
+            try:
+                data = json.loads(ld_match.group(1))
+            except Exception:
+                continue
+            # handle both single objects and arrays
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                body = item.get("articleBody", "") if isinstance(item, dict) else ""
+                if isinstance(body, str) and len(body) > 80:
+                    return _filter_sentences(body)
+
+        # 2. Regex HTML scraping fallback
+        text = raw_html
+        # Strip scripts/styles
+        for tag in ["script","style","nav","header","footer","aside","figure"]:
+            text = re.sub(rf"<{tag}[^>]*>.*?</{tag}>", "", text,
+                          flags=re.DOTALL|re.IGNORECASE)
+        # Try article body selectors — pick largest <article> match to avoid
+        # grabbing a small teaser widget when multiple <article> tags exist
+        article_matches = re.findall(
+            r'<article[^>]*>(.*?)</article>', text, re.DOTALL | re.IGNORECASE)
+        if article_matches:
+            text = max(article_matches, key=len)
+        else:
+            for pattern in [
+                r'<div[^>]*class="[^"]*(?:article-body|story-body|'
+                r'content-body|article__body|post-content)[^"]*"[^>]*>(.*?)</div>',
+                r'<main[^>]*>(.*?)</main>',
+            ]:
+                m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+                if m:
+                    text = m.group(1)
+                    break
+        # Strip HTML tags
+        text = re.sub(r"<[^>]+>", " ", text)
+        return _filter_sentences(text)
     except Exception as e:
         log.debug(f"Article fetch failed {url}: {e}")
         return ""
