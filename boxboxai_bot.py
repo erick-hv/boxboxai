@@ -1846,7 +1846,7 @@ def _is_live_session_question(text: str) -> bool:
         "q1", "q2", "q3",
         "sprint qualifying", "sprint race", "sprint",
         "pole position", "pole",
-        "who got pole", "who won",
+        "who got pole",
         "top 10", "top ten", "classification",
         "session results", "session times",
         "fastest lap", "vuelta rápida", "vuelta rapida",
@@ -3523,14 +3523,46 @@ def _openf1_session_summary(round_num: int,
         if not sessions_data:
             return summary
 
-        race_sessions = sorted(
-            [s for s in sessions_data
-             if s.get("session_name") == session_type],
-            key=lambda x: x.get("date_start","")
-        )
-        if round_num > len(race_sessions):
+        race_sessions = [s for s in sessions_data
+                          if s.get("session_name") == session_type]
+        if not race_sessions:
             return summary
-        sk = race_sessions[round_num-1].get("session_key")
+
+        # Match by date proximity to this round's actual race weekend,
+        # not by list-index (race_sessions[round_num-1] assumes OpenF1's
+        # session list has no gaps and starts at round 1 — fragile,
+        # and was the same bug pattern fixed in
+        # _fetch_session_results_openf1).
+        session = None
+        try:
+            race_info = safe_get(f"{JOLPICA}/{SEASON}/{round_num}.json")
+            races = race_info.get("MRData",{}).get("RaceTable",{}).get("Races",[]) \
+                if race_info else []
+            race_date_str = races[0].get("date","") if races else ""
+            if race_date_str:
+                race_date = datetime.strptime(race_date_str, "%Y-%m-%d")
+                def _date_diff(s):
+                    try:
+                        sd = datetime.fromisoformat(
+                            s.get("date_start","").replace("Z","+00:00"))
+                        return abs((sd.replace(tzinfo=None) - race_date).days)
+                    except Exception:
+                        return 999
+                candidates = [s for s in race_sessions if _date_diff(s) <= 4]
+                if candidates:
+                    session = min(candidates, key=_date_diff)
+        except Exception:
+            pass
+
+        if session is None:
+            # Fallback to old index-based matching if date lookup failed
+            race_sessions_sorted = sorted(
+                race_sessions, key=lambda x: x.get("date_start",""))
+            if round_num > len(race_sessions_sorted):
+                return summary
+            session = race_sessions_sorted[round_num-1]
+
+        sk = session.get("session_key")
         if not sk:
             return summary
 
@@ -4764,6 +4796,9 @@ def _is_next_race_query(text: str) -> bool:
         "próxima carrera", "proxima carrera", "próximo gp", "proximo gp",
         "este fin de semana", "esta semana", "mañana", "el próximo",
         "el proximo", "carrera de mañana", "carrera de hoy",
+        # Bare "today"/"hoy" — helps connect "who won today" to the
+        # current race weekend's actual result in RACE RESULTS context
+        "today", "hoy",
     ]
     return any(kw in t for kw in triggers)
 
@@ -4824,6 +4859,7 @@ def _is_weather_query(text: str) -> bool:
         "wet", "dry", "climate", "conditions", "wind", "humidity",
         "clima", "lluvia", "pronóstico", "temperatura", "calor", "frío",
         "mojado", "seco", "viento", "húmedo", "condiciones",
+        "qué tiempo", "que tiempo", "tiempo hace", "tiempo en",
         "going to rain", "will it rain", "chance of rain",
         "va a llover", "va a hacer", "qué clima",
     ]
@@ -5030,6 +5066,14 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     deep_dive_code = _is_driver_deep_dive(user_msg)
     if deep_dive_code:
         driver_deep_ctx = build_driver_profile(deep_dive_code, mem)
+    else:
+        # "compare X and Y" / "X vs Y" / "gap between X and Y" —
+        # resolve_driver_code only returns ONE code, but comparison
+        # questions need profiles for BOTH drivers named.
+        compare_codes = _resolve_multiple_driver_codes(user_msg)
+        if len(compare_codes) >= 2:
+            profiles = [build_driver_profile(c, mem) for c in compare_codes[:2]]
+            driver_deep_ctx = "\n\n".join(profiles)
 
     # FEATURE 4 — Race replay intelligence
     race_replay_ctx = get_race_replay_context(user_msg, mem)
@@ -6133,14 +6177,17 @@ async def check_and_send_session_debriefs(app, sessions: dict, mem: dict):
 
 DRIVER_CODE_MAP = {
     # Mercedes
-    "antonelli": "ANT", "kimi": "ANT", "ant": "ANT", "el niño": "ANT",
+    # "ant" removed - common English word (collides with "an ant")
+    "antonelli": "ANT", "kimi": "ANT", "el niño": "ANT",
     "russell": "RUS", "george": "RUS", "rus": "RUS", "mr saturday": "RUS",
     # Ferrari
     "leclerc": "LEC", "charles": "LEC", "lec": "LEC", "sharl": "LEC",
     "hamilton": "HAM", "lewis": "HAM", "ham": "HAM", "sir lewis": "HAM",
     # Red Bull
-    "verstappen": "VER", "max": "VER", "ver": "VER", "super max": "VER",
-    "hadjar": "HAD", "isack": "HAD", "had": "HAD",
+    # "max" and "ver" removed - "max" is a common English word
+    "verstappen": "VER", "super max": "VER", "ver": "VER",
+    # "had" removed - common English word (collides with "I had...")
+    "hadjar": "HAD", "isack": "HAD",
     # McLaren
     "norris": "NOR", "lando": "NOR", "nor": "NOR",
     "piastri": "PIA", "oscar": "PIA", "pia": "PIA",
@@ -6148,13 +6195,15 @@ DRIVER_CODE_MAP = {
     "alonso": "ALO", "fernando": "ALO", "alo": "ALO", "nano": "ALO",
     "stroll": "STR", "lance": "STR", "str": "STR",
     # Alpine
-    "gasly": "GAS", "pierre": "GAS", "gas": "GAS",
+    # "gas" removed - common English word (collides with "fill up gas")
+    "gasly": "GAS", "pierre": "GAS",
     "colapinto": "COL", "franco": "COL", "col": "COL", "el pibe": "COL",
     # Williams
     "albon": "ALB", "alex": "ALB", "alb": "ALB",
     "sainz": "SAI", "carlos": "SAI", "sai": "SAI", "carlitos": "SAI",
     # RB
-    "lawson": "LAW", "liam": "LAW", "law": "LAW",
+    # "law" removed - common English word (collides with "the law says")
+    "lawson": "LAW", "liam": "LAW",
     "lindblad": "LIN", "arvid": "LIN", "lin": "LIN",
     # Haas
     "bearman": "BEA", "oliver": "BEA", "bea": "BEA",
@@ -6163,8 +6212,10 @@ DRIVER_CODE_MAP = {
     "hulkenberg": "HUL", "nico": "HUL", "hul": "HUL", "el hulk": "HUL",
     "bortoleto": "BOR", "gabriel": "BOR", "bor": "BOR",
     # Cadillac
-    "perez": "PER", "checo": "PER", "per": "PER", "sergio": "PER",
-    "bottas": "BOT", "valtteri": "BOT", "bot": "BOT",
+    # "per" removed - common English word (collides with "per capita", "stopper")
+    "perez": "PER", "checo": "PER", "sergio": "PER",
+    # "bot" removed - common English word (collides with "this is a bot")
+    "bottas": "BOT", "valtteri": "BOT",
 }
 
 DRIVER_FULL_NAMES = {
@@ -6196,14 +6247,55 @@ DRIVER_TEAMS = {
 }
 
 
+def _resolve_multiple_driver_codes(text: str) -> list[str]:
+    """
+    Resolves ALL distinct driver codes mentioned in a query —
+    used for "compare X and Y", "X vs Y", "gap between X and Y".
+
+    resolve_driver_code() only returns one match; this finds every
+    driver name/nickname present (longest keys first, so full names
+    match before short codes), de-duplicated, in order of appearance.
+    """
+    t = text.lower().strip()
+    found: list[tuple[int, str]] = []  # (position, code)
+    seen_codes: set[str] = set()
+    for key in sorted(DRIVER_CODE_MAP.keys(), key=len, reverse=True):
+        code = DRIVER_CODE_MAP[key]
+        if code in seen_codes:
+            continue
+        m = re.search(rf"\b{re.escape(key)}\b", t)
+        if m:
+            found.append((m.start(), code))
+            seen_codes.add(code)
+    found.sort(key=lambda x: x[0])
+    return [code for _, code in found]
+
+
 def resolve_driver_code(text: str) -> str | None:
-    """Resolves any driver name/nickname to a 3-letter code."""
+    """
+    Resolves any driver name/nickname to a 3-letter code.
+
+    Uses word-boundary matching — DRIVER_CODE_MAP contains short
+    3-letter codes ("ver", "ham", "per", "str", "nor", "had", "gas",
+    "law", "bot", "ant", "rus", etc.) which are also substrings of
+    common English words: "driver" contains "ver", "champion"
+    contains "ham", "stopper" contains "per", "strategy" contains
+    "str", "had" is a common word itself. Raw substring matching
+    caused "championship standings" to resolve to HAM, "is Barcelona
+    a 1 or 2 stopper" to resolve to PER, etc. — silently injecting
+    irrelevant driver-specific context into unrelated queries.
+
+    Longer keys (full names, nicknames) are checked first so
+    "max verstappen" resolves via "verstappen" before any short
+    code could match.
+    """
     t = text.lower().strip()
     if t in DRIVER_CODE_MAP:
         return DRIVER_CODE_MAP[t]
-    for key, code in DRIVER_CODE_MAP.items():
-        if key in t:
-            return code
+    # Check longest keys first (full names/nicknames before 3-letter codes)
+    for key in sorted(DRIVER_CODE_MAP.keys(), key=len, reverse=True):
+        if re.search(rf"\b{re.escape(key)}\b", t):
+            return DRIVER_CODE_MAP[key]
     return None
 
 
@@ -7849,7 +7941,21 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
             and (episode.get("pitstops", {}).get("tyre_strategies")
                  or episode.get("sector_bests"))
         )
-        if has_real_telemetry or state.get(state_key):
+
+        # ── Retry cap ───────────────────────────────────────────
+        # FastF1's livetiming mirror and OpenF1 don't retain full
+        # telemetry (tyre stints, sector times) indefinitely for
+        # older sessions — some races may simply never get "real"
+        # data. Without a cap, these retry every 6h forever, and
+        # since Railway's filesystem resets on redeploy, every
+        # redeploy re-triggers the same "partial (will retry)"
+        # alert for the same races. After 14 days, give up — the
+        # episode already has winner/podium/points from Jolpica,
+        # which is the data that actually matters for answering
+        # questions. Mark as done regardless of telemetry richness.
+        give_up = days_since > 14
+
+        if has_real_telemetry or state.get(state_key) or (give_up and episode.get("telemetry_source")):
             if not state.get(state_key):
                 state[state_key] = datetime.now().isoformat()
                 save_enrichment_state(state)
@@ -7909,25 +8015,27 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
         save_f1_memory(mem)
         mem_ref[0] = mem
 
-        # Only mark as fully enriched if we actually got real telemetry
+        # Only mark as fully enriched if we actually got real telemetry,
+        # OR we've given up after 14 days (data won't materialize)
         source = episode.get("telemetry_source", "jolpica")
         got_real_data = bool(
             episode.get("pitstops", {}).get("tyre_strategies")
             or episode.get("sector_bests"))
-        if got_real_data:
+        if got_real_data or give_up:
             state[state_key] = datetime.now().isoformat()
             save_enrichment_state(state)
 
         log.info(
-            f"Auto-enrichment: {'✅' if got_real_data else '⏳'} "
+            f"Auto-enrichment: {'✅' if got_real_data else ('🛑' if give_up else '⏳')} "
             f"R{rnd} {name} processed (source: {source}, "
-            f"real_data: {got_real_data})")
+            f"real_data: {got_real_data}, give_up: {give_up})")
 
         enriched_results.append({
             "round": rnd, "name": name, "source": source,
             "fastest_lap": episode.get("fastest_lap","?"),
             "fastest_lap_time": episode.get("fastest_lap_time",""),
             "complete": got_real_data,
+            "gave_up": give_up and not got_real_data,
         })
 
         # Small delay between races to avoid rate limiting
@@ -7937,7 +8045,12 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
     if enriched_results and app:
         lines = [f"🧠 *Memory enrichment run* — {len(enriched_results)} race(s) processed\n"]
         for r in enriched_results:
-            status = "✅ full telemetry" if r["complete"] else "⏳ partial (will retry)"
+            if r["complete"]:
+                status = "✅ full telemetry"
+            elif r.get("gave_up"):
+                status = "🛑 no detailed telemetry available (kept results only)"
+            else:
+                status = "⏳ partial (will retry)"
             fl = f"{r['fastest_lap']} {r['fastest_lap_time']}".strip()
             lines.append(
                 f"• R{r['round']} {r['name']}: {status}"
