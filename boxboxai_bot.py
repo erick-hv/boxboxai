@@ -1322,6 +1322,16 @@ FIA_DRIVER_NAMES = {
     "bot": "Bottas",    "valtteri": "Bottas", "bottas": "Bottas",
 }
 
+# FIA stewards documents identify drivers by CAR NUMBER (e.g. "Car 16"),
+# never by surname, so matching a named driver in a doc title requires
+# their 2026 car number. Keyed by 3-letter driver code (cf. FIA_DRIVER_NAMES).
+FIA_DRIVER_CAR_NUMBERS = {
+    "HAM": 44, "RUS": 63, "NOR": 1,  "VER": 3,  "PIA": 81, "HAD": 6,
+    "GAS": 10, "COL": 43, "LAW": 30, "LIN": 41, "BOR": 5,  "SAI": 55,
+    "OCO": 31, "PER": 11, "LEC": 16, "ANT": 12, "BEA": 87, "ALB": 23,
+    "ALO": 14, "HUL": 27, "BOT": 77, "STR": 18,
+}
+
 
 def _extract_article_text(url: str, max_chars: int = 800) -> str:
     """Fetches article and extracts clean body text."""
@@ -1524,32 +1534,64 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                 page.goto(event_href, wait_until="domcontentloaded")
 
                 # Build search terms for the doc link text based on
-                # incident type and driver
-                doc_keywords = ["infringement", "decision", "penalty"]
+                # incident type and driver. Real FIA doc titles are varied
+                # ("leaving the track without justifiable reason", "failing
+                # to slow for yellow flags", "driving erratically"...), so
+                # the keyword set is intentionally broad.
+                doc_keywords = [
+                    "infringement", "decision", "penalty", "investigat",
+                    "summon", "noted", "track", "yellow", "flag",
+                    "impeding", "erratically", "unsafe", "collision",
+                    "leaving the track", "failing to", "causing",
+                    "speeding", "deleted", "reprimand", "offence",
+                ]
                 if "disqualif" in incident_type.lower():
-                    doc_keywords = ["disqualif", "infringement"]
+                    doc_keywords = ["disqualif"] + doc_keywords
                 elif "track limit" in incident_type.lower():
-                    doc_keywords = ["track limits", "infringement"]
+                    doc_keywords = ["track limits"] + doc_keywords
+
+                # FIA docs name the driver by car number, not surname.
+                # Resolve the named driver -> 2026 car number so we can
+                # match e.g. "car 16" in the doc title.
+                car_token = ""
+                if driver_name:
+                    for code, num in FIA_DRIVER_CAR_NUMBERS.items():
+                        if FIA_DRIVER_NAMES.get(code.lower()) == driver_name:
+                            car_token = f"car {num}"
+                            break
 
                 # Find all document links on the page
                 all_links = page.locator("a[href*='decision-document']")
                 count = min(all_links.count(), 60)  # cap for safety
 
-                candidate_url  = ""
+                candidate_url  = ""   # best match so far
                 candidate_text = ""
+                fallback_url   = ""   # first stewards-keyword doc (no car)
+                fallback_text  = ""
                 for i in range(count):
                     link = all_links.nth(i)
                     text = (link.inner_text() or "").lower()
-                    if not any(kw in text for kw in doc_keywords):
+                    has_kw  = any(kw in text for kw in doc_keywords)
+                    has_car = bool(car_token) and car_token in text
+                    if not (has_kw or has_car):
                         continue
-                    # Prefer doc mentioning the driver's car/name
-                    if driver_name and driver_name.lower() in text:
+                    # Best: doc names the driver's car AND is a stewards doc
+                    if has_car and has_kw:
                         candidate_url  = link.get_attribute("href")
                         candidate_text = text
                         break
-                    if not candidate_url:
+                    # Next best: names the car (even without a keyword hit)
+                    if has_car and not candidate_url:
                         candidate_url  = link.get_attribute("href")
                         candidate_text = text
+                    # Fallback: a stewards-keyword doc with no driver named
+                    if has_kw and not fallback_url:
+                        fallback_url  = link.get_attribute("href")
+                        fallback_text = text
+
+                if not candidate_url:
+                    candidate_url  = fallback_url
+                    candidate_text = fallback_text
 
                 if not candidate_url:
                     log.info(f"FIA official: no infringement doc found "
@@ -1625,11 +1667,13 @@ def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
         # Use most recent race from name
         race_context = race_name + " 2026 F1"
 
-    # Detect driver
+    # Detect driver. Match on word boundaries and try the longest keys
+    # first, so short 3-letter codes ("per", "gas", "had", "bot", "str")
+    # don't false-match inside unrelated words (e.g. "per" in "stopper").
     driver_name = ""
-    for keyword, name in FIA_DRIVER_NAMES.items():
-        if keyword in q_lower:
-            driver_name = name
+    for keyword in sorted(FIA_DRIVER_NAMES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(keyword)}\b", q_lower):
+            driver_name = FIA_DRIVER_NAMES[keyword]
             break
 
     # Detect incident type for search query
