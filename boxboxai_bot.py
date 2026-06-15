@@ -3986,6 +3986,11 @@ def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
             d = r.get("Driver",{})
             return d.get("code", d.get("familyName","?")[:3].upper())
 
+        def get_team(r):
+            return r.get("Constructor",{}).get("name","")
+
+        teams = {get_driver(r): get_team(r) for r in results}
+
         p1 = get_driver(results[0]) if len(results)>0 else "?"
         p2 = get_driver(results[1]) if len(results)>1 else "?"
         p3 = get_driver(results[2]) if len(results)>2 else "?"
@@ -4038,6 +4043,7 @@ def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
             "fastest_lap_time":   fl_t,
             "dnfs":               dnfs,
             "full_classification":full_classification,
+            "teams":              teams,
             "champ_after":        champ_str,
             "ingested_at":        datetime.now().isoformat(),
         }
@@ -4814,7 +4820,7 @@ RULES:
 - STRATEGY/TYRE QUESTIONS WITHOUT REAL DATA: CIRCUIT GUIDE info (degradation, overtaking difficulty, "usually 2-stop") is general historical knowledge — fine to share AS general knowledge. But NEVER invent specific lap numbers for pit stops, per-driver stint plans (e.g. "Stint 1: Laps 1-20"), fake statistics ("Barcelona averages 0.8 safety cars"), or confidence percentages ("90% of the field does 2 stops") when you don't have this year's tyre allocation or practice data. One paragraph of general circuit context is enough — do not pad it into a multi-driver strategy report.
 - FIA STEWARDS DOCS / STEWARDS DECISION SOURCES = ground truth for incidents and penalties. If present, cite "FIA stewards found..." with the specific finding.
 - DNF QUESTIONS WITH NO FIA STEWARDS DOC: stewards documents cover on-track incidents and regulation violations — NOT mechanical failures. If a driver DNF'd and no FIA stewards document or race control message mentions them, that absence is itself informative: it suggests the retirement was mechanical or self-inflicted (no third party / no investigation needed), not a gap in your knowledge. Say something like "no stewards investigation was opened for [driver]'s retirement, which points to a mechanical issue rather than an on-track incident" — don't say "I don't have that information" as if it's missing data.
-- RACE CONTROL FACT = penalties/incidents from the live FIA timing feed — this can show penalties (e.g. 5s pit lane penalties) that DON'T appear in formal stewards' decision documents, since minor penalties served during the race are often only logged in race control, not issued as a separate document. If RACE CONTROL FACT shows nothing for a driver AND no stewards doc exists either, that's a real "no penalty" — state it plainly.
+- RACE CONTROL FACT = messages from the live FIA timing feed about incidents, investigations, and flags during the race. IMPORTANT: these messages never literally say "PENALTY" — instead look for: "TIME DELETED" (lap time invalidated, usually track limits), "BLACK AND WHITE FLAG" (warning), "INCIDENT INVOLVING CAR X NOTED/WILL BE INVESTIGATED", and crucially "REVIEWED — NO FURTHER INVESTIGATION" (stewards looked into it and took NO action — this means NO penalty, the matter was CLEARED). Read the full sequence for a driver: an "incident noted" message followed by "no further investigation" means stewards investigated and found nothing wrong — report this as "investigated but cleared, no penalty issued", not as evidence of a penalty. If RACE CONTROL FACT shows nothing for a driver AND no stewards doc exists either, that's a real "no penalty/no incident" — state it plainly.
 - [NEWS COVERAGE] labeled context = background only, not a timing sheet — don't extract positions/times from it, use it for storylines and reactions only.
 - If a query mentions a race/session not yet in your RACE RESULTS or SEASON FACTS, don't substitute a different race — say you don't have it yet.{f"{chr(10)}{chr(10)}CONTEXT:{chr(10)}{ctx_str}" if ctx_str else ""}
 
@@ -6038,6 +6044,7 @@ def _fetch_session_results_openf1(round_num: int,
             dnfs  = result.get("dnfs", [])
             fl    = result.get("fastest_lap", "")
             fl_t  = result.get("fastest_lap_time", "")
+            teams = result.get("teams", {})
 
             lines = [f"{session_name} RESULTS — {SEASON} (FINISHING ORDER):"]
             for item in fc[:10]:
@@ -6045,7 +6052,8 @@ def _fetch_session_results_openf1(round_num: int,
                 if ":" not in item:
                     continue
                 pos, code = item.split(":", 1)
-                lines.append(f"{pos}: {code}")
+                team = teams.get(code, "")
+                lines.append(f"{pos}: {code}" + (f" ({team})" if team else ""))
             if dnfs:
                 lines.append("DNFs: " + ", ".join(dnfs))
             if fl:
