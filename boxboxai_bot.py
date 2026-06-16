@@ -1809,8 +1809,8 @@ def _needs_fia_docs(query: str) -> bool:
         return False
 
     triggers = [
-        "why did", "why was", "why were", "what caused", "how did",
-        "what happened to", "what was the",
+        "why did", "why was", "why were", "what caused",
+        "what happened to",
         "crash", "collision", "incident", "contact",
         "penalt", "penalis", "sanction",
         "disqualified", "dsq", "black flag",
@@ -1910,8 +1910,8 @@ def _is_live_session_question(text: str) -> bool:
         "practice 2", "practice 3",
         "qualifying", "quali", "clasificación", "clasificacion",
         "q1", "q2", "q3",
-        "sprint qualifying", "sprint race", "sprint",
-        "pole position", "pole",
+        "sprint qualifying", "sprint race",
+        "pole position",
         "who got pole",
         "top 10", "top ten", "classification",
         "session results", "session times",
@@ -1920,7 +1920,9 @@ def _is_live_session_question(text: str) -> bool:
         "entreno", "práctica", "practica",
         "qualy", "clasificacion",
     ]
-    return any(kw in t for kw in session_triggers)
+    return (any(kw in t for kw in session_triggers)
+            or bool(re.search(r'\bsprint\b', t))
+            or bool(re.search(r'\bpole\b', t)))
 
 
 
@@ -3258,6 +3260,8 @@ def sanitize_message(text: str) -> str:
     """
     # Strip null bytes and most control chars (keep newlines/tabs)
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    # Strip Unicode invisibles that bypass injection regex (zero-width, direction overrides, BOM)
+    text = re.sub("[​‌‍‭‮⁠﻿]", "", text)
     # Normalize whitespace
     text = re.sub(r"\s+", " ", text).strip()
     # Truncate
@@ -3760,7 +3764,7 @@ def enrich_episode_with_telemetry(episode: dict,
         strategies = []
         for drv, stints in list(telemetry["tyre_stints"].items())[:8]:
             strat = "→".join(
-                f"{s['compound'][:1]}({s['laps']})" for s in stints)
+                f"{(s.get('compound') or '')[:1]}({s['laps']})" for s in stints)
             strategies.append(f"{drv}:{strat}")
         episode.setdefault("pitstops", {})["tyre_strategies"] = \
             " | ".join(strategies[:6])
@@ -3995,7 +3999,7 @@ def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
         p2 = get_driver(results[1]) if len(results)>1 else "?"
         p3 = get_driver(results[2]) if len(results)>2 else "?"
 
-        NON_FINISHER_CODES = {"R", "D", "E", "W", "N", "F"}
+        NON_FINISHER_CODES = {"R", "D", "E", "W", "F"}
         dnfs = [
             f"{get_driver(r)}({r.get('status','')})"
             for r in results
@@ -4021,7 +4025,7 @@ def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
                           .get("DriverStandings",[]))
             if standings:
                 champ_str = " | ".join(
-                    f"{s['Driver']['code']} {s['points']}pts"
+                    f"{s.get('Driver',{}).get('code','?')} {s.get('points','?')}pts"
                     for s in standings[:5])
 
         full_classification = [
@@ -5611,12 +5615,14 @@ def format_prediction(next_race: dict, mem: dict) -> str:
 mem      = {}
 sessions = {}
 
-async def cmd_reingest(update, ctx):
+async def cmd_reingest(update, ctx, mem_ref=None):
+    if not update.effective_user:
+        return
     user_id = str(update.effective_user.id)
     if user_id != BOT_OWNER_ID:
         return
     args = ctx.args
-    if not args or not args[0].isdigit():
+    if not args or not args[0].isdigit() or int(args[0]) < 1:
         await update.message.reply_text("Usage: /reingest <round_number>\nExample: /reingest 7")
         return
     rnd = int(args[0])
@@ -5634,15 +5640,17 @@ async def cmd_reingest(update, ctx):
     if not result:
         await update.message.reply_text(f"⚠️ Cleared state for R{rnd} but Jolpica fetch failed — will retry on next auto-ingest cycle.")
         return
-    mem = load_f1_memory()
-    episodes = mem.get("episodic", [])
+    mem_local = load_f1_memory()
+    episodes = mem_local.get("episodic", [])
     existing = next((e for e in episodes if e.get("round") == rnd), None)
     if existing:
         existing.update(result)
     else:
         episodes.append(result)
-    mem["episodic"] = episodes
-    save_f1_memory(mem)
+    mem_local["episodic"] = episodes
+    save_f1_memory(mem_local)
+    if mem_ref is not None:
+        mem_ref[0] = mem_local
     dnfs = ", ".join(result.get("dnfs", [])) or "none"
     fc = " ".join(result.get("full_classification", [])[:5])
     await update.message.reply_text(f"✅ R{rnd} re-ingested from Jolpica:\nWinner: {result.get('winner','?')}\nP2: {result.get('p2','?')} P3: {result.get('p3','?')}\nDNFs: {dnfs}\nTop 5: {fc}\nEnrichment state cleared — telemetry will re-run on next cycle.")
@@ -7903,7 +7911,9 @@ def main():
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
     app.add_handler(CommandHandler("predict",        cmd_predict))
     app.add_handler(CommandHandler("winner",         cmd_winner))
-    app.add_handler(CommandHandler("reingest",       cmd_reingest))
+    async def _reingest_handler(update, ctx):
+        await cmd_reingest(update, ctx, mem_ref)
+    app.add_handler(CommandHandler("reingest",       _reingest_handler))
     app.add_handler(CallbackQueryHandler(handle_timezone_callback,    pattern="^tz:"))
     app.add_handler(CallbackQueryHandler(handle_notification_callback, pattern="^notif:"))
     app.add_handler(MessageHandler(
