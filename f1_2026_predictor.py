@@ -3217,7 +3217,11 @@ def main():
     # Merge MC into scored for CSV
     if mc_df is not None and not mc_df.empty:
         scored = scored.merge(mc_df, on="code", how="left")
+    # Stamp round so the bot can detect stale CSVs before serving predictions
+    scored["round_num"] = int(next_round)
+    scored["race_name"] = str(next_info.get("name", ""))
     save_cols = [c for c in [
+        "round_num", "race_name",
         "code", "FullName", "TeamName", "champ_pts", "avg_finish", "avg_grid",
         "recent_form", "sprint_pts", "fp_avg_delta", "avg_sector_delta",
         "tyre_deg_slope", "lap1_gain", "teammate_delta", "dnf_rate",

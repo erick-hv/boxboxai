@@ -127,3 +127,61 @@ class TestResolveMultipleDriverCodes:
         # No driver names present despite "stopper" containing "per" as substring
         codes = bot._resolve_multiple_driver_codes("is barcelona a 1 or 2 stopper")
         assert codes == []
+
+
+# ── get_predictor_context stale CSV detection ─────────────────────────────────
+
+class TestGetPredictorContextStaleness:
+
+    def _write_csv(self, tmp_path, round_num: int, race_name: str = "Test GP") -> None:
+        csv = tmp_path / "f1_2026_predicciones.csv"
+        csv.write_text(
+            f"round_num,race_name,code,FullName,TeamName,win_mc_pct,podium_mc_pct,avg_mc_pos\n"
+            f"{round_num},{race_name},NOR,Lando Norris,McLaren,35.2,68.4,2.1\n"
+        )
+        return csv
+
+    def test_returns_data_when_round_matches(self, tmp_path, monkeypatch):
+        csv_path = self._write_csv(tmp_path, round_num=8)
+        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv_path)
+        bot._PREDICTOR_CACHE.clear()
+        block, rows = bot.get_predictor_context(expected_round=8)
+        assert rows, "Should return rows when CSV round matches expected"
+        assert block != ""
+
+    def test_returns_empty_when_round_mismatches(self, tmp_path, monkeypatch):
+        # CSV was written for R7 (Spain) but we're asking for R8 (Austria)
+        csv_path = self._write_csv(tmp_path, round_num=7, race_name="Spanish GP")
+        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv_path)
+        bot._PREDICTOR_CACHE.clear()
+        block, rows = bot.get_predictor_context(expected_round=8)
+        assert rows == [], "Stale CSV (R7) must not be returned for R8"
+        assert block == ""
+
+    def test_returns_data_when_no_expected_round(self, tmp_path, monkeypatch):
+        # Callers that don't pass expected_round (e.g. cache-clear call in auto-predictor)
+        # should always get the data regardless of round stamp
+        csv_path = self._write_csv(tmp_path, round_num=7)
+        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv_path)
+        bot._PREDICTOR_CACHE.clear()
+        block, rows = bot.get_predictor_context(expected_round=None)
+        assert rows, "Should return rows when no expected_round is given"
+
+    def test_returns_data_for_old_csv_without_round_num(self, tmp_path, monkeypatch):
+        # Pre-fix CSVs have no round_num column — should degrade gracefully, not error
+        csv = tmp_path / "f1_2026_predicciones.csv"
+        csv.write_text(
+            "code,FullName,TeamName,win_mc_pct,podium_mc_pct,avg_mc_pos\n"
+            "NOR,Lando Norris,McLaren,35.2,68.4,2.1\n"
+        )
+        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv)
+        bot._PREDICTOR_CACHE.clear()
+        block, rows = bot.get_predictor_context(expected_round=8)
+        assert rows, "Old CSV without round_num should still be served (graceful degradation)"
+
+    def test_returns_empty_when_csv_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bot, "PREDICTOR_CSV", tmp_path / "nonexistent.csv")
+        bot._PREDICTOR_CACHE.clear()
+        block, rows = bot.get_predictor_context(expected_round=8)
+        assert rows == []
+        assert block == ""

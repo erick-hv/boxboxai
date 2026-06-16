@@ -5636,6 +5636,11 @@ async def cmd_reingest(update, ctx, mem_ref=None):
     if enrich_key in enrich_state:
         del enrich_state[enrich_key]
         save_enrichment_state(enrich_state)
+    pred_state = load_predictor_state()
+    pred_key = f"predictor_r{rnd}"
+    if pred_key in pred_state:
+        del pred_state[pred_key]
+        save_predictor_state(pred_state)
     result = fetch_race_result(rnd, SEASON)
     if not result:
         await update.message.reply_text(f"⚠️ Cleared state for R{rnd} but Jolpica fetch failed — will retry on next auto-ingest cycle.")
@@ -5653,7 +5658,7 @@ async def cmd_reingest(update, ctx, mem_ref=None):
         mem_ref[0] = mem_local
     dnfs = ", ".join(result.get("dnfs", [])) or "none"
     fc = " ".join(result.get("full_classification", [])[:5])
-    await update.message.reply_text(f"✅ R{rnd} re-ingested from Jolpica:\nWinner: {result.get('winner','?')}\nP2: {result.get('p2','?')} P3: {result.get('p3','?')}\nDNFs: {dnfs}\nTop 5: {fc}\nEnrichment state cleared — telemetry will re-run on next cycle.")
+    await update.message.reply_text(f"✅ R{rnd} re-ingested from Jolpica:\nWinner: {result.get('winner','?')}\nP2: {result.get('p2','?')} P3: {result.get('p3','?')}\nDNFs: {dnfs}\nTop 5: {fc}\nEnrichment state cleared — telemetry will re-run on next cycle.\nPredictor state cleared — auto-predictor will re-run on next 30-min cycle.")
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -7094,17 +7099,29 @@ def format_predictor_for_claude(rows: list) -> str:
     return "\n".join(lines)
 
 
-def get_predictor_context() -> tuple:
+def get_predictor_context(expected_round: int | None = None) -> tuple:
     if not PREDICTOR_CSV.exists():
         return "", []
     try:
         mtime = str(PREDICTOR_CSV.stat().st_mtime)
         if mtime in _PREDICTOR_CACHE:
-            return _PREDICTOR_CACHE[mtime]
-        rows  = read_predictor_csv()
-        block = format_predictor_for_claude(rows)
-        _PREDICTOR_CACHE.clear()
-        _PREDICTOR_CACHE[mtime] = (block, rows)
+            block, rows = _PREDICTOR_CACHE[mtime]
+        else:
+            rows  = read_predictor_csv()
+            block = format_predictor_for_claude(rows)
+            _PREDICTOR_CACHE.clear()
+            _PREDICTOR_CACHE[mtime] = (block, rows)
+        if expected_round is not None and rows:
+            try:
+                csv_round = int(rows[0].get("round_num", ""))
+                if csv_round != expected_round:
+                    log.warning(
+                        f"Stale predictor CSV: CSV is for R{csv_round}, "
+                        f"expected R{expected_round} — returning empty"
+                    )
+                    return "", []
+            except (ValueError, TypeError):
+                pass  # round_num absent in pre-fix CSV; serve as-is
         return block, rows
     except Exception:
         return "", []
@@ -7170,7 +7187,8 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.MARKDOWN)
 
         try:
-            pred_block, pred_rows = get_predictor_context()
+            expected_rnd = int(next_race.get("round", 0)) if next_race else None
+            pred_block, pred_rows = get_predictor_context(expected_rnd)
             has_pred = bool(pred_block and pred_rows)
         except Exception:
             has_pred  = False
@@ -7289,7 +7307,8 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user_data = sessions.get(user_id, {})
 
         try:
-            pred_block, pred_rows = get_predictor_context()
+            expected_rnd = int(next_race.get("round", 0)) if next_race else None
+            pred_block, pred_rows = get_predictor_context(expected_rnd)
             has_pred = bool(pred_block and pred_rows)
         except Exception:
             has_pred  = False
