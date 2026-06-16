@@ -185,3 +185,62 @@ class TestGetPredictorContextStaleness:
         block, rows = bot.get_predictor_context(expected_round=8)
         assert rows == []
         assert block == ""
+
+
+# ── _is_pre_qualifying_csv + format_predictor_for_claude sentinel ─────────────
+
+class TestPreQualifyingSentinel:
+
+    def _make_rows(self, quali_pos_next_values: list) -> list:
+        return [
+            {
+                "code": f"D{i}", "FullName": f"Driver {i}", "TeamName": "Team",
+                "win_mc_pct": "10.0", "podium_mc_pct": "30.0",
+                "avg_mc_pos": "5.0", "mechanical_risk": "0.05",
+                "champ_pts": str(100 - i * 5),
+                "quali_pos_next": str(v),
+                "recent_form": "8.0", "circuit_score": "0.9",
+            }
+            for i, v in enumerate(quali_pos_next_values, 1)
+        ]
+
+    def test_all_sentinel_values_detected_as_pre_qualifying(self):
+        rows = self._make_rows([22.0] * 10)
+        assert bot._is_pre_qualifying_csv(rows) is True
+
+    def test_differentiated_positions_not_pre_qualifying(self):
+        rows = self._make_rows(list(range(1, 11)))
+        assert bot._is_pre_qualifying_csv(rows) is False
+
+    def test_empty_rows_returns_false(self):
+        # Empty rows = no CSV at all; get_predictor_context returns ("", []) before
+        # this helper is called, so the correct return is False (not pre-qualifying)
+        assert bot._is_pre_qualifying_csv([]) is False
+
+    def test_pre_qualifying_block_contains_warning(self):
+        rows = self._make_rows([22.0] * 10)
+        block = bot.format_predictor_for_claude(rows)
+        assert "PRE-QUALIFYING PREVIEW" in block, \
+            "Pre-qualifying block must contain warning header"
+
+    def test_pre_qualifying_block_omits_sentinel_quali_field(self):
+        rows = self._make_rows([22.0] * 10)
+        block = bot.format_predictor_for_claude(rows)
+        assert "Quali=" not in block, \
+            "Sentinel quali_pos_next must not appear in KEY FEATURES"
+
+    def test_post_qualifying_block_includes_quali_field(self):
+        rows = self._make_rows(list(range(1, 11)))
+        block = bot.format_predictor_for_claude(rows)
+        assert "Quali=" in block, \
+            "Real quali positions must appear in KEY FEATURES"
+
+    def test_champ_pts_in_formatted_block(self):
+        rows = self._make_rows(list(range(1, 11)))
+        block = bot.format_predictor_for_claude(rows)
+        assert "Pts" in block, "Championship points column must appear in table header"
+
+    def test_champ_pts_in_pre_qualifying_block(self):
+        rows = self._make_rows([22.0] * 10)
+        block = bot.format_predictor_for_claude(rows)
+        assert "Pts" in block, "Pts column must appear even in pre-qualifying block"

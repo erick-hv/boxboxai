@@ -4812,7 +4812,7 @@ RACE RESULTS:
 RULES:
 - F1 only. Non-F1 questions: redirect warmly, suggest ChatGPT
 - Language: match user (Spanish→Mexican Spanish, English→English)
-- Telegram: *bold* only, no ## headers, no --- dividers, mobile-friendly
+- Telegram: *bold* only, no # or ## markdown headers of any level, no --- dividers, mobile-friendly
 - Style: confident, direct, opinionated, punchy. Never start "Certainly!"
 - Emojis: use them naturally and relevantly — 🏆🥇🥈🥉 for wins/podiums, 🔥💨 for pace/dominance, 🚀 for great starts, 🛞 for strategy/tyres, 🏁🚦 for race start/finish, ⚠️🔧 for incidents/failures, 📊 for stats, team colors (🔴Ferrari 🔵RedBull 🟡McLaren 🟢AstonMartin ⚪Williams) and flags for countries when relevant. Don't overdo it — 1-3 per message, placed where they add punch.
 - NEVER invent lap times, positions, results, or grid order. If you don't have real data, say: "I don't have the timing data for that yet — ask again in a few minutes."
@@ -7062,11 +7062,43 @@ def read_predictor_csv() -> list:
         return []
 
 
+def _is_pre_qualifying_csv(rows: list) -> bool:
+    """True when the CSV was generated without real qualifying data.
+
+    Real qualifying produces differentiated positions (P1, P2, P3…).
+    A pre-qualifying run fills every driver with the same sentinel value
+    >= 20 because no session data exists yet.
+    """
+    if not rows:
+        return False
+    try:
+        quali_vals = []
+        for r in rows[:20]:
+            v = r.get("quali_pos_next", "")
+            if v not in ("", "nan", "NaN", None):
+                quali_vals.append(float(v))
+        if not quali_vals:
+            return True  # no quali data at all
+        return len(set(quali_vals)) == 1 and quali_vals[0] >= 20
+    except (ValueError, TypeError):
+        return False
+
+
 def format_predictor_for_claude(rows: list) -> str:
     if not rows:
         return ""
-    lines = ["=== PREDICTOR OUTPUT (f1_2026_predictor.py v7.0) ===",
-             "Real Monte Carlo simulation 10,000 runs.\n"]
+    pre_quali = _is_pre_qualifying_csv(rows)
+
+    if pre_quali:
+        lines = [
+            "=== PREDICTOR OUTPUT (f1_2026_predictor.py v7.0) ===",
+            "⚠️ PRE-QUALIFYING PREVIEW — qualifying has NOT happened yet.",
+            "Probabilities are Bayesian priors from season form + circuit history ONLY.",
+            "Do NOT cite qualifying positions — they do not exist yet.\n",
+        ]
+    else:
+        lines = ["=== PREDICTOR OUTPUT (f1_2026_predictor.py v7.0) ===",
+                 "Real Monte Carlo simulation 10,000 runs.\n"]
 
     def gf(r, k, dec=1):
         try:    return f"{float(r[k]):.{dec}f}"
@@ -7075,13 +7107,14 @@ def format_predictor_for_claude(rows: list) -> str:
         v = r.get(k, "")
         return v if v not in ("", "nan", "NaN", None) else "-"
 
-    lines.append(f"{'#':<3} {'Driver':<20} {'Team':<16} {'Win%':>6} {'Pod%':>6} {'AvgPos':>7} {'MechRisk':>9}")
-    lines.append("-" * 70)
+    lines.append(f"{'#':<3} {'Driver':<20} {'Team':<16} {'Win%':>6} {'Pod%':>6} {'AvgPos':>7} {'MechRisk':>9} {'Pts':>6}")
+    lines.append("-" * 78)
     for i, r in enumerate(rows[:10], 1):
         mech = f"{float(r.get('mechanical_risk',0))*100:.1f}%" if g(r,'mechanical_risk') != "-" else "-"
+        pts  = gf(r, 'champ_pts', 0) if g(r, 'champ_pts') != "-" else "-"
         lines.append(f"{i:<3} {g(r,'FullName'):<20} {g(r,'TeamName'):<16} "
                      f"{gf(r,'win_mc_pct'):>6} {gf(r,'podium_mc_pct'):>6} "
-                     f"{gf(r,'avg_mc_pos'):>7} {mech:>9}")
+                     f"{gf(r,'avg_mc_pos'):>7} {mech:>9} {pts:>6}")
 
     lines.append("\nKEY FEATURES - Top 5:")
     for r in rows[:5]:
@@ -7090,6 +7123,8 @@ def format_predictor_for_claude(rows: list) -> str:
                           ("recent_form","Form"),("circuit_score","Circuit"),
                           ("compound_score","Compound"),("mechanical_risk","MechRisk"),
                           ("dominant_failure","Failure")]:
+            if k == "quali_pos_next" and pre_quali:
+                continue  # sentinel value — omit to prevent confabulation
             v = g(r, k)
             if v != "-":
                 try:    parts.append(f"{label}={float(v):.3f}")
@@ -7199,20 +7234,43 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user_data = sessions.get(user_id, {})
 
         if has_pred:
-            prompt = (
-                f"You have the ACTUAL OUTPUT of f1_2026_predictor.py v7.0 below. "
-                f"Real Monte Carlo data — 10,000 runs. Not a guess.\n\n"
-                f"{pred_block}\n\n"
-                f"For the {race_name}, give a complete race prediction:\n"
-                f"1. WINNER — model's top pick with exact win% from the CSV\n"
-                f"2. WHY — which features drive it (quali position, recent form, "
-                f"circuit score, compound score — cite actual values)\n"
-                f"3. TOP 5 — predicted finishing order with win% for each\n"
-                f"4. WHAT COULD UPSET IT — weather, safety car, mechanical risk\n"
-                f"5. CHAMPIONSHIP STAKES — what this race means for the WDC\n"
-                f"6. CONFIDENCE — 0-100 and why\n\n"
-                f"Use the actual numbers. Be specific and opinionated."
-            )
+            is_preview = _is_pre_qualifying_csv(pred_rows)
+            if is_preview:
+                prompt = (
+                    f"You have a PRE-QUALIFYING PREVIEW from f1_2026_predictor.py v7.0 below. "
+                    f"IMPORTANT: qualifying for {race_name} has NOT happened yet. "
+                    f"These probabilities are Bayesian priors from season form and circuit "
+                    f"history ONLY — not real session data.\n\n"
+                    f"{pred_block}\n\n"
+                    f"For the {race_name}, give an honest pre-qualifying outlook:\n"
+                    f"1. FORM FAVOURITE — who the model rates highest and why "
+                    f"(cite their actual recent_form and circuit_score values shown above)\n"
+                    f"2. WHY — reference ONLY factors in the data: season points, recent form, "
+                    f"circuit history, tyre scores. Do NOT invent qualifying gaps, practice "
+                    f"lap times, or technical issues that are not in the data above\n"
+                    f"3. TOP 5 FORM ORDER — from the model, clearly labelled as "
+                    f"pre-qualifying speculation (qualifying could completely change this)\n"
+                    f"4. WHAT TO WATCH IN QUALIFYING — which rivals could shake up the order\n"
+                    f"5. CHAMPIONSHIP STAKES — what this weekend means for the WDC\n\n"
+                    f"Be upfront that qualifying hasn't happened. The Pts column shows current "
+                    f"championship standings — use those exact numbers, not anything else."
+                )
+            else:
+                prompt = (
+                    f"You have the ACTUAL OUTPUT of f1_2026_predictor.py v7.0 below. "
+                    f"Real Monte Carlo data — 10,000 runs. Not a guess.\n\n"
+                    f"{pred_block}\n\n"
+                    f"For the {race_name}, give a complete race prediction:\n"
+                    f"1. WINNER — model's top pick with exact win% from the CSV\n"
+                    f"2. WHY — which features drive it (quali position, recent form, "
+                    f"circuit score, compound score — cite actual values)\n"
+                    f"3. TOP 5 — predicted finishing order with win% for each\n"
+                    f"4. WHAT COULD UPSET IT — weather, safety car, mechanical risk\n"
+                    f"5. CHAMPIONSHIP STAKES — what this race means for the WDC\n"
+                    f"6. CONFIDENCE — 0-100 and why\n\n"
+                    f"Use the actual numbers. Be specific and opinionated. "
+                    f"The Pts column shows current championship standings — use those exact numbers."
+                )
         else:
             # No predictor CSV — ground the prompt in real grid data if available
             actual_grid = get_actual_grid_for_prediction()
