@@ -3995,12 +3995,11 @@ def fetch_race_result(round_num: int, season: int = SEASON) -> dict | None:
         p2 = get_driver(results[1]) if len(results)>1 else "?"
         p3 = get_driver(results[2]) if len(results)>2 else "?"
 
+        NON_FINISHER_CODES = {"R", "D", "E", "W", "N", "F"}
         dnfs = [
             f"{get_driver(r)}({r.get('status','')})"
             for r in results
-            if r.get("status","Finished") not in
-               ["Finished","+1 Lap","+2 Laps","+3 Laps",
-                "+4 Laps","+5 Laps","+6 Laps"]
+            if r.get("positionText","") in NON_FINISHER_CODES
         ]
 
         fl    = next((get_driver(r) for r in results
