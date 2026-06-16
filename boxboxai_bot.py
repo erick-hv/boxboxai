@@ -4755,7 +4755,7 @@ def build_system_prompt(mem: dict, news_context: str = "",
         if r.get("tyre_strategy_summary"):
             line += f" Tyres:{r['tyre_strategy_summary'][:80]}"
         if fc:
-            line += f" Grid:{' '.join(fc[:5])}"
+            line += f" Grid:{' '.join(fc[:10])}"
         ep_lines.append(line)
 
     # ── Compact semantic facts ────────────────────────────────
@@ -5025,7 +5025,11 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         if named_episode:
             race_ctx = named_episode.get("race_name", "")
         else:
-            # No specific race named — use most recent
+            # No specific race named — use most recent.
+            # Also set named_episode so driver-position grounding fires even for
+            # queries like 'what happened to Antonelli' without a race keyword —
+            # otherwise Claude only sees P1/P2/P3 in ep_lines and invents mid-field positions.
+            named_episode = episodes[-1] if episodes else None
             last_race = episodes[-1].get("race_name","") if episodes else ""
             next_race = fetch_next_race()
             next_name = next_race.get("raceName","") if next_race else ""
