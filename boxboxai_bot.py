@@ -5607,6 +5607,42 @@ def format_prediction(next_race: dict, mem: dict) -> str:
 mem      = {}
 sessions = {}
 
+async def cmd_reingest(update, ctx):
+    user_id = str(update.effective_user.id)
+    if user_id != BOT_OWNER_ID:
+        return
+    args = ctx.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Usage: /reingest <round_number>\nExample: /reingest 7")
+        return
+    rnd = int(args[0])
+    ingest_state = load_ingest_state()
+    ingest_key = f"r{rnd}"
+    if ingest_key in ingest_state:
+        del ingest_state[ingest_key]
+        save_ingest_state(ingest_state)
+    enrich_state = load_enrichment_state()
+    enrich_key = f"enriched_r{rnd}"
+    if enrich_key in enrich_state:
+        del enrich_state[enrich_key]
+        save_enrichment_state(enrich_state)
+    result = fetch_race_result(rnd, SEASON)
+    if not result:
+        await update.message.reply_text(f"⚠️ Cleared state for R{rnd} but Jolpica fetch failed — will retry on next auto-ingest cycle.")
+        return
+    mem = load_f1_memory()
+    episodes = mem.get("episodic", [])
+    existing = next((e for e in episodes if e.get("round") == rnd), None)
+    if existing:
+        existing.update(result)
+    else:
+        episodes.append(result)
+    mem["episodic"] = episodes
+    save_f1_memory(mem)
+    dnfs = ", ".join(result.get("dnfs", [])) or "none"
+    fc = " ".join(result.get("full_classification", [])[:5])
+    await update.message.reply_text(f"✅ R{rnd} re-ingested from Jolpica:\nWinner: {result.get('winner','?')}\nP2: {result.get('p2','?')} P3: {result.get('p3','?')}\nDNFs: {dnfs}\nTop 5: {fc}\nEnrichment state cleared — telemetry will re-run on next cycle.")
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     allowed, rate_msg = check_rate_limit(user_id)
@@ -7863,6 +7899,7 @@ def main():
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
     app.add_handler(CommandHandler("predict",        cmd_predict))
     app.add_handler(CommandHandler("winner",         cmd_winner))
+    app.add_handler(CommandHandler("reingest",       cmd_reingest))
     app.add_handler(CallbackQueryHandler(handle_timezone_callback,    pattern="^tz:"))
     app.add_handler(CallbackQueryHandler(handle_notification_callback, pattern="^notif:"))
     app.add_handler(MessageHandler(
