@@ -7253,7 +7253,8 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"4. WHAT TO WATCH IN QUALIFYING — which rivals could shake up the order\n"
                     f"5. CHAMPIONSHIP STAKES — what this weekend means for the WDC\n\n"
                     f"Be upfront that qualifying hasn't happened. The Pts column shows current "
-                    f"championship standings — use those exact numbers, not anything else."
+                    f"championship standings — use those exact numbers, not anything else.\n\n"
+                    f"Telegram formatting: *bold* only — NEVER use # or ## markdown headers."
                 )
             else:
                 prompt = (
@@ -7269,7 +7270,8 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"5. CHAMPIONSHIP STAKES — what this race means for the WDC\n"
                     f"6. CONFIDENCE — 0-100 and why\n\n"
                     f"Use the actual numbers. Be specific and opinionated. "
-                    f"The Pts column shows current championship standings — use those exact numbers."
+                    f"The Pts column shows current championship standings — use those exact numbers.\n\n"
+                    f"Telegram formatting: *bold* only — NEVER use # or ## markdown headers."
                 )
         else:
             # No predictor CSV — ground the prompt in real grid data if available
@@ -7287,7 +7289,8 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"4. CHAMPIONSHIP IMPLICATIONS\n"
                     f"5. CONFIDENCE — 0-100\n\n"
                     f"Use ONLY the drivers and positions listed in the grid above. "
-                    f"Do not invent grid positions."
+                    f"Do not invent grid positions.\n\n"
+                    f"Telegram formatting: *bold* only — NEVER use # or ## markdown headers."
                 )
             else:
                 prompt = (
@@ -7295,7 +7298,8 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"have predictor data. Give a brief pre-qualifying preview: "
                     f"championship context, what to watch for, key storylines. "
                     f"Do NOT predict a specific finishing order or grid positions — "
-                    f"those don't exist yet. Keep it to 3-4 sentences."
+                    f"those don't exist yet. Keep it to 3-4 sentences.\n\n"
+                    f"Telegram formatting: *bold* only — NEVER use # or ## markdown headers."
                 )
 
         reply = ask_claude(prompt, history, mem, user_data)
