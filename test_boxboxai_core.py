@@ -4,6 +4,7 @@ Run with: python3 -m pytest test_boxboxai_core.py -v
 """
 import sys
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -484,3 +485,61 @@ class TestCircuitMapParser:
 
     def test_empty_string_returns_empty_dict(self):
         assert bot._parse_circuit_map_pdf_text("") == {}
+
+
+# ── get_circuit_guide with zone data ─────────────────────────────────────────
+
+_BARCELONA_ZONE_DATA = {
+    "overtake": {"detection": "Apex T13", "activation": "Entry T14"},
+    "straight_mode_zones": [
+        {"zone": "A1", "activation_normal": "45m after T14",
+                       "activation_low_grip": "85m after T14"},
+        {"zone": "A2", "activation_normal": "40m before T3 exit",
+                       "activation_low_grip": "T3 exit"},
+    ],
+}
+
+
+class TestCircuitGuideWithZoneData:
+    """
+    Tests for get_circuit_guide() zone-data suffix injection.
+    _get_circuit_zone_data is mocked — no Playwright / network calls.
+    """
+
+    def test_zone_data_appended_when_available(self):
+        with patch.object(bot, "_get_circuit_zone_data",
+                          return_value=_BARCELONA_ZONE_DATA):
+            guide = bot.get_circuit_guide("what about barcelona strategy")
+        assert "PRECISE 2026 ZONE DATA" in guide
+        assert "Apex T13" in guide
+        assert "Entry T14" in guide
+        assert "A1" in guide
+        assert "45m after T14" in guide
+
+    def test_qualitative_guide_still_present(self):
+        with patch.object(bot, "_get_circuit_zone_data",
+                          return_value=_BARCELONA_ZONE_DATA):
+            guide = bot.get_circuit_guide("barcelona")
+        # Qualitative content from CIRCUIT_GUIDES must still be there
+        assert "CIRCUIT GUIDE" in guide
+        assert "BARCELONA" in guide
+
+    def test_graceful_degradation_when_no_zone_data(self):
+        with patch.object(bot, "_get_circuit_zone_data", return_value={}):
+            guide = bot.get_circuit_guide("barcelona")
+        assert "CIRCUIT GUIDE" in guide
+        assert "PRECISE 2026 ZONE DATA" not in guide
+
+    def test_no_zone_data_for_unknown_circuit(self):
+        # No circuit match → empty string regardless of zone data
+        with patch.object(bot, "_get_circuit_zone_data", return_value={}):
+            guide = bot.get_circuit_guide("what is F1?")
+        assert guide == ""
+
+    def test_zone_suffix_exception_does_not_propagate(self):
+        # If _get_circuit_zone_data raises, guide still returns qualitative text
+        with patch.object(bot, "_get_circuit_zone_data",
+                          side_effect=RuntimeError("network down")):
+            guide = bot.get_circuit_guide("barcelona")
+        assert "CIRCUIT GUIDE" in guide
+        assert "PRECISE 2026 ZONE DATA" not in guide

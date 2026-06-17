@@ -75,7 +75,8 @@ AUTOSPORT_RSS     = "https://www.autosport.com/rss/feed/f1"
 RACEFANS_RSS      = "https://www.racefans.net/feed/"
 NEWS_FEEDS        = [THE_RACE_RSS, AUTOSPORT_RSS, RACEFANS_RSS]
 THE_RACE_SEARCH   = "https://the-race.com/?s="
-NEWS_CACHE_FILE   = Path(__file__).parent / "boxboxai_news_cache.json"
+NEWS_CACHE_FILE        = Path(__file__).parent / "boxboxai_news_cache.json"
+CIRCUIT_MAP_CACHE_FILE = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
 NEWS_REFRESH_MINS = 30   # refresh RSS every 30 minutes
 
 # ═════════════════════════════════════════════════════════════
@@ -1760,6 +1761,201 @@ def _parse_circuit_map_pdf_text(text: str) -> dict:
     }
 
 
+# ── Circuit-key → FIA season-page event name ──────────────────────────────────
+# Used by _get_circuit_zone_data to navigate to the right event document list.
+_CIRCUIT_KEY_TO_FIA_EVENT = {
+    "melbourne":   "Australian Grand Prix",
+    "shanghai":    "Chinese Grand Prix",
+    "suzuka":      "Japanese Grand Prix",
+    "bahrain":     "Bahrain Grand Prix",
+    "jeddah":      "Saudi Arabian Grand Prix",
+    "miami":       "Miami Grand Prix",
+    "imola":       "Emilia Romagna Grand Prix",
+    "monaco":      "Monaco Grand Prix",
+    "montreal":    "Canadian Grand Prix",
+    "barcelona":   "Spanish Grand Prix",
+    "spielberg":   "Austrian Grand Prix",
+    "silverstone": "British Grand Prix",
+    "budapest":    "Hungarian Grand Prix",
+    "spa":         "Belgian Grand Prix",
+    "zandvoort":   "Dutch Grand Prix",
+    "monza":       "Italian Grand Prix",
+    "baku":        "Azerbaijan Grand Prix",
+    "singapore":   "Singapore Grand Prix",
+    "austin":      "United States Grand Prix",
+    "mexico city": "Mexico City Grand Prix",
+    "são paulo":   "São Paulo Grand Prix",
+    "las vegas":   "Las Vegas Grand Prix",
+    "lusail":      "Qatar Grand Prix",
+    "abu dhabi":   "Abu Dhabi Grand Prix",
+}
+
+
+def _run_circuit_map_playwright(race_name: str) -> bytes:
+    """
+    Playwright sync-API work (runs in its own thread — no asyncio event loop).
+    Navigates to the FIA season page, finds the event matching race_name,
+    then finds the 'Competition Notes - Circuit Map / Pit Lane Drawing' PDF
+    and returns its bytes.  Returns b"" on any failure.
+    """
+    from playwright.sync_api import sync_playwright
+
+    season_url = (
+        "https://www.fia.com/documents/championships/"
+        "fia-formula-one-world-championship-14/season/season-2026-2072")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage",
+                      "--disable-gpu", "--disable-setuid-sandbox",
+                      "--no-zygote"])
+            try:
+                page = browser.new_page()
+                page.set_default_timeout(15000)
+
+                # ── Step 1: find this race's event page ───────────────
+                page.goto(season_url, wait_until="domcontentloaded")
+                event_link = page.locator(
+                    f"a:has-text('{race_name}')").first
+                if event_link.count() == 0:
+                    log.info(f"Circuit map: event '{race_name}' not found "
+                             f"on FIA season page")
+                    return b""
+                event_href = event_link.get_attribute("href") or ""
+                if event_href.startswith("/"):
+                    event_href = "https://www.fia.com" + event_href
+
+                # ── Step 2: load event documents list ─────────────────
+                page.goto(event_href, wait_until="domcontentloaded")
+
+                # Find link whose text contains BOTH identifying substrings
+                all_links = page.locator("a[href*='decision-document']")
+                count = min(all_links.count(), 80)
+                pdf_url = ""
+                for i in range(count):
+                    link = all_links.nth(i)
+                    text = (link.inner_text() or "").lower()
+                    if "circuit map" in text and "pit lane drawing" in text:
+                        pdf_url = link.get_attribute("href") or ""
+                        log.info(f"Circuit map: found doc '{text[:80]}'")
+                        break
+
+                if not pdf_url:
+                    log.info(f"Circuit map: no circuit-map doc found "
+                             f"for {race_name}")
+                    return b""
+
+                if pdf_url.startswith("/"):
+                    pdf_url = "https://www.fia.com" + pdf_url
+
+                # ── Step 3: download PDF ───────────────────────────────
+                resp = page.request.get(pdf_url)
+                if resp.status != 200:
+                    log.info(f"Circuit map: PDF fetch returned {resp.status}")
+                    return b""
+                return resp.body()
+
+            finally:
+                browser.close()
+
+    except Exception as e:
+        log.info(f"Circuit map Playwright fetch failed — {e}")
+        return b""
+
+
+def _fetch_circuit_map_pdf(race_name: str) -> bytes:
+    """
+    Thread-executor wrapper around _run_circuit_map_playwright.
+    Returns PDF bytes or b"" on any failure.  Never raises.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+    except ImportError:
+        log.debug("Circuit map: Playwright not installed — skipping")
+        return b""
+
+    if not _ensure_chromium_installed():
+        log.debug("Circuit map: Chromium unavailable — skipping")
+        return b""
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_circuit_map_playwright, race_name)
+            return future.result(timeout=60)
+    except Exception as e:
+        log.info(f"Circuit map: thread execution failed — {e}")
+        return b""
+
+
+def _load_circuit_map_cache() -> dict:
+    if CIRCUIT_MAP_CACHE_FILE.exists():
+        try:
+            return json.loads(CIRCUIT_MAP_CACHE_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_circuit_map_cache(cache: dict):
+    try:
+        CIRCUIT_MAP_CACHE_FILE.write_text(json.dumps(cache, indent=2))
+    except Exception as e:
+        log.error(f"Circuit map: failed to save cache — {e}")
+
+
+def _get_circuit_zone_data(circuit_key: str) -> dict:
+    """
+    Returns Straight Mode / Overtake zone data for a circuit.
+
+    Fetch-on-demand: reads from CIRCUIT_MAP_CACHE_FILE on cache hit (non-empty
+    value only — empty dicts mean the doc wasn't published yet, so we retry).
+    On a miss, runs the Playwright fetch + pypdf parse synchronously, caches
+    the result, and returns it.  Returns {} on any failure.
+    """
+    # Cache hit (non-empty value = real data was previously fetched)
+    cache = _load_circuit_map_cache()
+    if cache.get(circuit_key):
+        return cache[circuit_key]
+
+    # Look up the FIA event name for this circuit
+    race_name = _CIRCUIT_KEY_TO_FIA_EVENT.get(circuit_key)
+    if not race_name:
+        return {}
+
+    log.info(f"Circuit map: fetching for '{circuit_key}' ({race_name})")
+    pdf_bytes = _fetch_circuit_map_pdf(race_name)
+    if not pdf_bytes:
+        return {}
+
+    # Extract text from the PDF
+    try:
+        import io
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        full_text = "\n".join(
+            (pg.extract_text() or "") for pg in reader.pages)
+    except Exception as e:
+        log.info(f"Circuit map: PDF text extraction failed — {e}")
+        return {}
+
+    result = _parse_circuit_map_pdf_text(full_text)
+
+    # Cache even an empty result so we know we tried; caller retries on empty.
+    cache[circuit_key] = result
+    _save_circuit_map_cache(cache)
+
+    if result:
+        log.info(f"Circuit map: cached zone data for '{circuit_key}' "
+                 f"({len(result.get('straight_mode_zones', []))} SM zones)")
+    else:
+        log.info(f"Circuit map: parse returned empty for '{circuit_key}' "
+                 f"(doc may not match expected format)")
+    return result
+
+
 def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
     """
     Fetches official stewards decision content for a race incident/penalty.
@@ -2998,8 +3194,45 @@ def get_circuit_guide(query: str) -> str:
     q = query.lower()
     for circuit, guide in CIRCUIT_GUIDES.items():
         if circuit in q:
-            return f"CIRCUIT GUIDE — {circuit.upper()}:{guide}"
+            zone_suffix = _build_zone_suffix(circuit)
+            return f"CIRCUIT GUIDE — {circuit.upper()}:{guide}{zone_suffix}"
     return ""
+
+
+def _build_zone_suffix(circuit_key: str) -> str:
+    """
+    Returns a formatted zone-data suffix for get_circuit_guide(), or "".
+    Calls _get_circuit_zone_data() which is fetch-on-demand and cached.
+    Never raises — any failure returns "".
+    """
+    try:
+        data = _get_circuit_zone_data(circuit_key)
+        if not data:
+            return ""
+        ot    = data.get("overtake", {})
+        zones = data.get("straight_mode_zones", [])
+        if not ot and not zones:
+            return ""
+        parts = []
+        if ot.get("detection") and ot.get("activation"):
+            parts.append(
+                f"Overtake detection {ot['detection']}, "
+                f"activation {ot['activation']}")
+        if zones:
+            zone_strs = [
+                f"{z['zone']}: {z['activation_normal']} (normal grip) / "
+                f"{z['activation_low_grip']} (low grip)"
+                for z in zones
+            ]
+            parts.append(f"Active Straight Mode zones: {', '.join(zone_strs)}")
+        if not parts:
+            return ""
+        return (
+            "\nPRECISE 2026 ZONE DATA (FIA Competition Notes): "
+            + ". ".join(parts) + "."
+        )
+    except Exception:
+        return ""
 
 
 # ═════════════════════════════════════════════════════════════
