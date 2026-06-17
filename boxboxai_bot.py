@@ -1656,6 +1656,110 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
         return ""
 
 
+def _parse_circuit_map_pdf_text(text: str) -> dict:
+    """
+    Parses pypdf-extracted text from a FIA Circuit Map PDF.
+
+    pypdf reads the CIRCUIT DATA table column-by-column, so the raw text
+    has an unusual ordering that this function accounts for:
+      - Zone name labels appear first  ("- ZONE A1 -", "- ZONE A2 -", ...)
+      - "ACTIVATION" label alone on a line
+      - "DETECTION {value}" — label merged with zone[0]'s normal-grip distance
+      - Remaining normal-grip distances (zones 1..n-1)
+      - Low-grip distances (all zones, in order)
+      - "- {activation_distance}" then "- {detection_distance}" (overtake values)
+
+    Returns:
+      {
+        "overtake": {"detection": "Apex T13", "activation": "Entry T14"},
+        "straight_mode_zones": [
+          {"zone": "A1", "activation_normal": "45m after T14",
+                         "activation_low_grip": "85m after T14"},
+          ...   # zones whose both values are "n/a" are omitted
+        ]
+      }
+    Returns {} on any parse failure (caller degrades gracefully).
+    """
+    # Isolate the CIRCUIT DATA block between the table header and LEGEND
+    section_m = re.search(
+        r'OVERTAKE\s+STRAIGHT\s+MODE(.*?)(?:\bLEGEND\b|VERSION\s+1)',
+        text, re.DOTALL | re.IGNORECASE
+    )
+    if not section_m:
+        return {}
+
+    section = section_m.group(1)
+    lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
+
+    # --- Zone names from "- ZONE A1 -" lines ---
+    zone_names = []
+    for ln in lines:
+        m = re.search(r'\bZONE\s+([A-Z]\d+)\b', ln)
+        if m:
+            zone_names.append(m.group(1))
+
+    if not zone_names:
+        return {}
+
+    # --- Measurement-value pattern ---
+    # Matches: "45m after T14", "40m before T3 exit", "T3 exit", "n/a"
+    MEAS = re.compile(
+        r'^(?:\d+[\d.]*m\s+(?:after|before)\s+T\S.*|T\d+\s+\w.*|n/a)$',
+        re.IGNORECASE
+    )
+
+    # --- Normal-grip values ---
+    # "DETECTION {value}" line gives zone[0]; subsequent MEAS lines give the rest.
+    normal_vals = []
+    detection_line_idx = None
+    for i, ln in enumerate(lines):
+        if ln.upper().startswith("DETECTION "):
+            normal_vals.append(ln[len("DETECTION "):].strip())
+            detection_line_idx = i
+            break
+
+    idx = (detection_line_idx + 1) if detection_line_idx is not None else len(lines)
+    while len(normal_vals) < len(zone_names) and idx < len(lines):
+        if MEAS.match(lines[idx]):
+            normal_vals.append(lines[idx])
+        idx += 1
+
+    # --- Low-grip values (immediately follow normal-grip block) ---
+    low_vals = []
+    while len(low_vals) < len(zone_names) and idx < len(lines):
+        if MEAS.match(lines[idx]):
+            low_vals.append(lines[idx])
+        idx += 1
+
+    # --- Overtake values: "- Entry T14" / "- Apex T13" ---
+    # pypdf order: activation first, detection second.
+    overtake_raw = [
+        re.sub(r'^-\s+', '', ln).strip()
+        for ln in lines
+        if re.match(r'^-\s+\S', ln) and 'ZONE' not in ln.upper()
+    ]
+    activation_val = overtake_raw[0] if len(overtake_raw) > 0 else ""
+    detection_val  = overtake_raw[1] if len(overtake_raw) > 1 else ""
+
+    # --- Build result, skipping fully-n/a zones ---
+    zones = []
+    for i, zone in enumerate(zone_names):
+        norm = normal_vals[i] if i < len(normal_vals) else ""
+        low  = low_vals[i]    if i < len(low_vals)    else ""
+        if norm.lower() == "n/a" and low.lower() == "n/a":
+            continue
+        zones.append({
+            "zone": zone,
+            "activation_normal":   norm,
+            "activation_low_grip": low,
+        })
+
+    return {
+        "overtake": {"detection": detection_val, "activation": activation_val},
+        "straight_mode_zones": zones,
+    }
+
+
 def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
     """
     Fetches official stewards decision content for a race incident/penalty.

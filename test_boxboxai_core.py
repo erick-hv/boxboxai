@@ -293,3 +293,194 @@ class TestTyreStrategyInSystemPrompt:
         }
         prompt = bot.build_system_prompt(mem)
         assert "Spanish Grand Prix" in prompt
+
+
+# ── circuit map PDF parser ────────────────────────────────────────────────────
+
+# Exact pypdf page-2 text from the 2026 Barcelona-Catalunya Circuit Map PDF
+# (FIA Document 8, published 11 June 2026).  pypdf reads the CIRCUIT DATA
+# table column-by-column, so zone names appear before the label rows and the
+# overtake distances appear at the end.
+BARCELONA_CIRCUIT_MAP_TEXT = """
+1
+M0.8
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+13
+14
+M1
+M2
+M3
+M5
+M3.5
+M4
+M4.2
+M4.4
+M6
+M7
+M9
+M9.2 M9.5
+M10
+M10.3
+M11.2
+M13
+M16
+M0.1
+M3.2
+M8
+M14M12
+M16.6
+12
+1
+2
+3
+4
+9
+5
+8
+10
+6
+11
+7
+14
+12
+13
+16
+15
+S2
+T
+S1
+O
+T
+ D
+OT A
+SM      A1
+SM A2
+SM      A2
+SM
+ A
+3
+SM      A1
+SM
+ A
+3
+SM
+ A
+4
+SM
+ A
+4
+VERSION 1 - ISSUED 21.05.26
+© 2026 Formula One World Championship Limited
+FORMULA 1 MSC CRUISES GRAN PREMIO DE BARCELONA-CATALUNYA 2026 - Barcelona
+CIRCUIT DATA
+SECTOR 3
+SECTOR 2
+SECTOR 1
+-  1.273km
+-  1.765km
+-  1.619km
+ SPEED TRAP  [T]
+ INTERMEDIATE 2  [S2]
+-  220m before T1
+-  90m before T10
+-  50m before T4 INTERMEDIATE 1  [S1]
+CIRCUIT CENTRELINE LENGTH -  4.657km
+Circuit Map
+OVERTAKE STRAIGHT MODE
+-   ZONE A1   -
+-   ZONE A2   -
+-   ZONE A3   -
+-   ZONE A4   -
+-   ZONE A5   -
+ACTIVATION
+DETECTION 45m after T14
+40m before T3 exit
+90m after T5
+40m after T9
+n/a
+85m after T14
+T3 exit
+90m after T5
+90m after T9
+n/a
+-  Entry T14
+-  Apex T13
+15
+LEGEND
+START LINE
+CONTROL LINE
+CORNER NUMBER
+SM A [ZONE No.]
+STRAIGHT MODE
+NORMAL GRIP ACTIVATION
+SM A [ZONE No.]
+ STRAIGHT MODE
+LOW GRIP ACTIVATION
+OT A
+OT D
+OVERTAKE ACTIVATION
+OVERTAKE DETECTION
+FIA LIGHT PANEL22
+M2 MARSHAL POST
+"""
+
+
+class TestCircuitMapParser:
+    """
+    Regression tests for _parse_circuit_map_pdf_text using the real
+    pypdf-extracted text from the 2026 Barcelona FIA Circuit Map PDF.
+    """
+
+    def test_overtake_detection_parsed(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        assert result["overtake"]["detection"] == "Apex T13"
+
+    def test_overtake_activation_parsed(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        assert result["overtake"]["activation"] == "Entry T14"
+
+    def test_four_active_zones_returned(self):
+        # Zone A5 is n/a for both grip levels and must be omitted
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        assert len(result["straight_mode_zones"]) == 4
+
+    def test_zone_names_in_order(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        names = [z["zone"] for z in result["straight_mode_zones"]]
+        assert names == ["A1", "A2", "A3", "A4"]
+
+    def test_zone_a1_normal_grip(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        z = next(z for z in result["straight_mode_zones"] if z["zone"] == "A1")
+        assert z["activation_normal"] == "45m after T14"
+
+    def test_zone_a1_low_grip(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        z = next(z for z in result["straight_mode_zones"] if z["zone"] == "A1")
+        assert z["activation_low_grip"] == "85m after T14"
+
+    def test_zone_a2_values(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        z = next(z for z in result["straight_mode_zones"] if z["zone"] == "A2")
+        assert z["activation_normal"] == "40m before T3 exit"
+        assert z["activation_low_grip"] == "T3 exit"
+
+    def test_zone_a5_omitted(self):
+        result = bot._parse_circuit_map_pdf_text(BARCELONA_CIRCUIT_MAP_TEXT)
+        names = [z["zone"] for z in result["straight_mode_zones"]]
+        assert "A5" not in names
+
+    def test_missing_section_returns_empty_dict(self):
+        assert bot._parse_circuit_map_pdf_text("No circuit data here.") == {}
+
+    def test_empty_string_returns_empty_dict(self):
+        assert bot._parse_circuit_map_pdf_text("") == {}
