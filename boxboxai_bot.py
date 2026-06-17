@@ -991,7 +991,7 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
             f"Story: {story}\n"
             f"DNFs: {', '.join(dnfs) if dnfs else 'none'}\n"
             f"Safety cars: {sc}\n"
-            f"Strategy: {pit.get('strategy_summary','')}\n"
+            f"Strategy: {pit.get('tyre_strategies','')}\n"
             f"Championship: {champ}\n\n"
             f"Now write the debrief in the exact format above."
         )
@@ -4756,8 +4756,9 @@ def build_system_prompt(mem: dict, news_context: str = "",
             line += f" DNF:{','.join(d.split('(')[0] for d in dnfs[:3])}"
         if r.get("champ_after"):
             line += f" Champ:{r['champ_after'][:60]}"
-        if r.get("tyre_strategy_summary"):
-            line += f" Tyres:{r['tyre_strategy_summary'][:80]}"
+        tyres = r.get("pitstops", {}).get("tyre_strategies", "")
+        if tyres:
+            line += f" Tyres:{tyres[:80]}"
         if fc:
             line += f" Grid:{' '.join(fc[:10])}"
         ep_lines.append(line)
@@ -6645,8 +6646,8 @@ def get_race_replay_context(query: str, mem: dict) -> str:
             for s in sc)
         context_parts.append(f"Safety cars: {sc_str}")
 
-    if pit.get("strategy_summary"):
-        context_parts.append(f"Strategy: {pit['strategy_summary']}")
+    if pit.get("tyre_strategies"):
+        context_parts.append(f"Strategy: {pit['tyre_strategies']}")
         if pit.get("fastest_stop_driver"):
             context_parts.append(
                 f"Fastest pit: {pit['fastest_stop_driver']} {pit.get('fastest_stop_time','')}s")

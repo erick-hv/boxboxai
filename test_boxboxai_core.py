@@ -244,3 +244,52 @@ class TestPreQualifyingSentinel:
         rows = self._make_rows([22.0] * 10)
         block = bot.format_predictor_for_claude(rows)
         assert "Pts" in block, "Pts column must appear even in pre-qualifying block"
+
+
+# ── tyre strategy surfaced in system prompt ───────────────────────────────────
+
+class TestTyreStrategyInSystemPrompt:
+    """
+    Regression tests for the three key-name mismatches that previously caused
+    tyre strategy data to be collected correctly but never reach Claude.
+    """
+
+    def _make_mem(self, tyre_strategies: str) -> dict:
+        return {
+            "episodic": [{
+                "round": 9,
+                "race_name": "Spanish Grand Prix",
+                "track": "barcelona",
+                "winner": "HAM",
+                "p2": "RUS",
+                "p3": "NOR",
+                "fastest_lap": "VER",
+                "fastest_lap_time": "1:14.234",
+                "pitstops": {"tyre_strategies": tyre_strategies},
+            }],
+            "semantic": {},
+        }
+
+    def test_tyre_strategies_appear_in_compact_race_lines(self):
+        strats = "HAM:M(15)→H(35) | RUS:M(13)→H(37)"
+        mem = self._make_mem(strats)
+        prompt = bot.build_system_prompt(mem)
+        assert "HAM:M(15)→H(35)" in prompt, \
+            "Tyre strategies must appear in RACE RESULTS compact lines"
+
+    def test_empty_tyre_strategies_does_not_crash(self):
+        mem = self._make_mem("")
+        prompt = bot.build_system_prompt(mem)
+        assert "Spanish Grand Prix" in prompt
+
+    def test_missing_pitstops_key_does_not_crash(self):
+        mem = {
+            "episodic": [{
+                "round": 9, "race_name": "Spanish Grand Prix",
+                "track": "barcelona", "winner": "HAM",
+                "p2": "RUS", "p3": "NOR",
+            }],
+            "semantic": {},
+        }
+        prompt = bot.build_system_prompt(mem)
+        assert "Spanish Grand Prix" in prompt
