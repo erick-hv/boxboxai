@@ -1956,6 +1956,36 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
     return result
 
 
+async def _prewarm_circuit_map_for_next_race():
+    """
+    Fire-and-forget startup task: fetches and caches circuit zone data for
+    the next/current race weekend so the first user query isn't delayed.
+    Failures are logged but never propagate — bot startup is unaffected.
+    """
+    import asyncio as _asyncio
+    try:
+        next_race = fetch_next_race()
+        if not next_race:
+            return
+        race_name   = next_race.get("raceName", "")
+        circuit_key = next(
+            (k for k, v in _CIRCUIT_KEY_TO_FIA_EVENT.items()
+             if v.lower() == race_name.lower()), "")
+        if not circuit_key:
+            log.info(f"Circuit map pre-warm: no key for '{race_name}' — skipping")
+            return
+        # Already cached with real data — nothing to do.
+        cache = _load_circuit_map_cache()
+        if cache.get(circuit_key):
+            log.info(f"Circuit map pre-warm: '{circuit_key}' already cached")
+            return
+        log.info(f"Circuit map pre-warm: fetching '{circuit_key}' ({race_name})")
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
+    except Exception as e:
+        log.info(f"Circuit map pre-warm failed (non-fatal): {e}")
+
+
 def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
     """
     Fetches official stewards decision content for a race incident/penalty.
@@ -8355,6 +8385,8 @@ def main():
             auto_predictor_loop(application))
         _asyncio.create_task(
             auto_memory_enrichment_loop(mem_ref, application))
+        _asyncio.create_task(
+            _prewarm_circuit_map_for_next_race())
         await alert_owner(application,
             f"✅ *BoxBoxAI is online*\n\n"
             f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
