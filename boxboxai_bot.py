@@ -2600,7 +2600,7 @@ Albert Park, Australia — Season opener, semi-street circuit
     "shanghai": """
 Shanghai International Circuit, China
 - 56 laps, 5.451km, 16 corners
-- Long back straight with hairpin — best DRS/overtaking of the season
+- Long back straight with hairpin — multiple Straight Mode zones plus strong Overtake Mode range here, best overtaking of the season
 - Sector 1: sweeping high-speed esses, very demanding on front tyres
 - Sector 3: long Turn 16 leads onto pit straight — tyre stress
 - Tyres: high deg, especially rear. 2-stop common strategy
@@ -2616,7 +2616,7 @@ Suzuka Circuit, Japan — Figure-8 layout, technical masterpiece
 - Spoon Curve: double apex, key for sector 3 exit speed
 - Degner 1&2: blind exit, crucial for sector time
 - Casino Triangle: tricky chicane, easy to run wide
-- Overtaking: DRS on main straight, Turn 1 works but difficult
+- Overtaking: Straight Mode on main straight, Turn 1 works but difficult; Overtake Mode helps but options are limited
 - Tyres: medium-high deg on rears through S-curves
 - Weather: Japanese autumn, can be wet — the 2022 rain race happened here
 """,
@@ -2626,7 +2626,7 @@ Bahrain International Circuit, Sakhir — Night race
 - Very abrasive surface — one of hardest on tyres all season
 - Turns 1-4 complex: key overtaking zone, cars go side by side
 - Turn 10 hairpin: best overtaking spot, long run to braking zone
-- Turn 14-15 chicane: DRS activation — second big pass opportunity
+- Turn 14-15 chicane: Straight Mode zone — second big pass opportunity; Overtake Mode key here
 - Tyres: very high degradation. 2-stop almost mandatory. Rear limited
 - Atmosphere: incredible under floodlights in the desert
 - Strategy: pit window crucial, undercut is king at Turn 1
@@ -2638,7 +2638,7 @@ Jeddah Corniche Circuit, Saudi Arabia — Night street circuit
 - 27 corners, most taken flat or near-flat at 200-300 km/h
 - Very low downforce setup — all about top speed
 - Sector 2: blind chicanes, near-zero margin for error
-- Overtaking: mainly Turn 1 and DRS zones — limited due to speed
+- Overtaking: mainly Turn 1 and Straight Mode zones — limited due to speed; Overtake Mode used more defensively than offensively
 - Safety car almost certain — walls catch everything
 - Tyres: low deg due to smooth surface despite the speed
 - Strategy: typically 1-stop, SC window timing is critical
@@ -2648,7 +2648,7 @@ Miami International Autodrome, USA — Sprint weekend
 - 57 laps, 5.412km, 19 corners
 - Street-style circuit around Hard Rock Stadium
 - Turns 11-16: technical middle sector, very tight, safety car zone
-- Main straight DRS: biggest passing zone
+- Main straight Straight Mode: biggest passing zone; Overtake Mode deployed on approach
 - Turn 1 braking: overtaking possible but risky
 - Tyres: medium degradation, 1-stop viable but 2-stop faster
 - Sprint weekend in 2026
@@ -2663,7 +2663,7 @@ Autodromo Enzo e Dino Ferrari, Imola, Italy
 - Variante Alta: crucial chicane for sector 2 time
 - Rivazza corners: double left-hander, key for lap time
 - Raidillon-style Piratella: fast left-hander, respect required
-- Overtaking: virtually impossible outside DRS zone at Turn 2
+- Overtaking: virtually impossible outside Straight Mode zone at Turn 2; Overtake Mode crucial for any attack attempt
 - Tyres: medium deg, typically 1-stop
 - Strategy: qualifying position is almost everything here
 """,
@@ -2690,7 +2690,7 @@ Circuit Gilles Villeneuve, Canada
 - Semi-street circuit on an island in the St. Lawrence River
 - Wall of Champions (T13-14): claims world champions every year
 - Casino Hairpin: best overtaking spot, very late braking zone
-- Long back straight with chicane: high-speed braking, DRS zone
+- Long back straight with chicane: high-speed braking, Straight Mode zone — Overtake Mode effective into the hairpin
 - Pit lane exit: merges aggressively, causes incidents
 - Tyres: medium deg. Mixed 1 and 2-stop strategies common
 - Weather: can be anything in Canadian June — wet races common
@@ -2704,7 +2704,7 @@ Circuit de Barcelona-Catalunya, Spain
 - Turn 1-2: classic overtaking point, heavy braking from high speed
 - Turn 3 Renault: long high-speed right-hander, downforce critical
 - Turn 9: hardest corner — long, decreasing radius, rear stressed
-- DRS zones: main straight and back straight
+- Straight Mode zones: main straight and back straight — Overtake Mode most effective into Turn 1
 - Tyres: very high rear degradation. 2-stop almost always faster
 - Strategy: tyre management defines the race. Undercut very effective
 - Dirty air problem: very hard to follow through high-speed corners
@@ -2714,7 +2714,7 @@ Red Bull Ring, Spielberg, Austria
 - 71 laps, 4.318km — shortest lap on calendar
 - Very short lap but incredibly fast, set in beautiful mountains
 - Turns 3-4: massive uphill braking zone — wheel-to-wheel frequent
-- Turn 7-8: final two corners before long straight — DRS key
+- Turn 7-8: final two corners before long straight — Straight Mode carries speed onto the straight, Overtake Mode the key attacking tool into Turn 1
 - Very high downforce circuit despite short lap
 - Tyres: high stress on short lap, lots of laps = high total deg
 - Austrian Grand Prix atmosphere: Orange army (Max fans) everywhere
@@ -2728,7 +2728,7 @@ Silverstone, UK — High-speed temple
 - Maggotts-Becketts-Chapel: iconic S-sequence, ultra-high speed
 - Hangar Straight + Stowe: biggest overtaking opportunity
 - Vale-Club complex: technical final sector
-- Wellington Straight: second DRS zone, good passing
+- Wellington Straight: second Straight Mode zone, good passing — Overtake Mode supplements the drag reduction
 - Tyres: very hard on rear tyres through high-speed corners
 - British fans: incredible atmosphere, biggest F1 crowd of the year
 - Weather: British summer = anything. Rain very common
@@ -2752,7 +2752,7 @@ Circuit de Spa-Francorchamps, Belgium — Greatest circuit on the calendar
 - Eau Rouge/Raidillon: most iconic sequence in F1. Terrifying uphill flat-out
 - Pouhon: double-apex high-speed left, one of best corners in racing
 - Blanchimont: 300 km/h left before Bus Stop chicane
-- Kemmel Straight: longest DRS zone, massive overtaking opportunity
+- Kemmel Straight: longest Straight Mode zone, massive overtaking opportunity — Overtake Mode makes Les Combes a brutal attack point
 - Bus Stop chicane: final complex, under/overcut zone
 - Weather: Spa has own microclimate — can be wet sector 1, dry sector 3
 - Tyres: high deg on long circuit. 2-stop typically
@@ -2782,7 +2782,7 @@ Autodromo Nazionale Monza, Italy — Temple of Speed
 - Parabolica (Curva Biassono): long sweeping final corner, 270° arc
 - Slipstreaming huge — qualifying can produce amazing battles
 - Tyres: low deg despite high speeds — smooth surface
-- Strategy: 1-stop almost always. DRS dominant here
+- Strategy: 1-stop almost always. Straight Mode dominant here — slipstreaming amplified by wing-open speeds
 - Tifosi (Ferrari fans): incredible passion, orange smoke and flags everywhere
 """,
     "baku": """
@@ -2792,7 +2792,7 @@ Baku City Circuit, Azerbaijan — Street circuit chaos
 - Castle section: narrow medieval streets, 7-8 metres wide at tightest
 - Turn 8: notorious blind entry, claimed many victims
 - Turn 15-16: complex before long straight, crucial for lap time
-- Overtaking: lots of it. Long straight + DRS = massive speed differential
+- Overtaking: lots of it. Long straight + Straight Mode = massive speed differential; Overtake Mode deadly on the seafront run
 - Tyres: low deg on smooth streets, 1-stop typical
 - Safety car: virtually guaranteed every year. Chaos track
 - Strategy: SC window management critical — timing the VSC/SC pit
@@ -2817,7 +2817,7 @@ Circuit of the Americas, Texas, USA
 - Turn 1: uphill, blind apex approach, best mass passing spot
 - Sectors 1 and 2: flowing high-speed corners inspired by classic circuits
 - Turns 12-13: inspired by Maggotts-Becketts, high-speed esses
-- Back straight: DRS zone into Turn 12 hairpin
+- Back straight: Straight Mode zone into Turn 12 hairpin — Overtake Mode key for late braking attacks
 - Tyres: hard on rear through high-speed complex
 - 2-stop usually faster but 1-stop possible
 - Sprint weekend some years
@@ -2830,7 +2830,7 @@ Autodromo Hermanos Rodriguez, Mexico City
 - Power units stressed significantly — cooling critical
 - Peraltada: famous banked final corner, tight stadium section after
 - Foro Sol stadium section: incredible atmosphere, tight and twisty
-- Main straight: DRS helps but altitude reduces effect
+- Main straight: Straight Mode helps but altitude reduces top speed effect; Overtake Mode less potent at 2,285m
 - Tyres: medium deg. 1-stop usually optimal
 - Strategy: unique altitude effect means teams test things here
 - Crowd: Mexican fans loudest of the year — Checo home race atmosphere
@@ -2869,7 +2869,7 @@ Lusail International Circuit, Qatar — Night race
 - Very fast, flowing circuit — high-speed sweepers throughout
 - Turns 1-6: long high-speed complex, committed driving required
 - Back section: more technical, slower corners for contrast
-- DRS zone: main straight into Turn 1 — decent overtaking
+- Straight Mode zones: main straight into Turn 1 — decent overtaking; Overtake Mode adds a meaningful attack option
 - Tyres: very high deg — blistering issues historically
 - 2-stop almost mandatory. Tyre management critical
 - Sprint weekend in 2026
@@ -2880,7 +2880,7 @@ Yas Marina Circuit, Abu Dhabi — Season finale, night race
 - 58 laps, 5.281km, 16 corners
 - Updated 2021: faster, more overtaking-friendly after redesign
 - Turn 5-6-7: main technical complex, tight and twisty
-- Back straight: DRS zone, reasonable overtaking
+- Back straight: Straight Mode zone, reasonable overtaking — Overtake Mode the main attack weapon here
 - Marina section: night race with hotel, yachts — spectacular backdrop
 - Tyres: medium deg, 1-stop typical but 2-stop possible
 - Strategy: final race, teams sometimes gamble for championship
@@ -3037,7 +3037,7 @@ F1_SAFE_KEYWORDS = [
     "championship", "campeonato", "qualifying", "clasificación",
     "pit stop", "tyre", "llanta", "strategy", "estrategia",
     "lap", "vuelta", "podium", "podio", "overtake", "adelantar",
-    "safety car", "drs", "fia", "ferrari", "mercedes", "red bull",
+    "safety car", "drs", "straight mode", "overtake mode", "fia", "ferrari", "mercedes", "red bull",
     "mclaren", "aston", "alpine", "williams", "haas", "audi",
     "cadillac", "rb", "checo", "hamilton", "verstappen", "antonelli",
     "leclerc", "russell", "norris", "alonso", "sainz", "bottas",
