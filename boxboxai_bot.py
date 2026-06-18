@@ -5119,7 +5119,10 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         live_search_context: str = "",
                         fia_docs_context: str = "",
                         next_race_context: str = "",
-                        driver_profile: str = "") -> str:
+                        driver_profile: str = "",
+                        race_replay: str = "",
+                        champ_scenarios: str = "",
+                        fan_profile: str = "") -> str:
     """
     Token-optimized system prompt builder.
     Core: ~400 tokens always. Context: injected only when needed.
@@ -5179,6 +5182,12 @@ def build_system_prompt(mem: dict, news_context: str = "",
         ctx_blocks.append(f"DRIVER STATS:{driver_stats[:300]}")
     if driver_profile:
         ctx_blocks.append(f"DRIVER PROFILE:{driver_profile[:1500]}")
+    if race_replay:
+        ctx_blocks.append(f"RACE REPLAY:{race_replay[:800]}")
+    if champ_scenarios:
+        ctx_blocks.append(f"CHAMPIONSHIP SCENARIOS:{champ_scenarios[:1200]}")
+    if fan_profile:
+        ctx_blocks.append(f"FAN PROFILE:{fan_profile[:400]}")
     if historical_context:
         ctx_blocks.append(f"HISTORY:{historical_context[:1200]}")
     if prediction_accuracy:
@@ -5563,16 +5572,9 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     if user_data:
         user_profile_ctx = build_user_profile(user_data)
 
-    # Combine remaining extra context (driver_deep_ctx gets its own block below)
-    extra_ctx = "\n\n".join(filter(None, [
-        race_replay_ctx,
-        champ_scenario_ctx,
-        fan_ctx,
-    ]))
-
-    # Merge extra into user_profile_ctx
-    if extra_ctx:
-        user_profile_ctx = (user_profile_ctx + "\n\n" + extra_ctx).strip()
+    # user_profile_ctx now carries only build_user_profile output (~56 chars),
+    # which fits comfortably in the USER[:150] block.
+    # All larger context blobs get their own dedicated ctx_blocks entries below.
 
     system   = build_system_prompt(
         mem, news_ctx, weather_ctx, historical_ctx,
@@ -5580,6 +5582,9 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         pred_accuracy, driver_stats_ctx, practice_ctx,
         live_search_ctx, fia_docs_ctx, next_race_ctx,
         driver_profile=driver_deep_ctx,
+        race_replay=race_replay_ctx,
+        champ_scenarios=champ_scenario_ctx,
+        fan_profile=fan_ctx,
     )
     messages = history + [{"role": "user", "content": user_msg}]
 

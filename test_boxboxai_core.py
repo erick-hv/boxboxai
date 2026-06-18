@@ -624,3 +624,51 @@ class TestContextTruncationLimits:
         prompt = bot.build_system_prompt(
             _minimal_mem(), driver_profile=profile)
         assert "DRIVER PROFILE:" in prompt
+
+    def test_race_replay_not_truncated_via_user_block(self):
+        # get_race_replay_context produces ~597 chars; old path merged into USER[:150]
+        long_replay = "R" * 580
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), race_replay=long_replay)
+        assert long_replay in prompt, (
+            "RACE REPLAY content was truncated — confirm race_replay_ctx is "
+            "routed to race_replay= kwarg, not merged into user_profile")
+
+    def test_race_replay_gets_own_block_label(self):
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), race_replay="some replay data")
+        assert "RACE REPLAY:" in prompt
+
+    def test_champ_scenarios_not_truncated_via_user_block(self):
+        # build_championship_scenarios produces ~1000 chars; old path → USER[:150]
+        long_champ = "C" * 950
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), champ_scenarios=long_champ)
+        assert long_champ in prompt, (
+            "CHAMPIONSHIP SCENARIOS content was truncated — confirm "
+            "champ_scenario_ctx is routed to champ_scenarios= kwarg")
+
+    def test_champ_scenarios_gets_own_block_label(self):
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), champ_scenarios="NOR needs 50 pts")
+        assert "CHAMPIONSHIP SCENARIOS:" in prompt
+
+    def test_fan_profile_not_truncated_via_user_block(self):
+        # build_fan_context produces ~311 chars; old path → USER[:150]
+        long_fan = "F" * 300
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), fan_profile=long_fan)
+        assert long_fan in prompt, (
+            "FAN PROFILE content was truncated — confirm fan_ctx is "
+            "routed to fan_profile= kwarg, not merged into user_profile")
+
+    def test_fan_profile_gets_own_block_label(self):
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), fan_profile="Supports McLaren")
+        assert "FAN PROFILE:" in prompt
+
+    def test_user_block_still_present_when_only_user_profile_set(self):
+        # USER block should still work for its intended short content
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), user_profile="Prefers Spanish language")
+        assert "USER:" in prompt
