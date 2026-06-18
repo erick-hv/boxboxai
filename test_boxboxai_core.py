@@ -577,3 +577,50 @@ class TestSpanishNotSpa:
 
     def test_spacecraft_does_not_match_spa(self):
         assert bot._resolve_circuit_key("spacecraft trajectory") == ""
+
+
+# ── Context truncation regression tests ──────────────────────────────────────
+
+def _minimal_mem():
+    return {"episodic": [], "semantic": {}}
+
+
+class TestContextTruncationLimits:
+    """
+    Confirms that long content in HISTORY, SESSION DATA, and DRIVER PROFILE
+    reaches Claude at its real size, not silently truncated to a smaller limit.
+    Each test builds a synthetic string just above the old broken limit and
+    verifies the system prompt contains the FULL string.
+    """
+
+    def test_history_not_truncated_at_200(self):
+        # HISTORICAL_DATA is 1153 chars; old limit was 200. Use 1100-char string.
+        long_history = "H" * 1100
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), historical_context=long_history)
+        assert long_history in prompt, (
+            "HISTORY block was truncated — check the [:N] limit in ctx_blocks")
+
+    def test_session_data_not_truncated_at_300(self):
+        # get_practice_context can produce up to 800 chars; old limit was 300.
+        long_session = "S" * 750
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), practice_context=long_session)
+        assert long_session in prompt, (
+            "SESSION DATA block was truncated — check the [:N] limit in ctx_blocks")
+
+    def test_driver_profile_not_truncated_via_user_block(self):
+        # build_driver_profile produces a multi-section block; old path merged it
+        # into user_profile ([:150]). New DRIVER PROFILE block allows up to 1500.
+        long_profile = "D" * 1200
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), driver_profile=long_profile)
+        assert long_profile in prompt, (
+            "DRIVER PROFILE block was truncated — confirm driver_deep_ctx is "
+            "routed to driver_profile= kwarg, not merged into user_profile")
+
+    def test_driver_profile_gets_own_block_label(self):
+        profile = "VER profile data " * 20  # ~340 chars
+        prompt = bot.build_system_prompt(
+            _minimal_mem(), driver_profile=profile)
+        assert "DRIVER PROFILE:" in prompt

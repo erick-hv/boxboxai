@@ -5118,7 +5118,8 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         practice_context: str = "",
                         live_search_context: str = "",
                         fia_docs_context: str = "",
-                        next_race_context: str = "") -> str:
+                        next_race_context: str = "",
+                        driver_profile: str = "") -> str:
     """
     Token-optimized system prompt builder.
     Core: ~400 tokens always. Context: injected only when needed.
@@ -5171,13 +5172,15 @@ def build_system_prompt(mem: dict, news_context: str = "",
     if live_context:
         ctx_blocks.append(f"LIVE SESSION:{live_context[:200]}")
     if practice_context:
-        ctx_blocks.append(f"SESSION DATA:{practice_context[:300]}")
+        ctx_blocks.append(f"SESSION DATA:{practice_context[:800]}")
     if circuit_guide:
         ctx_blocks.append(f"CIRCUIT:{circuit_guide[:1500]}")
     if driver_stats:
         ctx_blocks.append(f"DRIVER STATS:{driver_stats[:300]}")
+    if driver_profile:
+        ctx_blocks.append(f"DRIVER PROFILE:{driver_profile[:1500]}")
     if historical_context:
-        ctx_blocks.append(f"HISTORY:{historical_context[:200]}")
+        ctx_blocks.append(f"HISTORY:{historical_context[:1200]}")
     if prediction_accuracy:
         ctx_blocks.append(f"PREDICTION RECORD:{prediction_accuracy[:150]}")
     if user_profile:
@@ -5560,9 +5563,8 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     if user_data:
         user_profile_ctx = build_user_profile(user_data)
 
-    # Combine all extra context
+    # Combine remaining extra context (driver_deep_ctx gets its own block below)
     extra_ctx = "\n\n".join(filter(None, [
-        driver_deep_ctx,
         race_replay_ctx,
         champ_scenario_ctx,
         fan_ctx,
@@ -5576,7 +5578,8 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         mem, news_ctx, weather_ctx, historical_ctx,
         user_profile_ctx, live_ctx, circuit_ctx,
         pred_accuracy, driver_stats_ctx, practice_ctx,
-        live_search_ctx, fia_docs_ctx, next_race_ctx
+        live_search_ctx, fia_docs_ctx, next_race_ctx,
+        driver_profile=driver_deep_ctx,
     )
     messages = history + [{"role": "user", "content": user_msg}]
 
