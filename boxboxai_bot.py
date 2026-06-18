@@ -3219,14 +3219,33 @@ Yas Marina Circuit, Abu Dhabi — Season finale, night race
 """,
 }
 
+def _resolve_circuit_key(query: str) -> str:
+    """
+    Returns the CIRCUIT_GUIDES key for query, or '' if no match.
+    Uses CIRCUIT_ALIASES (sorted longest-first, word-boundary matched) then
+    falls back to direct CIRCUIT_GUIDES key substring matching.
+    """
+    q = query.lower()
+    # Aliases: longest first so "saudi arabia" beats "saudi", word-boundary
+    # to avoid short aliases (uk, usa, cota) matching inside other words.
+    for alias in sorted(CIRCUIT_ALIASES.keys(), key=len, reverse=True):
+        if re.search(r'\b' + re.escape(alias) + r'\b', q):
+            return CIRCUIT_ALIASES[alias]
+    # Direct CIRCUIT_GUIDES key match (plain substring — keys are unambiguous)
+    for circuit in CIRCUIT_GUIDES:
+        if circuit in q:
+            return circuit
+    return ""
+
+
 def get_circuit_guide(query: str) -> str:
     """Returns circuit guide if query mentions a specific circuit."""
-    q = query.lower()
-    for circuit, guide in CIRCUIT_GUIDES.items():
-        if circuit in q:
-            zone_suffix = _build_zone_suffix(circuit)
-            return f"CIRCUIT GUIDE — {circuit.upper()}:{guide}{zone_suffix}"
-    return ""
+    key = _resolve_circuit_key(query)
+    if not key:
+        return ""
+    guide = CIRCUIT_GUIDES[key]
+    zone_suffix = _build_zone_suffix(key)
+    return f"CIRCUIT GUIDE — {key.upper()}:{guide}{zone_suffix}"
 
 
 def _build_zone_suffix(circuit_key: str) -> str:
@@ -5153,7 +5172,7 @@ def build_system_prompt(mem: dict, news_context: str = "",
     if practice_context:
         ctx_blocks.append(f"SESSION DATA:{practice_context[:300]}")
     if circuit_guide:
-        ctx_blocks.append(f"CIRCUIT:{circuit_guide[:300]}")
+        ctx_blocks.append(f"CIRCUIT:{circuit_guide[:1500]}")
     if driver_stats:
         ctx_blocks.append(f"DRIVER STATS:{driver_stats[:300]}")
     if historical_context:
@@ -5648,6 +5667,19 @@ CIRCUIT_ALIASES = {
     "vegas": "las vegas",
     "qatar": "lusail",
     "uae": "abu dhabi", "abudhabi": "abu dhabi", "yas marina": "abu dhabi",
+    # Popular venue names not covered by country/race-name aliases above
+    "monte carlo": "monaco",
+    "hungaroring": "budapest",
+    "circuit of the americas": "austin",
+    "marina bay": "singapore",
+    "hermanos rodriguez": "mexico city",
+    "autodromo nazionale": "monza",
+    "circuit gilles villeneuve": "montreal",
+    "losail": "lusail",
+    "albert park": "melbourne",
+    "baku city circuit": "baku",
+    "österreichring": "spielberg",
+    "jeddah corniche": "jeddah",
 }
 
 
