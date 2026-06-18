@@ -543,3 +543,37 @@ class TestCircuitGuideWithZoneData:
             guide = bot.get_circuit_guide("barcelona")
         assert "CIRCUIT GUIDE" in guide
         assert "PRECISE 2026 ZONE DATA" not in guide
+
+
+# ── Spa / Spanish substring collision regression ──────────────────────────────
+
+class TestSpanishNotSpa:
+    """
+    'spa' is a CIRCUIT_GUIDES key.  'spanish' / 'spain' contain 'spa' as a
+    substring.  Word-boundary matching in _resolve_circuit_key must prevent
+    Spa-Francorchamps from triggering on Spanish GP queries.
+    """
+
+    def test_spanish_gp_resolves_to_barcelona(self):
+        assert bot._resolve_circuit_key("tell me about the Spanish GP") == "barcelona"
+
+    def test_spain_resolves_to_barcelona(self):
+        assert bot._resolve_circuit_key("what happened in spain last year") == "barcelona"
+
+    def test_spanish_grand_prix_strategy(self):
+        assert bot._resolve_circuit_key("Spanish Grand Prix strategy") == "barcelona"
+
+    def test_literal_spa_still_resolves_to_spa(self):
+        assert bot._resolve_circuit_key("tell me about spa") == "spa"
+
+    def test_spa_francorchamps_resolves_to_spa(self):
+        assert bot._resolve_circuit_key("spa francorchamps sector 1") == "spa"
+
+    def test_belgium_gp_resolves_to_spa(self):
+        assert bot._resolve_circuit_key("belgium gp at spa") == "spa"
+
+    def test_spanner_does_not_match_spa(self):
+        assert bot._resolve_circuit_key("spanner in the works") == ""
+
+    def test_spacecraft_does_not_match_spa(self):
+        assert bot._resolve_circuit_key("spacecraft trajectory") == ""

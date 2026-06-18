@@ -3231,9 +3231,10 @@ def _resolve_circuit_key(query: str) -> str:
     for alias in sorted(CIRCUIT_ALIASES.keys(), key=len, reverse=True):
         if re.search(r'\b' + re.escape(alias) + r'\b', q):
             return CIRCUIT_ALIASES[alias]
-    # Direct CIRCUIT_GUIDES key match (plain substring — keys are unambiguous)
+    # Direct CIRCUIT_GUIDES key match — word-boundary to stop "spa" matching
+    # inside "spanish", consistent with alias matching above.
     for circuit in CIRCUIT_GUIDES:
-        if circuit in q:
+        if re.search(r'\b' + re.escape(circuit) + r'\b', q):
             return circuit
     return ""
 
