@@ -6054,17 +6054,15 @@ async def cmd_reingest(update, ctx, mem_ref=None):
     if not result:
         await update.message.reply_text(f"⚠️ Cleared state for R{rnd} but Jolpica fetch failed — will retry on next auto-ingest cycle.")
         return
-    mem_local = load_f1_memory()
-    episodes = mem_local.get("episodic", [])
+    mem = mem_ref[0]
+    episodes = mem.get("episodic", [])
     existing = next((e for e in episodes if e.get("round") == rnd), None)
     if existing:
         existing.update(result)
     else:
         episodes.append(result)
-    mem_local["episodic"] = episodes
-    save_f1_memory(mem_local)
-    if mem_ref is not None:
-        mem_ref[0] = mem_local
+    mem["episodic"] = episodes
+    save_f1_memory(mem)
     dnfs = ", ".join(result.get("dnfs", [])) or "none"
     fc = " ".join(result.get("full_classification", [])[:5])
     await update.message.reply_text(f"✅ R{rnd} re-ingested from Jolpica:\nWinner: {result.get('winner','?')}\nP2: {result.get('p2','?')} P3: {result.get('p3','?')}\nDNFs: {dnfs}\nTop 5: {fc}\nEnrichment state cleared — telemetry will re-run on next cycle.\nPredictor state cleared — auto-predictor will re-run on next 30-min cycle.")

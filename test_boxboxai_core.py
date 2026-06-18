@@ -672,3 +672,80 @@ class TestContextTruncationLimits:
         prompt = bot.build_system_prompt(
             _minimal_mem(), user_profile="Prefers Spanish language")
         assert "USER:" in prompt
+
+
+# ── cmd_reingest race-condition regression ────────────────────────────────────
+
+class TestReingestRaceCondition:
+    """
+    Regression test for the cmd_reingest vs auto_ingest_loop silent data-loss bug.
+
+    Root cause: cmd_reingest previously called load_f1_memory() (fresh disk read),
+    creating a separate dict from mem_ref[0]. If auto_ingest_loop had modified
+    mem_ref[0] in memory (e.g. wrote qualifying data) but hadn't yet saved when
+    /reingest fired, reingest would read the OLD on-disk state, save, and then
+    auto_ingest_loop would resume and overwrite disk with its stale copy —
+    silently dropping the reingest changes.
+
+    Fix: cmd_reingest now uses mem_ref[0] directly (same dict object as the
+    background loops), so any in-flight mutations are always visible and preserved.
+    """
+
+    def test_reingest_preserves_concurrent_ingest_loop_changes(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        async def _run():
+            # Simulate auto_ingest_loop mid-flight: qualifying data already written
+            # to the shared in-memory dict but NOT yet saved to disk.
+            initial_episode = {
+                "round": 7,
+                "race_name": "Spanish GP",
+                "pole": "NOR",           # written by auto_ingest_loop mid-flight
+                "pole_time": "1:11.383",
+            }
+            mem_ref = [{"episodic": [initial_episode], "semantic": {}}]
+
+            fake_result = {
+                "round": 7, "race_name": "Spanish GP",
+                "winner": "NOR", "p2": "PIA", "p3": "RUS",
+                "dnfs": [], "full_classification": ["NOR", "PIA", "RUS", "HAM", "VER"],
+            }
+
+            update = MagicMock()
+            update.effective_user.id = int(bot.BOT_OWNER_ID)
+            update.message.reply_text = AsyncMock()
+            ctx = MagicMock()
+            ctx.args = ["7"]
+
+            saved_objects = []
+
+            with patch.object(bot, "fetch_race_result", return_value=fake_result), \
+                 patch.object(bot, "save_f1_memory",
+                              side_effect=lambda m: saved_objects.append(m)), \
+                 patch.object(bot, "load_ingest_state", return_value={}), \
+                 patch.object(bot, "save_ingest_state"), \
+                 patch.object(bot, "load_enrichment_state", return_value={}), \
+                 patch.object(bot, "save_enrichment_state"), \
+                 patch.object(bot, "load_predictor_state", return_value={}), \
+                 patch.object(bot, "save_predictor_state"):
+                await bot.cmd_reingest(update, ctx, mem_ref=mem_ref)
+
+            episodes = mem_ref[0]["episodic"]
+            r7 = next(e for e in episodes if e.get("round") == 7)
+
+            # Race result from /reingest must be present
+            assert r7.get("winner") == "NOR"
+            # Qualifying data from auto_ingest_loop must NOT be overwritten
+            assert r7.get("pole") == "NOR", (
+                "Qualifying data written by auto_ingest_loop mid-flight was lost — "
+                "cmd_reingest created a stale local copy instead of using mem_ref[0]"
+            )
+            # save_f1_memory must have been called with the shared object, not a copy
+            assert saved_objects, "save_f1_memory was never called"
+            assert saved_objects[-1] is mem_ref[0], (
+                "save_f1_memory was called with a separate dict, not mem_ref[0] — "
+                "a stale write could still overwrite concurrent changes"
+            )
+
+        asyncio.run(_run())
