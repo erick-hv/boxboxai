@@ -4151,7 +4151,10 @@ def enrich_episode_with_telemetry(episode: dict,
         return episode
 
     # Merge into episode
-    if telemetry.get("full_order"):
+    # Jolpica's official classification (set during initial ingestion) is authoritative
+    # and includes post-race penalty adjustments. Only fill from FastF1's on-track
+    # order if no official classification exists yet (e.g. episode created manually).
+    if telemetry.get("full_order") and not episode.get("full_classification"):
         episode["full_classification"] = [
             f"P{i+1}:{c}" for i, c in
             enumerate(telemetry["full_order"])]

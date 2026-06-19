@@ -966,3 +966,358 @@ class TestContextBlockMetadata:
         report = bot._format_debug_context_report("query", ctx)
         assert "CIRCUIT:" in report
         assert "Barcelona" in report
+
+
+# ── Area 1: Predictor CSV staleness detection ─────────────────────────────────
+#
+# Findings:
+#   EXISTS: round_num stamp check when expected_round is provided
+#   GAP 1: expected_round=None (most user queries) skips ALL staleness checks
+#   GAP 2: absent round_num in CSV + provided expected_round → silently served
+#   NO mtime age gate; the mtime is only a cache invalidation key, not a
+#   freshness check. Owner alerts on >24h age but serving is never blocked.
+
+class TestPredictorCSVStaleness:
+
+    @staticmethod
+    def _make_csv(path, rows):
+        import csv as _csv
+        if not rows:
+            path.write_text("")
+            return
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def test_missing_csv_returns_empty(self):
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            non_existent = Path(td) / "no_such.csv"
+            with patch.object(bot, "PREDICTOR_CSV", non_existent):
+                bot._PREDICTOR_CACHE.clear()
+                block, rows = bot.get_predictor_context(expected_round=7)
+        assert block == "" and rows == []
+
+    def test_correct_round_is_served(self):
+        from pathlib import Path
+        import tempfile
+        csv_rows = [{"round_num": "7", "code": "NOR",
+                     "win_mc_pct": "45.0", "podium_mc_pct": "80.0"}]
+        with tempfile.TemporaryDirectory() as td:
+            csv_file = Path(td) / "pred.csv"
+            self._make_csv(csv_file, csv_rows)
+            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+                bot._PREDICTOR_CACHE.clear()
+                _block, rows = bot.get_predictor_context(expected_round=7)
+        assert rows and rows[0]["code"] == "NOR"
+
+    def test_wrong_round_returns_empty(self):
+        from pathlib import Path
+        import tempfile
+        csv_rows = [{"round_num": "6", "code": "NOR",
+                     "win_mc_pct": "45.0", "podium_mc_pct": "80.0"}]
+        with tempfile.TemporaryDirectory() as td:
+            csv_file = Path(td) / "pred.csv"
+            self._make_csv(csv_file, csv_rows)
+            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+                bot._PREDICTOR_CACHE.clear()
+                block, rows = bot.get_predictor_context(expected_round=7)
+        assert block == "" and rows == []
+
+    def test_absent_round_num_silently_served_gap(self):
+        """Gap: missing round_num column + expected_round provided → except clause
+        silently serves the stale CSV. Documented as intentional for pre-fix CSVs
+        but is a risk if a post-fix CSV loses its round_num column."""
+        from pathlib import Path
+        import tempfile
+        csv_rows = [{"code": "NOR", "win_mc_pct": "45.0"}]  # no round_num field
+        with tempfile.TemporaryDirectory() as td:
+            csv_file = Path(td) / "pred.csv"
+            self._make_csv(csv_file, csv_rows)
+            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+                bot._PREDICTOR_CACHE.clear()
+                _block, rows = bot.get_predictor_context(expected_round=7)
+        assert rows, (
+            "Gap confirmed: absent round_num → stale CSV served without rejection "
+            "even when expected_round is provided"
+        )
+
+    def test_no_expected_round_bypasses_staleness_check_gap(self):
+        """Gap: get_predictor_context(expected_round=None) skips all round checks.
+        A CSV from any past race weekend is served without warning. This is the
+        most common call path for user queries (/predict, /winner)."""
+        from pathlib import Path
+        import tempfile
+        csv_rows = [{"round_num": "1", "code": "NOR", "win_mc_pct": "45.0"}]
+        with tempfile.TemporaryDirectory() as td:
+            csv_file = Path(td) / "pred.csv"
+            self._make_csv(csv_file, csv_rows)
+            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+                bot._PREDICTOR_CACHE.clear()
+                _block, rows = bot.get_predictor_context(expected_round=None)
+        assert rows, (
+            "Gap confirmed: round 1 CSV served silently when expected_round=None — "
+            "no staleness check fires on the most common call path"
+        )
+
+
+# ── Area 2: Concurrent memory write safety ────────────────────────────────────
+#
+# Findings:
+#   No asyncio.Lock around mem_ref writes anywhere in the codebase.
+#   Both background loops do `mem = mem_ref[0]` (reference, not copy) then
+#   `mem_ref[0] = mem` (no-op — same object). In-place mutations are visible
+#   to all callers holding the same reference, so no stale-copy data loss.
+#   cmd_debug_context: read-only, no write-back — safe.
+#   cmd_reingest: in-place mutation, no mem_ref[0]=mem assignment — correct.
+#   Gap: enrich_episode_with_telemetry overwrites full_classification — see Area 4.
+
+class TestConcurrentMemoryWriteSafety:
+
+    def test_two_async_writers_do_not_lose_data(self):
+        """Two async tasks that both read mem_ref[0] and append to episodic
+        must both see their writes persist, because they share the same dict object."""
+        import asyncio
+
+        async def writer_a(mem_ref):
+            mem = mem_ref[0]
+            await asyncio.sleep(0)  # yield to allow interleaving
+            mem["episodic"].append({"round": 1, "winner": "NOR"})
+
+        async def writer_b(mem_ref):
+            mem = mem_ref[0]
+            await asyncio.sleep(0)
+            mem["episodic"].append({"round": 2, "winner": "VER"})
+
+        async def _run():
+            mem_ref = [{"episodic": [], "semantic": {}}]
+            await asyncio.gather(writer_a(mem_ref), writer_b(mem_ref))
+            return mem_ref[0]
+
+        result = asyncio.run(_run())
+        rounds = {ep["round"] for ep in result["episodic"]}
+        assert rounds == {1, 2}, "Both writers' data must survive async interleaving"
+
+    def test_loop_pattern_uses_same_dict_object(self):
+        """Verify the pattern used by both background loops: mem = mem_ref[0] gives
+        a reference to the same dict, not a copy. The write-back is a no-op."""
+        mem_ref = [{"episodic": [], "semantic": {}}]
+        mem = mem_ref[0]
+        mem["episodic"].append({"round": 1})
+        mem["episodic"].sort(key=lambda x: x.get("round", 0))
+        mem_ref[0] = mem  # background loop write-back pattern
+
+        assert mem_ref[0] is mem, "write-back must not create a new dict object"
+        assert len(mem_ref[0]["episodic"]) == 1
+
+    def test_cmd_debug_context_does_not_write_mem(self):
+        """cmd_debug_context reads mem_ref[0] but must never write back to it."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        async def _run():
+            mem_ref = [{"episodic": [{"round": 5, "winner": "NOR"}], "semantic": {}}]
+            update = MagicMock()
+            update.effective_user.id = int(bot.BOT_OWNER_ID)
+            update.message.reply_text = AsyncMock()
+            ctx = MagicMock()
+            ctx.args = ["what happened"]
+            with patch.object(bot, "_gather_context", return_value=_empty_ctx()):
+                await bot.cmd_debug_context(update, ctx, mem_ref=mem_ref)
+            return mem_ref[0]["episodic"]
+
+        result = asyncio.run(_run())
+        assert result == [{"round": 5, "winner": "NOR"}], (
+            "cmd_debug_context must not modify mem_ref[0]['episodic']"
+        )
+
+
+# ── Area 3: Context block size enforcement ────────────────────────────────────
+#
+# Findings: All [:N] slices exist and are enforced. Undertested — no tests
+# verified that the limits actually truncate (only that content is present).
+# ContextBlock meta suffix appears in the label, not the content, so it does
+# not reduce the content budget. Python str slicing is character-based
+# (Unicode-safe) — no byte-level truncation issue.
+
+class TestContextBlockSizeEnforcement:
+
+    @staticmethod
+    def _prompt(**kwargs):
+        return bot.build_system_prompt(_minimal_mem(), **kwargs)
+
+    def test_news_truncated_at_300(self):
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        prompt = self._prompt(news_context="N" * 300 + marker)
+        assert "N" * 300 in prompt
+        assert marker not in prompt
+
+    def test_session_data_truncated_at_800(self):
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        prompt = self._prompt(practice_context="S" * 800 + marker)
+        assert "S" * 800 in prompt
+        assert marker not in prompt
+
+    def test_circuit_guide_truncated_at_1500(self):
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        prompt = self._prompt(circuit_guide="C" * 1500 + marker)
+        assert "C" * 1500 in prompt
+        assert marker not in prompt
+
+    def test_race_replay_truncated_at_800(self):
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        prompt = self._prompt(race_replay="R" * 800 + marker)
+        assert "R" * 800 in prompt
+        assert marker not in prompt
+
+    def test_driver_profile_truncated_at_1500(self):
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        prompt = self._prompt(driver_profile="D" * 1500 + marker)
+        assert "D" * 1500 in prompt
+        assert marker not in prompt
+
+    def test_fia_docs_truncated_at_600(self):
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        prompt = self._prompt(fia_docs_context="F" * 600 + marker)
+        assert "F" * 600 in prompt
+        assert marker not in prompt
+
+    def test_context_block_meta_does_not_consume_content_budget(self):
+        """The age/completeness suffix is in the LABEL, not sliced from content.
+        An 800-char ContextBlock must inject all 800 content chars."""
+        cb = bot.ContextBlock(content="Y" * 800, data_age_hours=3.5, completeness="partial")
+        prompt = self._prompt(race_replay=cb)
+        assert "Y" * 800 in prompt
+        assert "3.5h old" in prompt
+        assert "partial" in prompt
+
+    def test_context_block_over_limit_content_is_truncated(self):
+        """Even a ContextBlock respects the [:800] content limit."""
+        marker = "OVERFLOW_BEYOND_LIMIT"
+        cb = bot.ContextBlock(content="Z" * 800 + marker, data_age_hours=1.0)
+        prompt = self._prompt(race_replay=cb)
+        assert "Z" * 800 in prompt
+        assert marker not in prompt
+
+    def test_unicode_content_not_corrupted(self):
+        """Python str slicing is character-based so accented chars must survive
+        truncation intact (no mojibake, no replacement chars)."""
+        unicode_news = "Sérgio Pérez dominó en Baku. " * 20  # well over 300 chars
+        prompt = self._prompt(news_context=unicode_news)
+        assert "Sérgio" in prompt
+        assert "�" not in prompt  # no Unicode replacement character
+
+
+# ── Area 4: Jolpica / OpenF1 conflict detection ───────────────────────────────
+#
+# Findings:
+#   NO conflict detection exists anywhere.
+#   Data sources are mostly partitioned (Jolpica = official results; FastF1/OpenF1
+#   = telemetry). They don't write the same fields EXCEPT:
+#   enrich_episode_with_telemetry overwrites full_classification if telemetry
+#   provides full_order — this is the one field both sources can determine.
+#   Impact: post-race penalties that change official standings (Jolpica reflects
+#   them; FastF1 on-track order does not) are silently lost after enrichment.
+#   Additionally, episode['winner'] (Jolpica) and full_classification[0] (FastF1)
+#   can disagree with no detection or reconciliation.
+
+class TestJolpicaOpenF1ConflictDetection:
+
+    def test_enrichment_preserves_official_classification_when_present(self):
+        """Fix: full_classification set by Jolpica (official, penalty-aware) must
+        not be overwritten by FastF1 on-track order during enrichment.
+        E.g. NOR wins after a VER time penalty — FastF1 records VER first on track,
+        but the official classification correctly shows NOR P1."""
+        from unittest.mock import MagicMock
+
+        episode = {
+            "round": 7,
+            "winner": "NOR",
+            "full_classification": ["P1:NOR", "P2:VER", "P3:PIA"],
+        }
+        # FastF1 on-track order: VER led to the flag before the penalty decision
+        fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
+        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+            enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
+
+        assert enriched["full_classification"] == ["P1:NOR", "P2:VER", "P3:PIA"], (
+            "Jolpica official classification must survive enrichment unchanged"
+        )
+        assert enriched["full_classification"][0] == "P1:NOR", (
+            "P1 must remain NOR (official) not VER (on-track only)"
+        )
+
+    def test_winner_and_classification_consistent_after_enrichment(self):
+        """After enrichment, episode['winner'] and full_classification[0] must agree.
+        Before the fix they could silently diverge: winner=NOR (Jolpica) but
+        full_classification[0]=P1:VER (FastF1). Now both reflect the official result."""
+        from unittest.mock import MagicMock
+
+        episode = {
+            "round": 7,
+            "winner": "NOR",
+            "full_classification": ["P1:NOR", "P2:VER", "P3:PIA"],
+        }
+        fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
+        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+            enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
+
+        assert enriched["winner"] == "NOR"
+        assert "P1:NOR" in enriched["full_classification"], (
+            "winner and full_classification must agree on who won"
+        )
+
+    def test_no_conflict_when_sources_agree(self):
+        """Happy path: when FastF1 on-track order matches official result,
+        enrichment produces consistent episode data — Jolpica classification unchanged."""
+        from unittest.mock import MagicMock
+
+        episode = {
+            "round": 7,
+            "winner": "VER",
+            "full_classification": ["P1:VER", "P2:NOR", "P3:PIA"],
+        }
+        fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
+        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+            enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
+
+        assert enriched["winner"] == "VER"
+        assert enriched["full_classification"][0] == "P1:VER"
+
+    def test_enrichment_does_not_overwrite_classification_when_telemetry_has_no_order(self):
+        """If telemetry lacks full_order, official Jolpica classification is
+        preserved unchanged (was already correct before the fix)."""
+        from unittest.mock import MagicMock
+
+        episode = {
+            "round": 7,
+            "winner": "NOR",
+            "full_classification": ["P1:NOR", "P2:VER", "P3:PIA"],
+        }
+        # Telemetry without full_order (e.g., only sector data available)
+        fake_telemetry = {"sector_bests": {"S1": "VER"}, "source": "openf1"}
+        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+            enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
+
+        assert enriched["full_classification"] == ["P1:NOR", "P2:VER", "P3:PIA"]
+
+    def test_enrichment_uses_fastf1_order_as_fallback_when_classification_absent(self):
+        """If an episode has no full_classification (edge case: manual creation or
+        a failed Jolpica call), FastF1's full_order is used to populate it."""
+        from unittest.mock import MagicMock
+
+        episode = {"round": 7, "winner": "VER"}  # no full_classification key
+        fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
+        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+            enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
+
+        assert enriched.get("full_classification") == ["P1:VER", "P2:NOR", "P3:PIA"], (
+            "FastF1 order must fill in full_classification when Jolpica hasn't set it"
+        )
