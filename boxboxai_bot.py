@@ -22,10 +22,17 @@ Run:
 """
 
 import os, sys, json, re, time, logging, threading, asyncio
-from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
+
+from news import (get_news_context, start_news_scheduler, refresh_news_cache,
+                  load_news_cache, get_news_cache_time, get_news_cache)
+from models import ContextBlock, _unpack_ctx
+from security import (check_rate_limit, check_injection, sanitize_message,
+                      is_off_topic, get_off_topic_response, get_injection_response,
+                      alert_owner, log_security_event, BOT_OWNER_ID,
+                      _abuse_strikes, MAX_HISTORY_STORE)
 
 # ── dependency check ──────────────────────────────────────────
 missing = []
@@ -56,14 +63,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class ContextBlock:
-    """Wraps a context string with optional freshness metadata."""
-    content: str
-    data_age_hours: float | None = None
-    completeness: str = "full"   # "full" | "partial" | "unknown"
-
-
 # ═════════════════════════════════════════════════════════════
 #  CONFIG
 # ═════════════════════════════════════════════════════════════
@@ -79,242 +78,7 @@ SEASON        = 2026
 # Telegram message limit
 TG_MAX_CHARS  = 4096
 
-# ── The Race news feed ────────────────────────────────────────
-THE_RACE_RSS      = "https://the-race.com/feed/"
-AUTOSPORT_RSS     = "https://www.autosport.com/rss/feed/f1"
-RACEFANS_RSS      = "https://www.racefans.net/feed/"
-NEWS_FEEDS        = [THE_RACE_RSS, AUTOSPORT_RSS, RACEFANS_RSS]
-THE_RACE_SEARCH   = "https://the-race.com/?s="
-NEWS_CACHE_FILE        = Path(__file__).parent / "boxboxai_news_cache.json"
 CIRCUIT_MAP_CACHE_FILE = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
-NEWS_REFRESH_MINS = 30   # refresh RSS every 30 minutes
-
-# ═════════════════════════════════════════════════════════════
-#  THE RACE — NEWS ENGINE
-# ═════════════════════════════════════════════════════════════
-
-_news_cache      = []          # list of {title, summary, url, date}
-_news_cache_time = None        # last fetch time
-_news_lock       = threading.Lock()
-
-
-def _fetch_rss() -> list:
-    """
-    Fetches and parses F1 news from The Race, Autosport, and RaceFans.
-    Returns deduplicated list of articles sorted by date.
-    """
-    all_articles = []
-    seen_titles  = set()
-
-    for feed_url in NEWS_FEEDS:
-        try:
-            r = requests.get(feed_url, timeout=10,
-                             headers={"User-Agent": "BoxBoxAI/1.0"})
-            if r.status_code != 200:
-                continue
-            root = ET.fromstring(r.text)
-            for item in root.findall(".//item")[:15]:
-                title   = item.findtext("title", "").strip()
-                link    = item.findtext("link",  "").strip()
-                pubdate = item.findtext("pubDate", "").strip()
-                desc    = item.findtext("description", "")
-                desc    = re.sub(r"<[^>]+>", "", desc).strip()[:300]
-
-                # Deduplicate by title similarity
-                title_key = re.sub(r"[^a-z0-9]", "", title.lower())[:40]
-                if title and title_key not in seen_titles:
-                    seen_titles.add(title_key)
-                    all_articles.append({
-                        "title":   title,
-                        "summary": desc,
-                        "url":     link,
-                        "date":    pubdate,
-                        "source":  feed_url.split("/")[2].replace("www.",""),
-                    })
-        except Exception as e:
-            log.warning(f"RSS fetch failed for {feed_url}: {e}")
-            continue
-
-    # Sort by date descending (most recent first)
-    def parse_date(a):
-        try:
-            from email.utils import parsedate_to_datetime
-            return parsedate_to_datetime(a["date"]).timestamp()
-        except Exception:
-            return 0
-
-    all_articles.sort(key=parse_date, reverse=True)
-    return all_articles[:30]
-
-
-def _fetch_article_text(url: str, max_chars: int = 2000) -> str:
-    """Fetches and extracts plain text from a The Race article URL."""
-    try:
-        r = requests.get(url, timeout=10,
-                         headers={"User-Agent": "BoxBoxAI/1.0"})
-        if r.status_code != 200:
-            return ""
-        # Strip scripts, styles, nav
-        text = r.text
-        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL)
-        text = re.sub(r"<style[^>]*>.*?</style>",   "", text, flags=re.DOTALL)
-        text = re.sub(r"<nav[^>]*>.*?</nav>",        "", text, flags=re.DOTALL)
-        text = re.sub(r"<header[^>]*>.*?</header>",  "", text, flags=re.DOTALL)
-        text = re.sub(r"<footer[^>]*>.*?</footer>",  "", text, flags=re.DOTALL)
-        # Extract article/main content
-        m = re.search(r'<article[^>]*>(.*?)</article>', text, re.DOTALL)
-        if m:
-            text = m.group(1)
-        # Strip all remaining HTML
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:max_chars]
-    except Exception:
-        return ""
-
-
-def _search_the_race(query: str, max_results: int = 3) -> list:
-    """
-    Searches The Race site for a query.
-    Returns list of {title, summary, url} from search results.
-    """
-    try:
-        q   = requests.utils.quote(query)
-        url = f"{THE_RACE_SEARCH}{q}"
-        r   = requests.get(url, timeout=10,
-                           headers={"User-Agent": "BoxBoxAI/1.0"})
-        if r.status_code != 200:
-            return []
-        # Extract article links and titles from search results page
-        # The Race search results use article tags with h2/h3 titles
-        articles = []
-        pattern  = r'<h[23][^>]*>\s*<a\s+href="([^"]+)"[^>]*>([^<]+)</a>'
-        for match in re.finditer(pattern, r.text)[:max_results * 2]:
-            url_found = match.group(1).strip()
-            title     = re.sub(r"\s+", " ", match.group(2)).strip()
-            if "the-race.com" in url_found and title and len(title) > 10:
-                articles.append({"title": title, "url": url_found, "summary": ""})
-            if len(articles) >= max_results:
-                break
-        return articles
-    except Exception as e:
-        log.warning(f"The Race search failed: {e}")
-        return []
-
-
-def refresh_news_cache():
-    """Refreshes the RSS cache. Called on startup and every 30 min."""
-    global _news_cache, _news_cache_time
-    with _news_lock:
-        articles = _fetch_rss()
-        if articles:
-            _news_cache      = articles
-            _news_cache_time = datetime.now()
-            # Persist to disk so it survives restarts
-            try:
-                NEWS_CACHE_FILE.write_text(json.dumps({
-                    "fetched_at": datetime.now().isoformat(),
-                    "articles":   articles,
-                }, indent=2))
-            except Exception:
-                pass
-            log.info(f"News cache refreshed: {len(articles)} articles")
-
-
-def load_news_cache() -> list:
-    """Loads news cache from disk (used on startup)."""
-    global _news_cache, _news_cache_time
-    if NEWS_CACHE_FILE.exists():
-        try:
-            data = json.loads(NEWS_CACHE_FILE.read_text())
-            _news_cache      = data.get("articles", [])
-            _news_cache_time = datetime.fromisoformat(
-                data.get("fetched_at", "2000-01-01"))
-            return _news_cache
-        except Exception:
-            pass
-    return []
-
-
-def get_news_context(query: str = "") -> str:
-    """
-    Returns relevant news context for a given query.
-    - If query is empty: returns latest headlines summary
-    - If query given: finds relevant articles + fetches content
-    """
-    global _news_cache, _news_cache_time
-
-    # Refresh if stale
-    needs_refresh = (
-        not _news_cache or
-        _news_cache_time is None or
-        datetime.now() - _news_cache_time > timedelta(minutes=NEWS_REFRESH_MINS)
-    )
-    if needs_refresh:
-        refresh_news_cache()
-
-    if not query:
-        # Return latest headlines
-        if not _news_cache:
-            return ""
-        lines = ["Latest F1 news:"]
-        for a in _news_cache[:8]:
-            lines.append(f"- {a['title']} ({a['date'][:16]})")
-        return "\n".join(lines)
-
-    # Query-specific: search RSS cache first
-    q_lower = query.lower()
-    relevant = []
-
-    # Score cached articles by keyword match
-    for article in _news_cache:
-        score = 0
-        text  = (article["title"] + " " + article["summary"]).lower()
-        for word in q_lower.split():
-            if len(word) > 3 and word in text:
-                score += 1
-        if score > 0:
-            relevant.append((score, article))
-
-    relevant.sort(key=lambda x: x[0], reverse=True)
-    top = [a for _, a in relevant[:3]]
-
-    # If nothing in cache, search The Race live
-    if not top:
-        top = _search_the_race(query, max_results=2)
-
-    if not top:
-        return ""
-
-    # Fetch full text of top article
-    context_parts = [f"Recent F1 news related to '{query}':"]
-    for article in top[:2]:
-        context_parts.append(f"\n{article['title']}")
-        if article.get("summary"):
-            context_parts.append(article["summary"])
-        elif article.get("url"):
-            full_text = _fetch_article_text(article["url"], max_chars=1500)
-            if full_text:
-                context_parts.append(full_text[:800])
-
-    return "\n".join(context_parts)
-
-
-def _news_scheduler():
-    """Background thread that refreshes news every 30 minutes."""
-    while True:
-        time.sleep(NEWS_REFRESH_MINS * 60)
-        try:
-            refresh_news_cache()
-        except Exception:
-            pass
-
-
-def start_news_scheduler():
-    """Starts background news refresh thread."""
-    t = threading.Thread(target=_news_scheduler, daemon=True)
-    t.start()
-    log.info("News scheduler started (refreshes every 30 min)")
 
 
 # ═════════════════════════════════════════════════════════════
@@ -3384,305 +3148,8 @@ def _detect_driver_stat_query(text: str) -> str | None:
 #  OFF-TOPIC GUARDRAIL
 # ═════════════════════════════════════════════════════════════
 
-OFF_TOPIC_RESPONSES_EN = [
-    "Staying in my lane! 🏎 I'm BoxBoxAI — I only talk F1. For that kind of question try ChatGPT or Google. Now, want to talk about the Monaco GP this weekend? 🇲🇨",
-    "That's outside my pit box! 🔧 I'm built exclusively for F1 — races, drivers, strategy, predictions. Ask me anything about the 2026 season instead! 🏆",
-    "I only know racing! 🏁 BoxBoxAI is your F1 expert, not a general assistant. Try ChatGPT for that. But if you want to debate whether Antonelli is the best rookie ever, I'm ready 🔥",
-]
-
-OFF_TOPIC_RESPONSES_ES = [
-    "¡Me quedo en mi carril! 🏎 Soy BoxBoxAI, solo hablo de F1. Para eso mejor usa ChatGPT. Pero si quieres hablar de Mónaco este fin de semana, aquí estoy 🇲🇨",
-    "¡Eso está fuera de mi box! 🔧 Solo entiendo de F1 — carreras, pilotos, estrategia, predicciones. ¡Pregúntame algo de la temporada 2026! 🏆",
-    "¡Solo sé de carreras! 🏁 BoxBoxAI es tu experto en F1, no un asistente general. Para eso usa ChatGPT. Pero si quieres debatir si el Checo puede ganar en Mónaco, ¡adelante! 🔥",
-]
-
-# Keywords that strongly suggest off-topic questions
-OFF_TOPIC_KEYWORDS = [
-    # Homework / school
-    "write my essay", "write an essay", "write my", "my essay",
-    "for school", "my homework", "my assignment",
-    "write code for", "help me code", "code for me",
-    "recipe for", "give me a recipe", "how to cook",
-    "pasta recipe", "carbonara", "ingredients for",
-    "cover letter", "job application", "resume template",
-    "math problem", "solve this equation", "algebra",
-    "help me code", "help me with code", "write code for me",
-    "write a program", "write a script",
-    "my homework", "my assignment", "for school",
-    "homework", "tarea", "essay", "ensayo", "thesis", "tesis",
-    "assignment", "trabajo escolar", "examen", "exam", "school",
-    "escuela", "university", "universidad", "college", "teacher",
-    "profesor", "classroom", "aula", "subject", "materia",
-    "math", "matemáticas", "history", "historia", "biology",
-    "biología", "chemistry", "química", "physics", "física",
-    "literature", "literatura", "geography", "geografía",
-    # Work tasks
-    "write my", "escríbeme", "write an email", "escribe un correo",
-    "cover letter", "carta de presentación", "resume", "curriculum",
-    "business plan", "plan de negocios", "presentation", "presentación",
-    "spreadsheet", "excel formula", "code for me", "write code",
-    "debug my", "fix my code", "javascript", "python tutorial",
-    # General non-F1
-    "recipe", "receta", "cooking", "cocina", "how to cook",
-    "medical advice", "consejo médico", "symptoms", "síntomas",
-    "legal advice", "consejo legal", "lawyer", "abogado",
-    "translate", "traducir", "translate this",
-    "what is the capital", "cuál es la capital",
-    "who invented", "quién inventó",
-    "movie recommendation", "recomendación de película",
-    "song lyrics", "letra de canción",
-    "stock price", "precio de acción",
-    "crypto", "bitcoin", "investment advice",
-    "travel advice", "consejo de viaje",
-    "hotel recommendation", "restaurante",
-    "workout", "ejercicio rutina", "diet plan", "dieta",
-]
-
-# F1-adjacent keywords that should always pass through
-F1_SAFE_KEYWORDS = [
-    "f1", "formula", "grand prix", "gp", "race", "carrera",
-    "driver", "piloto", "team", "equipo", "circuit", "circuito",
-    "championship", "campeonato", "qualifying", "clasificación",
-    "pit stop", "tyre", "llanta", "strategy", "estrategia",
-    "lap", "vuelta", "podium", "podio", "overtake", "adelantar",
-    "safety car", "drs", "straight mode", "overtake mode", "fia", "ferrari", "mercedes", "red bull",
-    "mclaren", "aston", "alpine", "williams", "haas", "audi",
-    "cadillac", "rb", "checo", "hamilton", "verstappen", "antonelli",
-    "leclerc", "russell", "norris", "alonso", "sainz", "bottas",
-    "perez", "pérez", "gasly", "colapinto", "lawson", "hadjar",
-    "bearman", "ocon", "hulkenberg", "bortoleto", "albon",
-    "monaco", "monza", "silverstone", "spa", "suzuka", "melbourne",
-    "bahrain", "jeddah", "miami", "imola", "montreal", "barcelona",
-    "spielberg", "budapest", "zandvoort", "baku", "singapore",
-    "austin", "mexico", "são paulo", "las vegas", "lusail", "abu dhabi",
-    "weather", "clima", "rain", "lluvia", "prediction", "predicción",
-    "news", "noticias", "standings", "clasificación general",
-    "viejo sabroso", "magic", "smooth operator", "super max",
-    "el nano", "checo", "checote",
-]
 
 
-def is_off_topic(text: str) -> bool:
-    """
-    Returns True if the message is clearly not F1-related.
-    Uses a two-pass check:
-    1. If any F1 keyword present → always allow
-    2. If strong off-topic keyword present → block
-    """
-    t = text.lower()
-
-    # Always allow if F1 content detected
-    # Use word-boundary matching to avoid "rb" matching "carbonara"
-    import re as _re
-    if any(_re.search(r'\b' + _re.escape(kw) + r'\b', t)
-           for kw in F1_SAFE_KEYWORDS if len(kw) > 3):
-        return False
-    # Also check short exact matches
-    if any(kw == t or f" {kw} " in f" {t} "
-           for kw in F1_SAFE_KEYWORDS if len(kw) <= 3):
-        return False
-
-    # Block if off-topic keyword detected
-    if any(kw in t for kw in OFF_TOPIC_KEYWORDS):
-        return True
-
-    # Short greetings always allowed
-    if len(text.strip().split()) <= 4:
-        return False
-
-    return False
-
-
-def _detect_language(text: str) -> str:
-    """Returns 'es' for Spanish, 'en' for English based on content."""
-    spanish_indicators = [
-        "qué", "que ", "cómo", "como ", "quién", "quien", "por favor",
-        "puedes", "puede", "tienes", "tiene", "eres", "hacer", "haz",
-        "dime", "dame", "estás", "esta ", "este ", "ese ", "esa ",
-        "ignora", "actúa", "actua", "revela", "instrucción", "instruccion",
-        "sin restricciones", "olvida", "nueva ", "nuevo ",
-        "tarea", "escuela", "ayuda", "necesito", "quiero", "soy ",
-        "del ", "las ", "los ", "una ", "unos ", "para ", "pero ",
-    ]
-    t = text.lower()
-    score = sum(1 for w in spanish_indicators if w in t)
-    return "es" if score >= 1 else "en"
-
-
-def get_off_topic_response(text: str) -> str:
-    """Returns off-topic redirect in the same language as the message."""
-    import random
-    lang = _detect_language(text)
-    responses = OFF_TOPIC_RESPONSES_ES if lang == "es" else OFF_TOPIC_RESPONSES_EN
-    return random.choice(responses)
-
-
-# ═════════════════════════════════════════════════════════════
-#  SECURITY LAYER
-# ═════════════════════════════════════════════════════════════
-
-# Rate limiting: max messages per user per window
-RATE_LIMIT_MAX      = 20    # max messages
-RATE_LIMIT_WINDOW   = 3600  # per hour (seconds)
-RATE_LIMIT_WARN_AT  = 15    # warn user when they hit this
-
-# Abuse tracking: auto-ban after repeated violations
-ABUSE_STRIKE_LIMIT  = 5     # strikes before temp ban
-ABUSE_BAN_DURATION  = 3600  # 1 hour ban (seconds)
-
-# Message limits
-MAX_MESSAGE_LENGTH  = 1000  # chars — ignore huge pastes
-MAX_HISTORY_STORE   = 20    # messages to keep per user
-
-# Prompt injection patterns — attempts to override bot instructions
-INJECTION_PATTERNS = [
-    r"ignore\s+(your\s+)?(previous\s+)?(instructions|prompt|rules|guidelines)",
-    r"forget\s+(your\s+)?(instructions|rules|training)",
-    r"forget\s+(everything|all)\s+(you\s+)?(know|learned)",
-    r"you\s+are\s+now\s+(a\s+)?(different|new|another|dan|gpt|chatgpt)",
-    r"you\s+are\s+now\s+dan",
-    r"act\s+as\s+(if\s+you\s+are\s+)?(a\s+)?(different|gpt|chatgpt|openai|unrestricted)",
-    r"act\s+as\s+if\s+you\s+have\s+no\s+(rules|restrictions|filter|guidelines)",
-    r"pretend\s+(you\s+are|to\s+be)\s+(a\s+)?(different|unrestricted|jailbroken|gpt|chatgpt)",
-    r"pretend\s+you\s+(are|have)\s+no\s+(rules|restrictions)",
-    r"now\s+you\s+(are|have)\s+no\s+(rules|restrictions|filter)",
-    r"jailbreak",
-    r"dan\s+mode",
-    r"developer\s+mode",
-    r"bypass\s+(your\s+)?(filter|restriction|rule|safety|guardrail)",
-    r"reveal\s+(your\s+)?(api\s+key|token|secret|password|credentials)",
-    r"what\s+is\s+your\s+(api\s+key|token|secret|system\s+prompt)",
-    r"show\s+me\s+your\s+(api\s+key|token|secret|system\s+prompt|instructions)",
-    r"(reveal|show|print|display)\s+(the\s+)?(system\s+prompt|your\s+instructions|your\s+prompt)",
-    r"print\s+your\s+(system\s+prompt|instructions|api\s+key)",
-    r"ignore\s+all\s+previous",
-    r"nueva\s+instrucción",
-    r"ignora\s+(todas\s+)?(tus\s+)?(instrucciones|reglas)",
-    r"olvida\s+(todo|tus\s+instrucciones|las\s+reglas)",
-    r"actúa\s+como\s+(si\s+fueras\s+)?(otro|diferente|sin\s+restricciones)",
-    r"modo\s+desarrollador",
-    r"sin\s+restricciones",
-    r"revela\s+(tu\s+)?(clave|token|contraseña|api)",
-    r"ahora\s+(eres|tienes)\s+(otro|diferente|sin\s+reglas)",
-    r"reveal your system",
-    r"your system prompt",
-    r"show your (system|instructions|prompt)",
-    r"what.{0,10}system prompt",
-    r"(reveal|show|display|print|tell me)\s+(the\s+)?system\s+prompt",
-    r"what('s| is) (in )?your (system )?prompt",
-    r"(show|tell|give)\s+me\s+your\s+(instructions|system|prompt)",
-]
-
-INJECTION_RESPONSES_EN = [
-    "Nice try! 🏎 I'm BoxBoxAI — I only talk F1 and I'm not going anywhere. Ask me about Monaco instead!",
-    "That's not how this pit stop works. 🔧 I'm locked in on F1 and nothing you type changes that. What do you want to know about the 2026 season?",
-    "Security check passed — still just an F1 bot! 🏁 Ask me something about racing.",
-]
-
-INJECTION_RESPONSES_ES = [
-    "¡Buen intento! 🏎 Soy BoxBoxAI — solo hablo de F1 y eso no va a cambiar. ¿Qué quieres saber de Mónaco?",
-    "Así no funciona este pit stop. 🔧 Estoy bloqueado en F1 y nada de lo que escribas cambia eso. ¿Qué quieres saber de la temporada 2026?",
-    "¡Revisión de seguridad superada — sigo siendo solo un bot de F1! 🏁 Pregúntame algo de carreras.",
-]
-
-# Per-user rate limit storage (in-memory, resets on restart)
-_rate_limits: dict = {}   # {user_id: [timestamp, ...]}
-_abuse_strikes: dict = {} # {user_id: {"strikes": int, "banned_until": float}}
-
-
-def check_rate_limit(user_id: str) -> tuple[bool, str]:
-    """
-    Checks if a user has exceeded the rate limit.
-    Returns (allowed: bool, message: str)
-    """
-    now      = time.time()
-    uid      = str(user_id)
-    window   = now - RATE_LIMIT_WINDOW
-
-    # Clean old timestamps
-    if uid not in _rate_limits:
-        _rate_limits[uid] = []
-    _rate_limits[uid] = [t for t in _rate_limits[uid] if t > window]
-
-    count = len(_rate_limits[uid])
-
-    # Check if banned
-    ban_info = _abuse_strikes.get(uid, {})
-    banned_until = ban_info.get("banned_until", 0)
-    if banned_until > now:
-        mins = int((banned_until - now) / 60) + 1
-        return False, (
-            f"⛔ You've been temporarily rate-limited for {mins} more minute(s). "
-            f"Come back soon! 🏎"
-        )
-
-    # Hard limit
-    if count >= RATE_LIMIT_MAX:
-        # Add a strike
-        if uid not in _abuse_strikes:
-            _abuse_strikes[uid] = {"strikes": 0, "banned_until": 0}
-        _abuse_strikes[uid]["strikes"] += 1
-
-        if _abuse_strikes[uid]["strikes"] >= ABUSE_STRIKE_LIMIT:
-            _abuse_strikes[uid]["banned_until"] = now + ABUSE_BAN_DURATION
-            return False, (
-                "⛔ Too many messages. You've been rate-limited for 1 hour. "
-                "BoxBoxAI is for F1 fans, not bots! 🏎"
-            )
-
-        return False, (
-            f"⏱ Slow down! You've sent {count} messages this hour. "
-            f"Limit is {RATE_LIMIT_MAX}/hour. Try again later! 🏎"
-        )
-
-    # Soft warning
-    if count >= RATE_LIMIT_WARN_AT:
-        _rate_limits[uid].append(now)
-        remaining = RATE_LIMIT_MAX - count - 1
-        return True, f"⚠️ Heads up — {remaining} messages left this hour."
-
-    _rate_limits[uid].append(now)
-    return True, ""
-
-
-def check_injection(text: str) -> bool:
-    """Returns True if text looks like a prompt injection attempt."""
-    t = text.lower()
-    return any(re.search(pattern, t) for pattern in INJECTION_PATTERNS)
-
-
-def get_injection_response(text: str) -> str:
-    """Returns injection response in the same language as the attempt."""
-    import random
-    lang = _detect_language(text)
-    responses = INJECTION_RESPONSES_ES if lang == "es" else INJECTION_RESPONSES_EN
-    return random.choice(responses)
-
-
-def sanitize_message(text: str) -> str:
-    """
-    Sanitizes user input:
-    - Truncates overly long messages
-    - Strips null bytes and control characters
-    - Normalizes whitespace
-    """
-    # Strip null bytes and most control chars (keep newlines/tabs)
-    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
-    # Strip Unicode invisibles that bypass injection regex (zero-width, direction overrides, BOM)
-    text = re.sub("[​‌‍‭‮⁠﻿]", "", text)
-    # Normalize whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    # Truncate
-    if len(text) > MAX_MESSAGE_LENGTH:
-        text = text[:MAX_MESSAGE_LENGTH] + "…"
-    return text
-
-
-def log_security_event(user_id: str, user_name: str,
-                        event_type: str, detail: str):
-    """Logs security events for monitoring."""
-    log.warning(
-        f"SECURITY [{event_type}] user={user_id} ({user_name}): {detail[:100]}")
 
 
 
@@ -3691,19 +3158,6 @@ BANNER = """🏎 *BoxBoxAI* — F1 Race Analyst
 _Developed by Erick Hernandez_
 ━━━━━━━━━━━━━━━━━━━━━━"""
 
-# ── Bot owner — alerts go only here ──────────────────────────
-BOT_OWNER_ID = "8892063151"
-
-async def alert_owner(app, message: str):
-    """Sends a private alert only to the bot owner (Erick)."""
-    try:
-        await app.bot.send_message(
-            chat_id=BOT_OWNER_ID,
-            text=f"🚨 *BoxBoxAI Alert*\n\n{message}",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        log.error(f"Failed to alert owner: {e}")
 
 
 # Global app reference for alerts from non-async contexts
@@ -5131,23 +4585,6 @@ def fetch_last_race() -> dict | None:
 # ═════════════════════════════════════════════════════════════
 #  SYSTEM PROMPT BUILDER
 # ═════════════════════════════════════════════════════════════
-def _unpack_ctx(val) -> tuple[str, str]:
-    """Returns (content, meta_suffix) from a plain str or ContextBlock.
-
-    meta_suffix is empty for plain strings and for full/no-age ContextBlocks,
-    so callers can always do f"LABEL{meta}:{content[:N]}" safely.
-    """
-    if isinstance(val, ContextBlock):
-        parts = []
-        if val.data_age_hours is not None:
-            parts.append(f"{val.data_age_hours:.1f}h old")
-        if val.completeness != "full":
-            parts.append(val.completeness)
-        meta = f" ({', '.join(parts)})" if parts else ""
-        return val.content, meta
-    return val, ""
-
-
 def build_system_prompt(mem: dict, news_context: str = "",
                         weather_context: str = "",
                         historical_context: str = "",
@@ -5634,9 +5071,10 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
 
     # Wrap time-sensitive news context with age metadata
     if news_ctx:
+        _nct = get_news_cache_time()
         _news_age = (
-            (datetime.now() - _news_cache_time).total_seconds() / 3600
-            if _news_cache_time else None
+            (datetime.now() - _nct).total_seconds() / 3600
+            if _nct else None
         )
         news_ctx = ContextBlock(content=news_ctx, data_age_hours=_news_age)
 
@@ -6387,7 +5825,7 @@ async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Checking latest F1 news... 📰")
     # Refresh and get articles directly
     refresh_news_cache()
-    articles = _news_cache[:10] if _news_cache else []
+    articles = get_news_cache()[:10] if get_news_cache() else []
     if not articles:
         await update.message.reply_text(
             "⚠️ Couldn't fetch news right now. Try again in a moment.")

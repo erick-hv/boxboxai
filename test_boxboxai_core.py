@@ -1307,6 +1307,75 @@ class TestJolpicaOpenF1ConflictDetection:
 
         assert enriched["full_classification"] == ["P1:NOR", "P2:VER", "P3:PIA"]
 
+
+# ── news.py extraction regressions (Step 1) ──────────────────────────────────
+
+class TestNewsModuleExtraction:
+
+    def test_import_does_not_start_background_thread(self):
+        """Importing news.py must not start the scheduler thread as a side effect.
+        Verifies start_news_scheduler() is callable-only, not triggered at module level."""
+        import threading
+        import sys
+        import importlib
+        # Save the module already held by boxboxai_bot so we can restore it
+        original_module = sys.modules.get("news")
+        try:
+            del sys.modules["news"]
+            count_before = threading.active_count()
+            importlib.import_module("news")
+            count_after = threading.active_count()
+            assert count_after == count_before, (
+                f"news import started {count_after - count_before} unexpected thread(s)"
+            )
+        finally:
+            # Always restore the original module so bot's function references
+            # remain valid for subsequent tests
+            if original_module is not None:
+                sys.modules["news"] = original_module
+            elif "news" in sys.modules:
+                del sys.modules["news"]
+
+    def test_get_news_cache_time_reflects_live_updates(self):
+        """get_news_cache_time() returns the live _news_cache_time, not an
+        import-time snapshot — regression for the reassignment-vs-mutation bug."""
+        import news
+        from datetime import datetime as _dt
+        original = news._news_cache_time
+        try:
+            test_time = _dt(2026, 6, 19, 12, 0, 0)
+            news._news_cache_time = test_time
+            assert news.get_news_cache_time() == test_time
+        finally:
+            news._news_cache_time = original
+
+    def test_get_news_cache_reflects_live_updates(self):
+        """get_news_cache() returns the live _news_cache list, not an
+        import-time snapshot — same pattern as get_news_cache_time."""
+        import news
+        original = news._news_cache
+        try:
+            fake = [{"title": "Test article", "url": "http://x"}]
+            news._news_cache = fake
+            assert news.get_news_cache() is fake
+        finally:
+            news._news_cache = original
+
+    def test_bot_get_news_cache_time_reads_live_news_state(self):
+        """bot.get_news_cache_time() (re-exported from news) must read the
+        live news._news_cache_time, not a stale import-time snapshot.
+        This verifies _gather_context's ContextBlock age annotation works
+        end-to-end after the news.py extraction."""
+        import news
+        from datetime import datetime as _dt
+        original = news._news_cache_time
+        try:
+            sentinel = _dt(2026, 6, 19, 15, 30, 0)
+            news._news_cache_time = sentinel
+            assert bot.get_news_cache_time() == sentinel
+        finally:
+            news._news_cache_time = original
+
     def test_enrichment_uses_fastf1_order_as_fallback_when_classification_absent(self):
         """If an episode has no full_classification (edge case: manual creation or
         a failed Jolpica call), FastF1's full_order is used to populate it."""
