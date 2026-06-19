@@ -10,6 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import boxboxai_bot as bot
+import data_layer
 
 
 # ── resolve_driver_code ───────────────────────────────────────────────────────
@@ -144,7 +145,7 @@ class TestGetPredictorContextStaleness:
 
     def test_returns_data_when_round_matches(self, tmp_path, monkeypatch):
         csv_path = self._write_csv(tmp_path, round_num=8)
-        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv_path)
+        monkeypatch.setattr(data_layer, "PREDICTOR_CSV", csv_path)
         bot._PREDICTOR_CACHE.clear()
         block, rows = bot.get_predictor_context(expected_round=8)
         assert rows, "Should return rows when CSV round matches expected"
@@ -153,7 +154,7 @@ class TestGetPredictorContextStaleness:
     def test_returns_empty_when_round_mismatches(self, tmp_path, monkeypatch):
         # CSV was written for R7 (Spain) but we're asking for R8 (Austria)
         csv_path = self._write_csv(tmp_path, round_num=7, race_name="Spanish GP")
-        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv_path)
+        monkeypatch.setattr(data_layer, "PREDICTOR_CSV", csv_path)
         bot._PREDICTOR_CACHE.clear()
         block, rows = bot.get_predictor_context(expected_round=8)
         assert rows == [], "Stale CSV (R7) must not be returned for R8"
@@ -163,7 +164,7 @@ class TestGetPredictorContextStaleness:
         # Callers that don't pass expected_round (e.g. cache-clear call in auto-predictor)
         # should always get the data regardless of round stamp
         csv_path = self._write_csv(tmp_path, round_num=7)
-        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv_path)
+        monkeypatch.setattr(data_layer, "PREDICTOR_CSV", csv_path)
         bot._PREDICTOR_CACHE.clear()
         block, rows = bot.get_predictor_context(expected_round=None)
         assert rows, "Should return rows when no expected_round is given"
@@ -175,13 +176,13 @@ class TestGetPredictorContextStaleness:
             "code,FullName,TeamName,win_mc_pct,podium_mc_pct,avg_mc_pos\n"
             "NOR,Lando Norris,McLaren,35.2,68.4,2.1\n"
         )
-        monkeypatch.setattr(bot, "PREDICTOR_CSV", csv)
+        monkeypatch.setattr(data_layer, "PREDICTOR_CSV", csv)
         bot._PREDICTOR_CACHE.clear()
         block, rows = bot.get_predictor_context(expected_round=8)
         assert rows, "Old CSV without round_num should still be served (graceful degradation)"
 
     def test_returns_empty_when_csv_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(bot, "PREDICTOR_CSV", tmp_path / "nonexistent.csv")
+        monkeypatch.setattr(data_layer, "PREDICTOR_CSV", tmp_path / "nonexistent.csv")
         bot._PREDICTOR_CACHE.clear()
         block, rows = bot.get_predictor_context(expected_round=8)
         assert rows == []
@@ -995,7 +996,7 @@ class TestPredictorCSVStaleness:
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             non_existent = Path(td) / "no_such.csv"
-            with patch.object(bot, "PREDICTOR_CSV", non_existent):
+            with patch.object(data_layer, "PREDICTOR_CSV", non_existent):
                 bot._PREDICTOR_CACHE.clear()
                 block, rows = bot.get_predictor_context(expected_round=7)
         assert block == "" and rows == []
@@ -1008,7 +1009,7 @@ class TestPredictorCSVStaleness:
         with tempfile.TemporaryDirectory() as td:
             csv_file = Path(td) / "pred.csv"
             self._make_csv(csv_file, csv_rows)
-            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+            with patch.object(data_layer, "PREDICTOR_CSV", csv_file):
                 bot._PREDICTOR_CACHE.clear()
                 _block, rows = bot.get_predictor_context(expected_round=7)
         assert rows and rows[0]["code"] == "NOR"
@@ -1021,7 +1022,7 @@ class TestPredictorCSVStaleness:
         with tempfile.TemporaryDirectory() as td:
             csv_file = Path(td) / "pred.csv"
             self._make_csv(csv_file, csv_rows)
-            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+            with patch.object(data_layer, "PREDICTOR_CSV", csv_file):
                 bot._PREDICTOR_CACHE.clear()
                 block, rows = bot.get_predictor_context(expected_round=7)
         assert block == "" and rows == []
@@ -1036,7 +1037,7 @@ class TestPredictorCSVStaleness:
         with tempfile.TemporaryDirectory() as td:
             csv_file = Path(td) / "pred.csv"
             self._make_csv(csv_file, csv_rows)
-            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+            with patch.object(data_layer, "PREDICTOR_CSV", csv_file):
                 bot._PREDICTOR_CACHE.clear()
                 _block, rows = bot.get_predictor_context(expected_round=7)
         assert rows, (
@@ -1054,7 +1055,7 @@ class TestPredictorCSVStaleness:
         with tempfile.TemporaryDirectory() as td:
             csv_file = Path(td) / "pred.csv"
             self._make_csv(csv_file, csv_rows)
-            with patch.object(bot, "PREDICTOR_CSV", csv_file):
+            with patch.object(data_layer, "PREDICTOR_CSV", csv_file):
                 bot._PREDICTOR_CACHE.clear()
                 _block, rows = bot.get_predictor_context(expected_round=None)
         assert rows, (
@@ -1239,8 +1240,8 @@ class TestJolpicaOpenF1ConflictDetection:
         }
         # FastF1 on-track order: VER led to the flag before the penalty decision
         fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
-        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
-             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+        with patch.object(data_layer, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(data_layer, "_ff1_session_summary", return_value=fake_telemetry):
             enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
 
         assert enriched["full_classification"] == ["P1:NOR", "P2:VER", "P3:PIA"], (
@@ -1262,8 +1263,8 @@ class TestJolpicaOpenF1ConflictDetection:
             "full_classification": ["P1:NOR", "P2:VER", "P3:PIA"],
         }
         fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
-        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
-             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+        with patch.object(data_layer, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(data_layer, "_ff1_session_summary", return_value=fake_telemetry):
             enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
 
         assert enriched["winner"] == "NOR"
@@ -1282,8 +1283,8 @@ class TestJolpicaOpenF1ConflictDetection:
             "full_classification": ["P1:VER", "P2:NOR", "P3:PIA"],
         }
         fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
-        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
-             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+        with patch.object(data_layer, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(data_layer, "_ff1_session_summary", return_value=fake_telemetry):
             enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
 
         assert enriched["winner"] == "VER"
@@ -1301,8 +1302,8 @@ class TestJolpicaOpenF1ConflictDetection:
         }
         # Telemetry without full_order (e.g., only sector data available)
         fake_telemetry = {"sector_bests": {"S1": "VER"}, "source": "openf1"}
-        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
-             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+        with patch.object(data_layer, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(data_layer, "_ff1_session_summary", return_value=fake_telemetry):
             enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
 
         assert enriched["full_classification"] == ["P1:NOR", "P2:VER", "P3:PIA"]
@@ -1383,10 +1384,68 @@ class TestNewsModuleExtraction:
 
         episode = {"round": 7, "winner": "VER"}  # no full_classification key
         fake_telemetry = {"full_order": ["VER", "NOR", "PIA"], "source": "fastf1"}
-        with patch.object(bot, "_safe_ff1_load", return_value=MagicMock()), \
-             patch.object(bot, "_ff1_session_summary", return_value=fake_telemetry):
+        with patch.object(data_layer, "_safe_ff1_load", return_value=MagicMock()), \
+             patch.object(data_layer, "_ff1_session_summary", return_value=fake_telemetry):
             enriched = bot.enrich_episode_with_telemetry(episode.copy(), round_num=7)
 
         assert enriched.get("full_classification") == ["P1:VER", "P2:NOR", "P3:PIA"], (
             "FastF1 order must fill in full_classification when Jolpica hasn't set it"
         )
+
+
+# ── data_layer.py extraction regressions (Step 4) ────────────────────────────
+
+class TestDataLayerExtraction:
+
+    def test_build_rich_story_works_without_ask_fn(self):
+        """build_rich_story(episode, ask_fn=None) must return a non-empty narrative
+        string without raising. Confirms the callable-injection seam is purely additive:
+        the function assembles story from episode data and does not require ask_fn."""
+        episode = {
+            "round": 7,
+            "race_name": "Spanish Grand Prix",
+            "winner": "ANT",
+            "p2": "RUS",
+            "p3": "NOR",
+            "fastest_lap": "ANT",
+            "fastest_lap_time": "1:14.123",
+            "champ_after": "ANT 110pts | RUS 88pts",
+        }
+        story = data_layer.build_rich_story(episode, ask_fn=None)
+        assert isinstance(story, str)
+        assert len(story) > 0, "build_rich_story must return non-empty string"
+        assert "ANT" in story, "story must mention the winner"
+
+    def test_build_rich_story_ask_fn_param_accepted(self):
+        """build_rich_story must accept ask_fn as a keyword arg without error,
+        so step 5 can wire in an LLM narrative pass without changing call sites."""
+        episode = {"round": 1, "winner": "RUS", "p2": "ANT", "p3": "NOR"}
+        # Pass a dummy callable — should be silently accepted (not yet used)
+        result = data_layer.build_rich_story(episode, ask_fn=lambda x, **kw: "unused")
+        assert isinstance(result, str)
+
+    def test_predictor_cache_is_same_object_via_bot_and_data_layer(self):
+        """bot._PREDICTOR_CACHE and data_layer._PREDICTOR_CACHE must be the
+        same dict object. This ensures bot's _PREDICTOR_CACHE.clear() (called
+        in _check_and_run_predictor) actually clears the cache used by
+        get_predictor_context in data_layer."""
+        assert bot._PREDICTOR_CACHE is data_layer._PREDICTOR_CACHE, (
+            "bot imports _PREDICTOR_CACHE by reference — both names must point "
+            "to the same dict so mutations in bot affect data_layer and vice versa"
+        )
+
+    def test_predictor_cache_mutation_visible_across_modules(self):
+        """Mutating data_layer._PREDICTOR_CACHE must be visible through bot's name."""
+        original = dict(data_layer._PREDICTOR_CACHE)
+        try:
+            data_layer._PREDICTOR_CACHE["__test__"] = "sentinel"
+            assert bot._PREDICTOR_CACHE.get("__test__") == "sentinel", (
+                "mutation via data_layer must be visible through bot's reference"
+            )
+            bot._PREDICTOR_CACHE.clear()
+            assert len(data_layer._PREDICTOR_CACHE) == 0, (
+                "bot.clear() must empty data_layer's cache too"
+            )
+        finally:
+            data_layer._PREDICTOR_CACHE.clear()
+            data_layer._PREDICTOR_CACHE.update(original)
