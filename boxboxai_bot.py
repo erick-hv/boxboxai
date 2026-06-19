@@ -7992,6 +7992,7 @@ def main():
     app.add_handler(CommandHandler("constructors",   cmd_constructors))
     app.add_handler(CommandHandler("predict",        cmd_predict))
     app.add_handler(CommandHandler("winner",         cmd_winner))
+    app.add_handler(CommandHandler("news",           cmd_news))
     async def _reingest_handler(update, ctx):
         await cmd_reingest(update, ctx, mem_ref)
     app.add_handler(CommandHandler("reingest",       _reingest_handler))
