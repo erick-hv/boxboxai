@@ -866,3 +866,103 @@ class TestCmdDebugContext:
             assert "FIA_DOCS:" in call_text
 
         asyncio.run(_run())
+
+
+# ── ContextBlock and _unpack_ctx ─────────────────────────────────────────────
+
+class TestContextBlockMetadata:
+
+    def test_context_block_construction(self):
+        cb = bot.ContextBlock(content="test", data_age_hours=2.5, completeness="partial")
+        assert cb.content == "test"
+        assert cb.data_age_hours == 2.5
+        assert cb.completeness == "partial"
+
+    def test_context_block_defaults(self):
+        cb = bot.ContextBlock(content="x")
+        assert cb.data_age_hours is None
+        assert cb.completeness == "full"
+
+    def test_unpack_ctx_plain_string_returns_empty_meta(self):
+        content, meta = bot._unpack_ctx("plain string")
+        assert content == "plain string"
+        assert meta == ""
+
+    def test_unpack_ctx_full_block_no_age_returns_empty_meta(self):
+        cb = bot.ContextBlock(content="data", completeness="full")
+        content, meta = bot._unpack_ctx(cb)
+        assert content == "data"
+        assert meta == ""
+
+    def test_unpack_ctx_with_age_formats_hours(self):
+        cb = bot.ContextBlock(content="data", data_age_hours=3.0)
+        content, meta = bot._unpack_ctx(cb)
+        assert content == "data"
+        assert "3.0h old" in meta
+
+    def test_unpack_ctx_partial_completeness_in_meta(self):
+        cb = bot.ContextBlock(content="data", completeness="partial")
+        _, meta = bot._unpack_ctx(cb)
+        assert "partial" in meta
+
+    def test_unpack_ctx_unknown_completeness_in_meta(self):
+        cb = bot.ContextBlock(content="data", completeness="unknown")
+        _, meta = bot._unpack_ctx(cb)
+        assert "unknown" in meta
+
+    def test_unpack_ctx_age_and_partial_both_present(self):
+        cb = bot.ContextBlock(content="data", data_age_hours=72.5, completeness="partial")
+        _, meta = bot._unpack_ctx(cb)
+        assert "72.5h old" in meta
+        assert "partial" in meta
+
+    def test_news_context_block_age_in_system_prompt(self):
+        cb = bot.ContextBlock(content="Norris wins sprint", data_age_hours=0.4)
+        prompt = bot.build_system_prompt(_minimal_mem(), news_context=cb)
+        assert "NEWS" in prompt
+        assert "0.4h old" in prompt
+        assert "Norris wins sprint" in prompt
+
+    def test_race_replay_partial_label_in_system_prompt(self):
+        cb = bot.ContextBlock(content="race replay data", completeness="partial")
+        prompt = bot.build_system_prompt(_minimal_mem(), race_replay=cb)
+        assert "RACE REPLAY" in prompt
+        assert "partial" in prompt
+
+    def test_practice_context_block_age_in_system_prompt(self):
+        cb = bot.ContextBlock(content="FP2 classification data", data_age_hours=5.2)
+        prompt = bot.build_system_prompt(_minimal_mem(), practice_context=cb)
+        assert "SESSION DATA" in prompt
+        assert "5.2h old" in prompt
+
+    def test_static_blocks_as_plain_strings_unaffected(self):
+        prompt = bot.build_system_prompt(
+            _minimal_mem(),
+            circuit_guide="Barcelona circuit guide",
+            driver_profile="VER profile data",
+        )
+        assert "CIRCUIT:" in prompt
+        assert "Barcelona circuit guide" in prompt
+        assert "DRIVER PROFILE:" in prompt
+        assert "VER profile data" in prompt
+
+    def test_format_debug_report_surfaces_age(self):
+        ctx = _empty_ctx()
+        ctx["news_ctx"] = bot.ContextBlock(content="N" * 200, data_age_hours=1.5)
+        report = bot._format_debug_context_report("query", ctx)
+        assert "1.5h old" in report
+        assert "NEWS" in report
+
+    def test_format_debug_report_surfaces_partial(self):
+        ctx = _empty_ctx()
+        ctx["race_replay_ctx"] = bot.ContextBlock(content="race data", completeness="partial")
+        report = bot._format_debug_context_report("query", ctx)
+        assert "partial" in report
+        assert "RACE_REPLAY" in report
+
+    def test_format_debug_report_plain_string_unchanged(self):
+        ctx = _empty_ctx()
+        ctx["circuit_ctx"] = "Barcelona guide"
+        report = bot._format_debug_context_report("query", ctx)
+        assert "CIRCUIT:" in report
+        assert "Barcelona" in report

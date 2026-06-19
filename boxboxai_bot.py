@@ -22,6 +22,7 @@ Run:
 """
 
 import os, sys, json, re, time, logging, threading, asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
@@ -53,6 +54,15 @@ logging.basicConfig(
     level=logging.INFO
 )
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class ContextBlock:
+    """Wraps a context string with optional freshness metadata."""
+    content: str
+    data_age_hours: float | None = None
+    completeness: str = "full"   # "full" | "partial" | "unknown"
+
 
 # ═════════════════════════════════════════════════════════════
 #  CONFIG
@@ -2572,7 +2582,7 @@ def get_actual_grid_for_prediction(round_num: int | None = None) -> str:
     return ""
 
 
-def get_session_context(query: str) -> str:
+def get_session_context(query: str):
     """
     Fetches real session timing data from OpenF1 first.
     Falls back to live search only if OpenF1 has no data.
@@ -2715,7 +2725,18 @@ def get_session_context(query: str) -> str:
                             log.info(
                                 f"OpenF1 {session_label} data: "
                                 f"{len(sorted_d)} drivers")
-                            return "\n".join(lines)
+                            try:
+                                end_dt = datetime.fromisoformat(
+                                    recent.get("date_end","").replace("Z","+00:00"))
+                                session_age_h = (
+                                    datetime.now(end_dt.tzinfo) - end_dt
+                                ).total_seconds() / 3600
+                            except Exception:
+                                session_age_h = None
+                            return ContextBlock(
+                                content="\n".join(lines),
+                                data_age_hours=session_age_h,
+                            )
     except Exception as e:
         log.warning(f"OpenF1 session context failed: {e}")
 
@@ -2725,12 +2746,12 @@ def get_session_context(query: str) -> str:
     search_q  = f"{race_name} {session_label} 2026 results classification"
     live      = live_search_f1(search_q)
     if live:
-        return live
+        return ContextBlock(content=live, completeness="unknown")
 
     # ── Last resort: news cache ───────────────────────────────
     news = get_news_context(
         f"{race_name} {session_label} 2026 results")
-    return news or ""
+    return ContextBlock(content=news, completeness="unknown") if news else ""
 
 
 
@@ -5107,6 +5128,23 @@ def fetch_last_race() -> dict | None:
 # ═════════════════════════════════════════════════════════════
 #  SYSTEM PROMPT BUILDER
 # ═════════════════════════════════════════════════════════════
+def _unpack_ctx(val) -> tuple[str, str]:
+    """Returns (content, meta_suffix) from a plain str or ContextBlock.
+
+    meta_suffix is empty for plain strings and for full/no-age ContextBlocks,
+    so callers can always do f"LABEL{meta}:{content[:N]}" safely.
+    """
+    if isinstance(val, ContextBlock):
+        parts = []
+        if val.data_age_hours is not None:
+            parts.append(f"{val.data_age_hours:.1f}h old")
+        if val.completeness != "full":
+            parts.append(val.completeness)
+        meta = f" ({', '.join(parts)})" if parts else ""
+        return val.content, meta
+    return val, ""
+
+
 def build_system_prompt(mem: dict, news_context: str = "",
                         weather_context: str = "",
                         historical_context: str = "",
@@ -5166,8 +5204,9 @@ def build_system_prompt(mem: dict, news_context: str = "",
         ctx_blocks.append(next_race_context)
         log.debug(f"ctx_block NEXT_RACE: {len(next_race_context)} chars")
     if news_context:
-        ctx_blocks.append(f"NEWS:{news_context[:300]}")
-        log.debug(f"ctx_block NEWS: {len(news_context[:300])} chars")
+        _nc, _nm = _unpack_ctx(news_context)
+        ctx_blocks.append(f"NEWS{_nm}:{_nc[:300]}")
+        log.debug(f"ctx_block NEWS: {len(_nc[:300])} chars{_nm}")
     if live_search_context:
         ctx_blocks.append(f"LIVE SEARCH:{live_search_context[:800]}")
         log.debug(f"ctx_block LIVE_SEARCH: {len(live_search_context[:800])} chars")
@@ -5181,8 +5220,9 @@ def build_system_prompt(mem: dict, news_context: str = "",
         ctx_blocks.append(f"LIVE SESSION:{live_context[:200]}")
         log.debug(f"ctx_block LIVE_SESSION: {len(live_context[:200])} chars")
     if practice_context:
-        ctx_blocks.append(f"SESSION DATA:{practice_context[:800]}")
-        log.debug(f"ctx_block SESSION_DATA: {len(practice_context[:800])} chars")
+        _pc, _pm = _unpack_ctx(practice_context)
+        ctx_blocks.append(f"SESSION DATA{_pm}:{_pc[:800]}")
+        log.debug(f"ctx_block SESSION_DATA: {len(_pc[:800])} chars{_pm}")
     if circuit_guide:
         ctx_blocks.append(f"CIRCUIT:{circuit_guide[:1500]}")
         log.debug(f"ctx_block CIRCUIT: {len(circuit_guide[:1500])} chars")
@@ -5193,8 +5233,9 @@ def build_system_prompt(mem: dict, news_context: str = "",
         ctx_blocks.append(f"DRIVER PROFILE:{driver_profile[:1500]}")
         log.debug(f"ctx_block DRIVER_PROFILE: {len(driver_profile[:1500])} chars")
     if race_replay:
-        ctx_blocks.append(f"RACE REPLAY:{race_replay[:800]}")
-        log.debug(f"ctx_block RACE_REPLAY: {len(race_replay[:800])} chars")
+        _rr, _rm = _unpack_ctx(race_replay)
+        ctx_blocks.append(f"RACE REPLAY{_rm}:{_rr[:800]}")
+        log.debug(f"ctx_block RACE_REPLAY: {len(_rr[:800])} chars{_rm}")
     if champ_scenarios:
         ctx_blocks.append(f"CHAMPIONSHIP SCENARIOS:{champ_scenarios[:1200]}")
         log.debug(f"ctx_block CHAMPIONSHIP_SCENARIOS: {len(champ_scenarios[:1200])} chars")
@@ -5235,6 +5276,7 @@ RULES:
 - NEVER guess or estimate times, positions, or finishing order. Made-up numbers are worse than no answer.
 - When SESSION DATA is present: use those exact times/positions only — that's the real timing sheet.
 - When no SESSION DATA and the question needs it: admit it in one honest sentence, no padding, no speculation dressed as analysis.
+- STALE OR PARTIAL CONTEXT: When a block label includes an age (e.g. "2.3h old") or is marked "partial" or "unknown", state that explicitly in your answer — e.g. "that session data is from 2h ago" or "tyre strategy may be incomplete as FastF1 data is still being processed". Never silently fill gaps with inference when context is marked partial or unknown.
 - STRATEGY/TYRE QUESTIONS WITHOUT REAL DATA: CIRCUIT GUIDE info (degradation, overtaking difficulty, "usually 2-stop") is general historical knowledge — fine to share AS general knowledge. But NEVER invent specific lap numbers for pit stops, per-driver stint plans (e.g. "Stint 1: Laps 1-20"), fake statistics ("Barcelona averages 0.8 safety cars"), or confidence percentages ("90% of the field does 2 stops") when you don't have this year's tyre allocation or practice data. One paragraph of general circuit context is enough — do not pad it into a multi-driver strategy report.
 - FIA STEWARDS DOCS / STEWARDS DECISION SOURCES = ground truth for incidents and penalties. If present, cite "FIA stewards found..." with the specific finding.
 - DNF QUESTIONS WITH NO FIA STEWARDS DOC: stewards documents cover on-track incidents and regulation violations — NOT mechanical failures. If a driver DNF'd and no FIA stewards document or race control message mentions them, that absence is itself informative: it suggests the retirement was mechanical or self-inflicted (no third party / no investigation needed), not a gap in your knowledge. Say something like "no stewards investigation was opened for [driver]'s retirement, which points to a mechanical issue rather than an on-track incident" — don't say "I don't have that information" as if it's missing data.
@@ -5586,6 +5628,14 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     # User personalization
     if user_data:
         user_profile_ctx = build_user_profile(user_data)
+
+    # Wrap time-sensitive news context with age metadata
+    if news_ctx:
+        _news_age = (
+            (datetime.now() - _news_cache_time).total_seconds() / 3600
+            if _news_cache_time else None
+        )
+        news_ctx = ContextBlock(content=news_ctx, data_age_hours=_news_age)
 
     return {
         "news_ctx":           news_ctx,
@@ -6129,9 +6179,10 @@ def _format_debug_context_report(query: str, ctx: dict) -> str:
         if not raw:
             continue
         active += 1
-        sliced = raw[:limit] if limit else raw
+        content, meta = _unpack_ctx(raw)
+        sliced = content[:limit] if limit else content
         preview = sliced[:100].replace("\n", " ")
-        lines.append(f"{label}: {len(sliced)} chars | {preview!r}")
+        lines.append(f"{label}{meta}: {len(sliced)} chars | {preview!r}")
     if not active:
         lines.append("(no context blocks triggered)")
     return "\n".join(lines)
@@ -7025,7 +7076,7 @@ def _is_driver_deep_dive(text: str) -> str | None:
 #  Rich context injection for "why did X happen" questions
 # ═════════════════════════════════════════════════════════════
 
-def get_race_replay_context(query: str, mem: dict) -> str:
+def get_race_replay_context(query: str, mem: dict):
     """
     Detects race replay questions and injects deep episode context.
     Covers: why retirements happened, how strategies unfolded,
@@ -7174,7 +7225,19 @@ def get_race_replay_context(query: str, mem: dict) -> str:
     context_parts.append(
         f"Story: {ep.get('story', '')}")
 
-    return "\n".join(context_parts)
+    try:
+        race_dt = datetime.strptime(ep.get("date", ""), "%Y-%m-%d")
+        replay_age_h = (datetime.now() - race_dt).total_seconds() / 3600
+    except Exception:
+        replay_age_h = None
+    replay_completeness = (
+        "full" if ep.get("telemetry_source", "") == "fastf1" else "partial"
+    )
+    return ContextBlock(
+        content="\n".join(context_parts),
+        data_age_hours=replay_age_h,
+        completeness=replay_completeness,
+    )
 
 
 # ═════════════════════════════════════════════════════════════
