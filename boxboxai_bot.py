@@ -5164,36 +5164,52 @@ def build_system_prompt(mem: dict, news_context: str = "",
     ctx_blocks = []
     if next_race_context:
         ctx_blocks.append(next_race_context)
+        log.debug(f"ctx_block NEXT_RACE: {len(next_race_context)} chars")
     if news_context:
         ctx_blocks.append(f"NEWS:{news_context[:300]}")
+        log.debug(f"ctx_block NEWS: {len(news_context[:300])} chars")
     if live_search_context:
         ctx_blocks.append(f"LIVE SEARCH:{live_search_context[:800]}")
+        log.debug(f"ctx_block LIVE_SEARCH: {len(live_search_context[:800])} chars")
     if fia_docs_context:
         ctx_blocks.append(f"FIA STEWARDS DOCS:{fia_docs_context[:600]}")
+        log.debug(f"ctx_block FIA_DOCS: {len(fia_docs_context[:600])} chars")
     if weather_context:
         ctx_blocks.append(f"WEATHER:{weather_context[:150]}")
+        log.debug(f"ctx_block WEATHER: {len(weather_context[:150])} chars")
     if live_context:
         ctx_blocks.append(f"LIVE SESSION:{live_context[:200]}")
+        log.debug(f"ctx_block LIVE_SESSION: {len(live_context[:200])} chars")
     if practice_context:
         ctx_blocks.append(f"SESSION DATA:{practice_context[:800]}")
+        log.debug(f"ctx_block SESSION_DATA: {len(practice_context[:800])} chars")
     if circuit_guide:
         ctx_blocks.append(f"CIRCUIT:{circuit_guide[:1500]}")
+        log.debug(f"ctx_block CIRCUIT: {len(circuit_guide[:1500])} chars")
     if driver_stats:
         ctx_blocks.append(f"DRIVER STATS:{driver_stats[:300]}")
+        log.debug(f"ctx_block DRIVER_STATS: {len(driver_stats[:300])} chars")
     if driver_profile:
         ctx_blocks.append(f"DRIVER PROFILE:{driver_profile[:1500]}")
+        log.debug(f"ctx_block DRIVER_PROFILE: {len(driver_profile[:1500])} chars")
     if race_replay:
         ctx_blocks.append(f"RACE REPLAY:{race_replay[:800]}")
+        log.debug(f"ctx_block RACE_REPLAY: {len(race_replay[:800])} chars")
     if champ_scenarios:
         ctx_blocks.append(f"CHAMPIONSHIP SCENARIOS:{champ_scenarios[:1200]}")
+        log.debug(f"ctx_block CHAMPIONSHIP_SCENARIOS: {len(champ_scenarios[:1200])} chars")
     if fan_profile:
         ctx_blocks.append(f"FAN PROFILE:{fan_profile[:400]}")
+        log.debug(f"ctx_block FAN_PROFILE: {len(fan_profile[:400])} chars")
     if historical_context:
         ctx_blocks.append(f"HISTORY:{historical_context[:1200]}")
+        log.debug(f"ctx_block HISTORY: {len(historical_context[:1200])} chars")
     if prediction_accuracy:
         ctx_blocks.append(f"PREDICTION RECORD:{prediction_accuracy[:150]}")
+        log.debug(f"ctx_block PREDICTION_RECORD: {len(prediction_accuracy[:150])} chars")
     if user_profile:
         ctx_blocks.append(f"USER:{user_profile[:150]}")
+        log.debug(f"ctx_block USER: {len(user_profile[:150])} chars")
 
     ctx_str = "\n\n".join(ctx_blocks)
 
@@ -5345,9 +5361,8 @@ def _is_weather_query(text: str) -> bool:
     return any(kw in t for kw in weather_keywords)
 
 
-def ask_claude(user_msg: str, history: list, mem: dict,
-               user_data: dict = None) -> str:
-    """Calls Claude with all available context."""
+def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
+    """Gathers all context blocks for a query. Returns a dict of raw context strings."""
     news_ctx          = ""
     weather_ctx       = ""
     historical_ctx    = ""
@@ -5572,19 +5587,39 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     if user_data:
         user_profile_ctx = build_user_profile(user_data)
 
-    # user_profile_ctx now carries only build_user_profile output (~56 chars),
-    # which fits comfortably in the USER[:150] block.
-    # All larger context blobs get their own dedicated ctx_blocks entries below.
+    return {
+        "news_ctx":           news_ctx,
+        "weather_ctx":        weather_ctx,
+        "historical_ctx":     historical_ctx,
+        "live_ctx":           live_ctx,
+        "circuit_ctx":        circuit_ctx,
+        "pred_accuracy":      pred_accuracy,
+        "driver_stats_ctx":   driver_stats_ctx,
+        "user_profile_ctx":   user_profile_ctx,
+        "practice_ctx":       practice_ctx,
+        "live_search_ctx":    live_search_ctx,
+        "race_replay_ctx":    race_replay_ctx,
+        "champ_scenario_ctx": champ_scenario_ctx,
+        "fan_ctx":            fan_ctx,
+        "driver_deep_ctx":    driver_deep_ctx,
+        "fia_docs_ctx":       fia_docs_ctx,
+        "next_race_ctx":      next_race_ctx,
+    }
 
-    system   = build_system_prompt(
-        mem, news_ctx, weather_ctx, historical_ctx,
-        user_profile_ctx, live_ctx, circuit_ctx,
-        pred_accuracy, driver_stats_ctx, practice_ctx,
-        live_search_ctx, fia_docs_ctx, next_race_ctx,
-        driver_profile=driver_deep_ctx,
-        race_replay=race_replay_ctx,
-        champ_scenarios=champ_scenario_ctx,
-        fan_profile=fan_ctx,
+
+def ask_claude(user_msg: str, history: list, mem: dict,
+               user_data: dict = None) -> str:
+    """Calls Claude with all available context."""
+    ctx = _gather_context(user_msg, mem, user_data)
+    system = build_system_prompt(
+        mem, ctx["news_ctx"], ctx["weather_ctx"], ctx["historical_ctx"],
+        ctx["user_profile_ctx"], ctx["live_ctx"], ctx["circuit_ctx"],
+        ctx["pred_accuracy"], ctx["driver_stats_ctx"], ctx["practice_ctx"],
+        ctx["live_search_ctx"], ctx["fia_docs_ctx"], ctx["next_race_ctx"],
+        driver_profile=ctx["driver_deep_ctx"],
+        race_replay=ctx["race_replay_ctx"],
+        champ_scenarios=ctx["champ_scenario_ctx"],
+        fan_profile=ctx["fan_ctx"],
     )
     messages = history + [{"role": "user", "content": user_msg}]
 
@@ -6066,6 +6101,60 @@ async def cmd_reingest(update, ctx, mem_ref=None):
     dnfs = ", ".join(result.get("dnfs", [])) or "none"
     fc = " ".join(result.get("full_classification", [])[:5])
     await update.message.reply_text(f"✅ R{rnd} re-ingested from Jolpica:\nWinner: {result.get('winner','?')}\nP2: {result.get('p2','?')} P3: {result.get('p3','?')}\nDNFs: {dnfs}\nTop 5: {fc}\nEnrichment state cleared — telemetry will re-run on next cycle.\nPredictor state cleared — auto-predictor will re-run on next 30-min cycle.")
+
+def _format_debug_context_report(query: str, ctx: dict) -> str:
+    """Formats _gather_context() output for /debug_context — labels, char counts, previews."""
+    BLOCK_SPECS = [
+        ("next_race_ctx",      "NEXT_RACE",              None),
+        ("news_ctx",           "NEWS",                   300),
+        ("live_search_ctx",    "LIVE_SEARCH",            800),
+        ("fia_docs_ctx",       "FIA_DOCS",               600),
+        ("weather_ctx",        "WEATHER",                150),
+        ("live_ctx",           "LIVE_SESSION",           200),
+        ("practice_ctx",       "SESSION_DATA",           800),
+        ("circuit_ctx",        "CIRCUIT",                1500),
+        ("driver_stats_ctx",   "DRIVER_STATS",           300),
+        ("driver_deep_ctx",    "DRIVER_PROFILE",         1500),
+        ("race_replay_ctx",    "RACE_REPLAY",            800),
+        ("champ_scenario_ctx", "CHAMPIONSHIP_SCENARIOS", 1200),
+        ("fan_ctx",            "FAN_PROFILE",            400),
+        ("historical_ctx",     "HISTORY",                1200),
+        ("pred_accuracy",      "PREDICTION_RECORD",      150),
+        ("user_profile_ctx",   "USER",                   150),
+    ]
+    lines = [f"debug_context for: {query!r}\n"]
+    active = 0
+    for key, label, limit in BLOCK_SPECS:
+        raw = ctx.get(key, "")
+        if not raw:
+            continue
+        active += 1
+        sliced = raw[:limit] if limit else raw
+        preview = sliced[:100].replace("\n", " ")
+        lines.append(f"{label}: {len(sliced)} chars | {preview!r}")
+    if not active:
+        lines.append("(no context blocks triggered)")
+    return "\n".join(lines)
+
+
+async def cmd_debug_context(update, ctx, mem_ref=None):
+    if not update.effective_user:
+        return
+    user_id = str(update.effective_user.id)
+    if user_id != BOT_OWNER_ID:
+        return
+    args = ctx.args
+    if not args:
+        await update.message.reply_text(
+            "Usage: /debug_context <query>\n"
+            "Example: /debug_context what happened to antonelli in spain")
+        return
+    query = " ".join(args)
+    mem = mem_ref[0]
+    gathered = _gather_context(query, mem)
+    report = _format_debug_context_report(query, gathered)
+    await update.message.reply_text(report[:4096])
+
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -8402,6 +8491,9 @@ def main():
     async def _reingest_handler(update, ctx):
         await cmd_reingest(update, ctx, mem_ref)
     app.add_handler(CommandHandler("reingest",       _reingest_handler))
+    async def _debug_context_handler(update, ctx):
+        await cmd_debug_context(update, ctx, mem_ref)
+    app.add_handler(CommandHandler("debug_context",  _debug_context_handler))
     app.add_handler(CallbackQueryHandler(handle_timezone_callback,    pattern="^tz:"))
     app.add_handler(CallbackQueryHandler(handle_notification_callback, pattern="^notif:"))
     app.add_handler(MessageHandler(

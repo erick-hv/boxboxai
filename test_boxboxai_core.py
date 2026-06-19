@@ -749,3 +749,120 @@ class TestReingestRaceCondition:
             )
 
         asyncio.run(_run())
+
+
+# ── _format_debug_context_report ─────────────────────────────────────────────
+
+def _empty_ctx():
+    return {
+        "next_race_ctx": "", "news_ctx": "", "live_search_ctx": "",
+        "fia_docs_ctx": "", "weather_ctx": "", "live_ctx": "",
+        "practice_ctx": "", "circuit_ctx": "", "driver_stats_ctx": "",
+        "driver_deep_ctx": "", "race_replay_ctx": "", "champ_scenario_ctx": "",
+        "fan_ctx": "", "historical_ctx": "", "pred_accuracy": "",
+        "user_profile_ctx": "",
+    }
+
+
+class TestFormatDebugContextReport:
+
+    def test_empty_context_shows_no_blocks_triggered(self):
+        report = bot._format_debug_context_report("test query", _empty_ctx())
+        assert "(no context blocks triggered)" in report
+
+    def test_populated_block_appears_with_label(self):
+        ctx = _empty_ctx()
+        ctx["circuit_ctx"] = "Barcelona: 4.657km, 16 turns, medium-high speed"
+        report = bot._format_debug_context_report("barcelona strategy", ctx)
+        assert "CIRCUIT:" in report
+        assert "Barcelona" in report
+
+    def test_char_count_reflects_limit(self):
+        # NEWS limit is 300 — a 500-char string should report 300 chars
+        ctx = _empty_ctx()
+        ctx["news_ctx"] = "N" * 500
+        report = bot._format_debug_context_report("news query", ctx)
+        assert "NEWS: 300 chars" in report
+
+    def test_preview_capped_at_100_chars(self):
+        # HISTORY limit is 1200; raw string is 200 chars → sliced stays 200,
+        # but the inline preview must be capped at 100.
+        ctx = _empty_ctx()
+        ctx["historical_ctx"] = "H" * 200
+        report = bot._format_debug_context_report("history query", ctx)
+        assert "HISTORY: 200 chars" in report
+        preview_part = report.split("|")[1]
+        assert preview_part.count("H") == 100
+
+    def test_query_appears_in_header(self):
+        report = bot._format_debug_context_report("antonelli in spain", _empty_ctx())
+        assert "antonelli in spain" in report
+
+    def test_empty_blocks_are_omitted(self):
+        ctx = _empty_ctx()
+        ctx["circuit_ctx"] = "Some circuit data"
+        report = bot._format_debug_context_report("q", ctx)
+        # Only CIRCUIT should appear; all other empty labels must not
+        assert "NEWS:" not in report
+        assert "WEATHER:" not in report
+        assert "CIRCUIT:" in report
+
+
+class TestCmdDebugContext:
+
+    def test_non_owner_gets_no_reply(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        async def _run():
+            mem_ref = [{"episodic": [], "semantic": {}}]
+            update = MagicMock()
+            update.effective_user.id = 9999999  # not the owner
+            update.message.reply_text = AsyncMock()
+            ctx = MagicMock()
+            ctx.args = ["what happened to antonelli"]
+            await bot.cmd_debug_context(update, ctx, mem_ref=mem_ref)
+            update.message.reply_text.assert_not_called()
+
+        asyncio.run(_run())
+
+    def test_no_args_sends_usage(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        async def _run():
+            mem_ref = [{"episodic": [], "semantic": {}}]
+            update = MagicMock()
+            update.effective_user.id = int(bot.BOT_OWNER_ID)
+            update.message.reply_text = AsyncMock()
+            ctx = MagicMock()
+            ctx.args = []
+            await bot.cmd_debug_context(update, ctx, mem_ref=mem_ref)
+            call_text = update.message.reply_text.call_args[0][0]
+            assert "Usage:" in call_text
+
+        asyncio.run(_run())
+
+    def test_valid_query_returns_formatted_report(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        async def _run():
+            mem_ref = [{"episodic": [], "semantic": {}}]
+            update = MagicMock()
+            update.effective_user.id = int(bot.BOT_OWNER_ID)
+            update.message.reply_text = AsyncMock()
+            ctx_mock = MagicMock()
+            ctx_mock.args = ["what", "happened", "to", "antonelli", "in", "spain"]
+            fake_gathered = {
+                **_empty_ctx(),
+                "circuit_ctx":  "Barcelona guide text",
+                "fia_docs_ctx": "FIA doc content for Spain",
+            }
+            with patch.object(bot, "_gather_context", return_value=fake_gathered):
+                await bot.cmd_debug_context(update, ctx_mock, mem_ref=mem_ref)
+            call_text = update.message.reply_text.call_args[0][0]
+            assert "CIRCUIT:" in call_text
+            assert "FIA_DOCS:" in call_text
+
+        asyncio.run(_run())
