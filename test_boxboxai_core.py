@@ -10,6 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import boxboxai_bot as bot
+import context_builder
 import data_layer
 
 
@@ -19,38 +20,38 @@ class TestResolveDriverCode:
 
     # Basic resolution
     def test_hamilton_resolves_to_ham(self):
-        assert bot.resolve_driver_code("hamilton") == "HAM"
+        assert context_builder.resolve_driver_code("hamilton") == "HAM"
 
     def test_checo_resolves_to_per(self):
-        assert bot.resolve_driver_code("checo") == "PER"
+        assert context_builder.resolve_driver_code("checo") == "PER"
 
     def test_multi_word_max_verstappen(self):
         # "max" was removed from the map (common word) but "verstappen" is present
-        assert bot.resolve_driver_code("max verstappen") == "VER"
+        assert context_builder.resolve_driver_code("max verstappen") == "VER"
 
     def test_uppercase_code_resolves(self):
         # "VER".lower() == "ver" which is in the map
-        assert bot.resolve_driver_code("VER") == "VER"
+        assert context_builder.resolve_driver_code("VER") == "VER"
 
     # False-positive protection
     def test_championship_does_not_resolve_to_ham(self):
         # "ham" is in the map but \bham\b won't match inside "championship"
-        assert bot.resolve_driver_code("championship standings") is None
+        assert context_builder.resolve_driver_code("championship standings") is None
 
     def test_stopper_does_not_resolve_to_per(self):
         # "per" was removed from the map entirely (common English word)
-        assert bot.resolve_driver_code("is barcelona a 1 or 2 stopper") is None
+        assert context_builder.resolve_driver_code("is barcelona a 1 or 2 stopper") is None
 
     def test_had_in_sentence_does_not_resolve(self):
         # "had" was removed from the map entirely (common English word)
-        assert bot.resolve_driver_code("i had a great day at the circuit") is None
+        assert context_builder.resolve_driver_code("i had a great day at the circuit") is None
 
     def test_gas_in_sentence_does_not_resolve(self):
         # "gas" was removed from the map entirely (common English word)
-        assert bot.resolve_driver_code("fill up the gas tank") is None
+        assert context_builder.resolve_driver_code("fill up the gas tank") is None
 
     def test_no_driver_returns_none(self):
-        assert bot.resolve_driver_code("who won the race today") is None
+        assert context_builder.resolve_driver_code("who won the race today") is None
 
 
 # ── _needs_fia_docs ───────────────────────────────────────────────────────────
@@ -58,22 +59,22 @@ class TestResolveDriverCode:
 class TestNeedsFiaDocs:
 
     def test_penalties_plural_triggers(self):
-        assert bot._needs_fia_docs("how many penalties were given out") is True
+        assert context_builder._needs_fia_docs("how many penalties were given out") is True
 
     def test_penalized_triggers(self):
-        assert bot._needs_fia_docs("was leclerc penalized for that move") is True
+        assert context_builder._needs_fia_docs("was leclerc penalized for that move") is True
 
     def test_why_did_retire_triggers(self):
-        assert bot._needs_fia_docs("why did leclerc retire from the race") is True
+        assert context_builder._needs_fia_docs("why did leclerc retire from the race") is True
 
     def test_stewards_decision_triggers(self):
-        assert bot._needs_fia_docs("stewards decision on the incident") is True
+        assert context_builder._needs_fia_docs("stewards decision on the incident") is True
 
     def test_weather_query_does_not_trigger(self):
-        assert bot._needs_fia_docs("what's the weather like in monaco") is False
+        assert context_builder._needs_fia_docs("what's the weather like in monaco") is False
 
     def test_spanish_penalizacion_triggers(self):
-        assert bot._needs_fia_docs("recibió una penalización de 5 segundos") is True
+        assert context_builder._needs_fia_docs("recibió una penalización de 5 segundos") is True
 
 
 # ── _is_live_session_question ─────────────────────────────────────────────────
@@ -81,17 +82,17 @@ class TestNeedsFiaDocs:
 class TestIsLiveSessionQuestion:
 
     def test_top_10_fp2_triggers(self):
-        assert bot._is_live_session_question("top 10 fp2") is True
+        assert context_builder._is_live_session_question("top 10 fp2") is True
 
     def test_who_got_pole_triggers(self):
-        assert bot._is_live_session_question("who got pole") is True
+        assert context_builder._is_live_session_question("who got pole") is True
 
     def test_qualifying_results_triggers(self):
-        assert bot._is_live_session_question("qualifying results for spain") is True
+        assert context_builder._is_live_session_question("qualifying results for spain") is True
 
     def test_who_won_today_does_not_trigger(self):
         # "who won" is deliberately not a session keyword
-        assert bot._is_live_session_question("who won today") is False
+        assert context_builder._is_live_session_question("who won today") is False
 
 
 # ── _is_weather_query ─────────────────────────────────────────────────────────
@@ -99,18 +100,18 @@ class TestIsLiveSessionQuestion:
 class TestIsWeatherQuery:
 
     def test_weather_keyword_triggers(self):
-        assert bot._is_weather_query("what's the weather like in monaco") is True
+        assert context_builder._is_weather_query("what's the weather like in monaco") is True
 
     def test_spanish_que_tiempo_hace_triggers(self):
-        assert bot._is_weather_query("qué tiempo hace en barcelona") is True
+        assert context_builder._is_weather_query("qué tiempo hace en barcelona") is True
 
     def test_tiempo_de_vuelta_does_not_trigger(self):
         # "tiempo de vuelta" means lap time, not weather — no keyword matches
-        assert bot._is_weather_query("tiempo de vuelta de norris") is False
+        assert context_builder._is_weather_query("tiempo de vuelta de norris") is False
 
     def test_hace_tiempo_does_not_trigger(self):
         # Reversed phrase — "hace tiempo" (a while ago) is not in the keyword list
-        assert bot._is_weather_query("hace tiempo que no gana alonso") is False
+        assert context_builder._is_weather_query("hace tiempo que no gana alonso") is False
 
 
 # ── _detect_driver_stat_query ─────────────────────────────────────────────────
@@ -118,20 +119,20 @@ class TestIsWeatherQuery:
 class TestDetectDriverStatQuery:
 
     def test_how_many_wins_hamilton_returns_HAM(self):
-        assert bot._detect_driver_stat_query("how many wins does hamilton have") == "HAM"
+        assert context_builder._detect_driver_stat_query("how many wins does hamilton have") == "HAM"
 
     def test_career_stats_verstappen_returns_VER(self):
-        assert bot._detect_driver_stat_query("what are verstappen career stats") == "VER"
+        assert context_builder._detect_driver_stat_query("what are verstappen career stats") == "VER"
 
     def test_no_stat_keyword_returns_none(self):
-        assert bot._detect_driver_stat_query("who is winning the championship") is None
+        assert context_builder._detect_driver_stat_query("who is winning the championship") is None
 
     def test_no_driver_name_returns_none(self):
         # stat keyword present but no recognized driver name
-        assert bot._detect_driver_stat_query("how many wins did that guy get") is None
+        assert context_builder._detect_driver_stat_query("how many wins did that guy get") is None
 
     def test_spanish_cuantas_victorias_norris_returns_NOR(self):
-        assert bot._detect_driver_stat_query("cuántas victorias tiene lando") == "NOR"
+        assert context_builder._detect_driver_stat_query("cuántas victorias tiene lando") == "NOR"
 
 
 # ── _resolve_multiple_driver_codes ────────────────────────────────────────────
@@ -139,16 +140,16 @@ class TestDetectDriverStatQuery:
 class TestResolveMultipleDriverCodes:
 
     def test_compare_hamilton_and_russell(self):
-        codes = bot._resolve_multiple_driver_codes("compare hamilton and russell")
+        codes = context_builder._resolve_multiple_driver_codes("compare hamilton and russell")
         assert codes == ["HAM", "RUS"]
 
     def test_verstappen_vs_leclerc(self):
-        codes = bot._resolve_multiple_driver_codes("verstappen vs leclerc")
+        codes = context_builder._resolve_multiple_driver_codes("verstappen vs leclerc")
         assert codes == ["VER", "LEC"]
 
     def test_stopper_query_returns_empty(self):
         # No driver names present despite "stopper" containing "per" as substring
-        codes = bot._resolve_multiple_driver_codes("is barcelona a 1 or 2 stopper")
+        codes = context_builder._resolve_multiple_driver_codes("is barcelona a 1 or 2 stopper")
         assert codes == []
 
 
@@ -296,13 +297,13 @@ class TestTyreStrategyInSystemPrompt:
     def test_tyre_strategies_appear_in_compact_race_lines(self):
         strats = "HAM:M(15)→H(35) | RUS:M(13)→H(37)"
         mem = self._make_mem(strats)
-        prompt = bot.build_system_prompt(mem)
+        prompt = context_builder.build_system_prompt(mem)
         assert "HAM:M(15)→H(35)" in prompt, \
             "Tyre strategies must appear in RACE RESULTS compact lines"
 
     def test_empty_tyre_strategies_does_not_crash(self):
         mem = self._make_mem("")
-        prompt = bot.build_system_prompt(mem)
+        prompt = context_builder.build_system_prompt(mem)
         assert "Spanish Grand Prix" in prompt
 
     def test_missing_pitstops_key_does_not_crash(self):
@@ -314,7 +315,7 @@ class TestTyreStrategyInSystemPrompt:
             }],
             "semantic": {},
         }
-        prompt = bot.build_system_prompt(mem)
+        prompt = context_builder.build_system_prompt(mem)
         assert "Spanish Grand Prix" in prompt
 
 
@@ -529,9 +530,9 @@ class TestCircuitGuideWithZoneData:
     """
 
     def test_zone_data_appended_when_available(self):
-        with patch.object(bot, "_get_circuit_zone_data",
-                          return_value=_BARCELONA_ZONE_DATA):
-            guide = bot.get_circuit_guide("what about barcelona strategy")
+        with patch.object(context_builder, "_get_circuit_zone_data_fn",
+                          new=[lambda _: _BARCELONA_ZONE_DATA]):
+            guide = context_builder.get_circuit_guide("what about barcelona strategy")
         assert "PRECISE 2026 ZONE DATA" in guide
         assert "Apex T13" in guide
         assert "Entry T14" in guide
@@ -539,30 +540,33 @@ class TestCircuitGuideWithZoneData:
         assert "45m after T14" in guide
 
     def test_qualitative_guide_still_present(self):
-        with patch.object(bot, "_get_circuit_zone_data",
-                          return_value=_BARCELONA_ZONE_DATA):
-            guide = bot.get_circuit_guide("barcelona")
+        with patch.object(context_builder, "_get_circuit_zone_data_fn",
+                          new=[lambda _: _BARCELONA_ZONE_DATA]):
+            guide = context_builder.get_circuit_guide("barcelona")
         # Qualitative content from CIRCUIT_GUIDES must still be there
         assert "CIRCUIT GUIDE" in guide
         assert "BARCELONA" in guide
 
     def test_graceful_degradation_when_no_zone_data(self):
-        with patch.object(bot, "_get_circuit_zone_data", return_value={}):
-            guide = bot.get_circuit_guide("barcelona")
+        with patch.object(context_builder, "_get_circuit_zone_data_fn",
+                          new=[lambda _: {}]):
+            guide = context_builder.get_circuit_guide("barcelona")
         assert "CIRCUIT GUIDE" in guide
         assert "PRECISE 2026 ZONE DATA" not in guide
 
     def test_no_zone_data_for_unknown_circuit(self):
         # No circuit match → empty string regardless of zone data
-        with patch.object(bot, "_get_circuit_zone_data", return_value={}):
-            guide = bot.get_circuit_guide("what is F1?")
+        with patch.object(context_builder, "_get_circuit_zone_data_fn",
+                          new=[lambda _: {}]):
+            guide = context_builder.get_circuit_guide("what is F1?")
         assert guide == ""
 
     def test_zone_suffix_exception_does_not_propagate(self):
         # If _get_circuit_zone_data raises, guide still returns qualitative text
-        with patch.object(bot, "_get_circuit_zone_data",
-                          side_effect=RuntimeError("network down")):
-            guide = bot.get_circuit_guide("barcelona")
+        def _raise(_): raise RuntimeError("network down")
+        with patch.object(context_builder, "_get_circuit_zone_data_fn",
+                          new=[_raise]):
+            guide = context_builder.get_circuit_guide("barcelona")
         assert "CIRCUIT GUIDE" in guide
         assert "PRECISE 2026 ZONE DATA" not in guide
 
@@ -577,28 +581,28 @@ class TestSpanishNotSpa:
     """
 
     def test_spanish_gp_resolves_to_barcelona(self):
-        assert bot._resolve_circuit_key("tell me about the Spanish GP") == "barcelona"
+        assert context_builder._resolve_circuit_key("tell me about the Spanish GP") == "barcelona"
 
     def test_spain_resolves_to_barcelona(self):
-        assert bot._resolve_circuit_key("what happened in spain last year") == "barcelona"
+        assert context_builder._resolve_circuit_key("what happened in spain last year") == "barcelona"
 
     def test_spanish_grand_prix_strategy(self):
-        assert bot._resolve_circuit_key("Spanish Grand Prix strategy") == "barcelona"
+        assert context_builder._resolve_circuit_key("Spanish Grand Prix strategy") == "barcelona"
 
     def test_literal_spa_still_resolves_to_spa(self):
-        assert bot._resolve_circuit_key("tell me about spa") == "spa"
+        assert context_builder._resolve_circuit_key("tell me about spa") == "spa"
 
     def test_spa_francorchamps_resolves_to_spa(self):
-        assert bot._resolve_circuit_key("spa francorchamps sector 1") == "spa"
+        assert context_builder._resolve_circuit_key("spa francorchamps sector 1") == "spa"
 
     def test_belgium_gp_resolves_to_spa(self):
-        assert bot._resolve_circuit_key("belgium gp at spa") == "spa"
+        assert context_builder._resolve_circuit_key("belgium gp at spa") == "spa"
 
     def test_spanner_does_not_match_spa(self):
-        assert bot._resolve_circuit_key("spanner in the works") == ""
+        assert context_builder._resolve_circuit_key("spanner in the works") == ""
 
     def test_spacecraft_does_not_match_spa(self):
-        assert bot._resolve_circuit_key("spacecraft trajectory") == ""
+        assert context_builder._resolve_circuit_key("spacecraft trajectory") == ""
 
 
 # ── Context truncation regression tests ──────────────────────────────────────
@@ -618,7 +622,7 @@ class TestContextTruncationLimits:
     def test_history_not_truncated_at_200(self):
         # HISTORICAL_DATA is 1153 chars; old limit was 200. Use 1100-char string.
         long_history = "H" * 1100
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), historical_context=long_history)
         assert long_history in prompt, (
             "HISTORY block was truncated — check the [:N] limit in ctx_blocks")
@@ -626,7 +630,7 @@ class TestContextTruncationLimits:
     def test_session_data_not_truncated_at_300(self):
         # get_practice_context can produce up to 800 chars; old limit was 300.
         long_session = "S" * 750
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), practice_context=long_session)
         assert long_session in prompt, (
             "SESSION DATA block was truncated — check the [:N] limit in ctx_blocks")
@@ -635,7 +639,7 @@ class TestContextTruncationLimits:
         # build_driver_profile produces a multi-section block; old path merged it
         # into user_profile ([:150]). New DRIVER PROFILE block allows up to 1500.
         long_profile = "D" * 1200
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), driver_profile=long_profile)
         assert long_profile in prompt, (
             "DRIVER PROFILE block was truncated — confirm driver_deep_ctx is "
@@ -643,55 +647,55 @@ class TestContextTruncationLimits:
 
     def test_driver_profile_gets_own_block_label(self):
         profile = "VER profile data " * 20  # ~340 chars
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), driver_profile=profile)
         assert "DRIVER PROFILE:" in prompt
 
     def test_race_replay_not_truncated_via_user_block(self):
         # get_race_replay_context produces ~597 chars; old path merged into USER[:150]
         long_replay = "R" * 580
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), race_replay=long_replay)
         assert long_replay in prompt, (
             "RACE REPLAY content was truncated — confirm race_replay_ctx is "
             "routed to race_replay= kwarg, not merged into user_profile")
 
     def test_race_replay_gets_own_block_label(self):
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), race_replay="some replay data")
         assert "RACE REPLAY:" in prompt
 
     def test_champ_scenarios_not_truncated_via_user_block(self):
         # build_championship_scenarios produces ~1000 chars; old path → USER[:150]
         long_champ = "C" * 950
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), champ_scenarios=long_champ)
         assert long_champ in prompt, (
             "CHAMPIONSHIP SCENARIOS content was truncated — confirm "
             "champ_scenario_ctx is routed to champ_scenarios= kwarg")
 
     def test_champ_scenarios_gets_own_block_label(self):
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), champ_scenarios="NOR needs 50 pts")
         assert "CHAMPIONSHIP SCENARIOS:" in prompt
 
     def test_fan_profile_not_truncated_via_user_block(self):
         # build_fan_context produces ~311 chars; old path → USER[:150]
         long_fan = "F" * 300
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), fan_profile=long_fan)
         assert long_fan in prompt, (
             "FAN PROFILE content was truncated — confirm fan_ctx is "
             "routed to fan_profile= kwarg, not merged into user_profile")
 
     def test_fan_profile_gets_own_block_label(self):
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), fan_profile="Supports McLaren")
         assert "FAN PROFILE:" in prompt
 
     def test_user_block_still_present_when_only_user_profile_set(self):
         # USER block should still work for its intended short content
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(), user_profile="Prefers Spanish language")
         assert "USER:" in prompt
 
@@ -789,13 +793,13 @@ def _empty_ctx():
 class TestFormatDebugContextReport:
 
     def test_empty_context_shows_no_blocks_triggered(self):
-        report = bot._format_debug_context_report("test query", _empty_ctx())
+        report = context_builder._format_debug_context_report("test query", _empty_ctx())
         assert "(no context blocks triggered)" in report
 
     def test_populated_block_appears_with_label(self):
         ctx = _empty_ctx()
         ctx["circuit_ctx"] = "Barcelona: 4.657km, 16 turns, medium-high speed"
-        report = bot._format_debug_context_report("barcelona strategy", ctx)
+        report = context_builder._format_debug_context_report("barcelona strategy", ctx)
         assert "CIRCUIT:" in report
         assert "Barcelona" in report
 
@@ -803,7 +807,7 @@ class TestFormatDebugContextReport:
         # NEWS limit is 300 — a 500-char string should report 300 chars
         ctx = _empty_ctx()
         ctx["news_ctx"] = "N" * 500
-        report = bot._format_debug_context_report("news query", ctx)
+        report = context_builder._format_debug_context_report("news query", ctx)
         assert "NEWS: 300 chars" in report
 
     def test_preview_capped_at_100_chars(self):
@@ -811,19 +815,19 @@ class TestFormatDebugContextReport:
         # but the inline preview must be capped at 100.
         ctx = _empty_ctx()
         ctx["historical_ctx"] = "H" * 200
-        report = bot._format_debug_context_report("history query", ctx)
+        report = context_builder._format_debug_context_report("history query", ctx)
         assert "HISTORY: 200 chars" in report
         preview_part = report.split("|")[1]
         assert preview_part.count("H") == 100
 
     def test_query_appears_in_header(self):
-        report = bot._format_debug_context_report("antonelli in spain", _empty_ctx())
+        report = context_builder._format_debug_context_report("antonelli in spain", _empty_ctx())
         assert "antonelli in spain" in report
 
     def test_empty_blocks_are_omitted(self):
         ctx = _empty_ctx()
         ctx["circuit_ctx"] = "Some circuit data"
-        report = bot._format_debug_context_report("q", ctx)
+        report = context_builder._format_debug_context_report("q", ctx)
         # Only CIRCUIT should appear; all other empty labels must not
         assert "NEWS:" not in report
         assert "WEATHER:" not in report
@@ -895,70 +899,70 @@ class TestCmdDebugContext:
 class TestContextBlockMetadata:
 
     def test_context_block_construction(self):
-        cb = bot.ContextBlock(content="test", data_age_hours=2.5, completeness="partial")
+        cb = context_builder.ContextBlock(content="test", data_age_hours=2.5, completeness="partial")
         assert cb.content == "test"
         assert cb.data_age_hours == 2.5
         assert cb.completeness == "partial"
 
     def test_context_block_defaults(self):
-        cb = bot.ContextBlock(content="x")
+        cb = context_builder.ContextBlock(content="x")
         assert cb.data_age_hours is None
         assert cb.completeness == "full"
 
     def test_unpack_ctx_plain_string_returns_empty_meta(self):
-        content, meta = bot._unpack_ctx("plain string")
+        content, meta = context_builder._unpack_ctx("plain string")
         assert content == "plain string"
         assert meta == ""
 
     def test_unpack_ctx_full_block_no_age_returns_empty_meta(self):
-        cb = bot.ContextBlock(content="data", completeness="full")
-        content, meta = bot._unpack_ctx(cb)
+        cb = context_builder.ContextBlock(content="data", completeness="full")
+        content, meta = context_builder._unpack_ctx(cb)
         assert content == "data"
         assert meta == ""
 
     def test_unpack_ctx_with_age_formats_hours(self):
-        cb = bot.ContextBlock(content="data", data_age_hours=3.0)
-        content, meta = bot._unpack_ctx(cb)
+        cb = context_builder.ContextBlock(content="data", data_age_hours=3.0)
+        content, meta = context_builder._unpack_ctx(cb)
         assert content == "data"
         assert "3.0h old" in meta
 
     def test_unpack_ctx_partial_completeness_in_meta(self):
-        cb = bot.ContextBlock(content="data", completeness="partial")
-        _, meta = bot._unpack_ctx(cb)
+        cb = context_builder.ContextBlock(content="data", completeness="partial")
+        _, meta = context_builder._unpack_ctx(cb)
         assert "partial" in meta
 
     def test_unpack_ctx_unknown_completeness_in_meta(self):
-        cb = bot.ContextBlock(content="data", completeness="unknown")
-        _, meta = bot._unpack_ctx(cb)
+        cb = context_builder.ContextBlock(content="data", completeness="unknown")
+        _, meta = context_builder._unpack_ctx(cb)
         assert "unknown" in meta
 
     def test_unpack_ctx_age_and_partial_both_present(self):
-        cb = bot.ContextBlock(content="data", data_age_hours=72.5, completeness="partial")
-        _, meta = bot._unpack_ctx(cb)
+        cb = context_builder.ContextBlock(content="data", data_age_hours=72.5, completeness="partial")
+        _, meta = context_builder._unpack_ctx(cb)
         assert "72.5h old" in meta
         assert "partial" in meta
 
     def test_news_context_block_age_in_system_prompt(self):
-        cb = bot.ContextBlock(content="Norris wins sprint", data_age_hours=0.4)
-        prompt = bot.build_system_prompt(_minimal_mem(), news_context=cb)
+        cb = context_builder.ContextBlock(content="Norris wins sprint", data_age_hours=0.4)
+        prompt = context_builder.build_system_prompt(_minimal_mem(), news_context=cb)
         assert "NEWS" in prompt
         assert "0.4h old" in prompt
         assert "Norris wins sprint" in prompt
 
     def test_race_replay_partial_label_in_system_prompt(self):
-        cb = bot.ContextBlock(content="race replay data", completeness="partial")
-        prompt = bot.build_system_prompt(_minimal_mem(), race_replay=cb)
+        cb = context_builder.ContextBlock(content="race replay data", completeness="partial")
+        prompt = context_builder.build_system_prompt(_minimal_mem(), race_replay=cb)
         assert "RACE REPLAY" in prompt
         assert "partial" in prompt
 
     def test_practice_context_block_age_in_system_prompt(self):
-        cb = bot.ContextBlock(content="FP2 classification data", data_age_hours=5.2)
-        prompt = bot.build_system_prompt(_minimal_mem(), practice_context=cb)
+        cb = context_builder.ContextBlock(content="FP2 classification data", data_age_hours=5.2)
+        prompt = context_builder.build_system_prompt(_minimal_mem(), practice_context=cb)
         assert "SESSION DATA" in prompt
         assert "5.2h old" in prompt
 
     def test_static_blocks_as_plain_strings_unaffected(self):
-        prompt = bot.build_system_prompt(
+        prompt = context_builder.build_system_prompt(
             _minimal_mem(),
             circuit_guide="Barcelona circuit guide",
             driver_profile="VER profile data",
@@ -970,22 +974,22 @@ class TestContextBlockMetadata:
 
     def test_format_debug_report_surfaces_age(self):
         ctx = _empty_ctx()
-        ctx["news_ctx"] = bot.ContextBlock(content="N" * 200, data_age_hours=1.5)
-        report = bot._format_debug_context_report("query", ctx)
+        ctx["news_ctx"] = context_builder.ContextBlock(content="N" * 200, data_age_hours=1.5)
+        report = context_builder._format_debug_context_report("query", ctx)
         assert "1.5h old" in report
         assert "NEWS" in report
 
     def test_format_debug_report_surfaces_partial(self):
         ctx = _empty_ctx()
-        ctx["race_replay_ctx"] = bot.ContextBlock(content="race data", completeness="partial")
-        report = bot._format_debug_context_report("query", ctx)
+        ctx["race_replay_ctx"] = context_builder.ContextBlock(content="race data", completeness="partial")
+        report = context_builder._format_debug_context_report("query", ctx)
         assert "partial" in report
         assert "RACE_REPLAY" in report
 
     def test_format_debug_report_plain_string_unchanged(self):
         ctx = _empty_ctx()
         ctx["circuit_ctx"] = "Barcelona guide"
-        report = bot._format_debug_context_report("query", ctx)
+        report = context_builder._format_debug_context_report("query", ctx)
         assert "CIRCUIT:" in report
         assert "Barcelona" in report
 
@@ -1168,7 +1172,7 @@ class TestContextBlockSizeEnforcement:
 
     @staticmethod
     def _prompt(**kwargs):
-        return bot.build_system_prompt(_minimal_mem(), **kwargs)
+        return context_builder.build_system_prompt(_minimal_mem(), **kwargs)
 
     def test_news_truncated_at_300(self):
         marker = "OVERFLOW_BEYOND_LIMIT"
@@ -1209,7 +1213,7 @@ class TestContextBlockSizeEnforcement:
     def test_context_block_meta_does_not_consume_content_budget(self):
         """The age/completeness suffix is in the LABEL, not sliced from content.
         An 800-char ContextBlock must inject all 800 content chars."""
-        cb = bot.ContextBlock(content="Y" * 800, data_age_hours=3.5, completeness="partial")
+        cb = context_builder.ContextBlock(content="Y" * 800, data_age_hours=3.5, completeness="partial")
         prompt = self._prompt(race_replay=cb)
         assert "Y" * 800 in prompt
         assert "3.5h old" in prompt
@@ -1218,7 +1222,7 @@ class TestContextBlockSizeEnforcement:
     def test_context_block_over_limit_content_is_truncated(self):
         """Even a ContextBlock respects the [:800] content limit."""
         marker = "OVERFLOW_BEYOND_LIMIT"
-        cb = bot.ContextBlock(content="Z" * 800 + marker, data_age_hours=1.0)
+        cb = context_builder.ContextBlock(content="Z" * 800 + marker, data_age_hours=1.0)
         prompt = self._prompt(race_replay=cb)
         assert "Z" * 800 in prompt
         assert marker not in prompt
@@ -1507,7 +1511,7 @@ class TestRaceReplayNormalization:
     def test_spain_matches_spanish_grand_prix_episode(self):
         """'what happened in qualifying spain' must score R7 Spain, not return ''."""
         mem = self._mem(self._ep(7, "Spanish Grand Prix", "Barcelona"))
-        result = bot.get_race_replay_context(
+        result = context_builder.get_race_replay_context(
             "what happened in qualifying spain", mem)
         assert result != "", (
             "'spain' must match episode with race_name='Spanish Grand Prix'"
@@ -1518,14 +1522,14 @@ class TestRaceReplayNormalization:
     def test_barcelona_matches_spanish_grand_prix_episode(self):
         """'what happened in barcelona' must score the Spain episode."""
         mem = self._mem(self._ep(7, "Spanish Grand Prix", "Barcelona"))
-        result = bot.get_race_replay_context(
+        result = context_builder.get_race_replay_context(
             "what happened in barcelona", mem)
         assert result != ""
 
     def test_spain_not_in_memory_returns_empty(self):
         """If R7 Spain is not in memory, 'spain' query must return '' (no wrong-race fallback)."""
         mem = self._mem(self._ep(5, "Canadian Grand Prix", "Montreal"))
-        result = bot.get_race_replay_context(
+        result = context_builder.get_race_replay_context(
             "what happened in qualifying spain", mem)
         assert result == "", (
             "must not fall back to Canadian GP when Spain isn't in memory"
@@ -1536,7 +1540,7 @@ class TestRaceReplayNormalization:
     def test_mexico_matches_mexico_city_grand_prix_episode(self):
         """'explain the strategy in mexico' must match episode with race_name containing 'Mexico'."""
         mem = self._mem(self._ep(17, "Mexico City Grand Prix", "Mexico City"))
-        result = bot.get_race_replay_context(
+        result = context_builder.get_race_replay_context(
             "explain the strategy in mexico", mem)
         assert result != "", (
             "'mexico' must match episode with race_name='Mexico City Grand Prix'"
@@ -1545,7 +1549,7 @@ class TestRaceReplayNormalization:
     def test_mexico_not_in_memory_returns_empty(self):
         """If Mexico isn't in memory, 'mexico' query must not fall back to a different race."""
         mem = self._mem(self._ep(7, "Spanish Grand Prix", "Barcelona"))
-        result = bot.get_race_replay_context(
+        result = context_builder.get_race_replay_context(
             "explain the strategy in mexico", mem)
         assert result == "", (
             "must not return Spanish GP data for a Mexico query"
@@ -1556,7 +1560,7 @@ class TestRaceReplayNormalization:
     def test_spielberg_matches_austrian_grand_prix_episode(self):
         """'spielberg' (Red Bull Ring locality) must now match Austrian GP episode."""
         mem = self._mem(self._ep(8, "Austrian Grand Prix", "Spielberg"))
-        result = bot.get_race_replay_context(
+        result = context_builder.get_race_replay_context(
             "what happened at spielberg", mem)
         assert result != "", (
             "'spielberg' must match episode with race_name='Austrian Grand Prix'"
@@ -1569,10 +1573,10 @@ class TestRaceReplayNormalization:
         assert hasattr(bot, "RACE_KEYWORDS"), (
             "RACE_KEYWORDS must be a module-level constant"
         )
-        assert isinstance(bot.RACE_KEYWORDS, dict)
-        assert "spain" in bot.RACE_KEYWORDS
-        assert bot.RACE_KEYWORDS["spain"] == "Spanish"
-        assert "barcelona" in bot.RACE_KEYWORDS
-        assert "mexico" in bot.RACE_KEYWORDS
-        assert "spielberg" in bot.RACE_KEYWORDS
-        assert "austin" in bot.RACE_KEYWORDS
+        assert isinstance(context_builder.RACE_KEYWORDS, dict)
+        assert "spain" in context_builder.RACE_KEYWORDS
+        assert context_builder.RACE_KEYWORDS["spain"] == "Spanish"
+        assert "barcelona" in context_builder.RACE_KEYWORDS
+        assert "mexico" in context_builder.RACE_KEYWORDS
+        assert "spielberg" in context_builder.RACE_KEYWORDS
+        assert "austin" in context_builder.RACE_KEYWORDS
