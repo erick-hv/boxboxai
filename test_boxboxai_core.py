@@ -1449,3 +1449,109 @@ class TestDataLayerExtraction:
         finally:
             data_layer._PREDICTOR_CACHE.clear()
             data_layer._PREDICTOR_CACHE.update(original)
+
+
+# ── RACE_KEYWORDS normalization in get_race_replay_context (step 4 live-test fix) ──
+
+class TestRaceReplayNormalization:
+    """
+    Regression tests for the RACE_KEYWORDS normalization fix.
+
+    Root cause: get_race_replay_context used raw substring matching, so "spain"
+    scored 0 against episode data keyed as track="Barcelona" / race_name="Spanish
+    Grand Prix" — neither contains "spain" as a literal substring.
+
+    Fix: scoring loop and in-memory guard now use RACE_KEYWORDS to normalise
+    country names to the adjective that appears in race_name (e.g. "spain" →
+    "Spanish", "mexico" → "Mexico", "austin" → "United States").
+    """
+
+    def _ep(self, round_num, race_name, track, winner="HAM", p2="RUS", p3="NOR"):
+        return {
+            "round": round_num,
+            "race_name": race_name,
+            "track": track,
+            "winner": winner,
+            "p2": p2,
+            "p3": p3,
+            "date": "2026-06-14",
+            "story": f"{winner} wins the {race_name}.",
+        }
+
+    def _mem(self, *episodes):
+        return {"episodic": list(episodes)}
+
+    # ── Spain / Barcelona ──────────────────────────────────────────────────────
+
+    def test_spain_matches_spanish_grand_prix_episode(self):
+        """'what happened in qualifying spain' must score R7 Spain, not return ''."""
+        mem = self._mem(self._ep(7, "Spanish Grand Prix", "Barcelona"))
+        result = bot.get_race_replay_context(
+            "what happened in qualifying spain", mem)
+        assert result != "", (
+            "'spain' must match episode with race_name='Spanish Grand Prix'"
+        )
+        content = result.content if hasattr(result, "content") else str(result)
+        assert "Spanish" in content or "Barcelona" in content or "HAM" in content
+
+    def test_barcelona_matches_spanish_grand_prix_episode(self):
+        """'what happened in barcelona' must score the Spain episode."""
+        mem = self._mem(self._ep(7, "Spanish Grand Prix", "Barcelona"))
+        result = bot.get_race_replay_context(
+            "what happened in barcelona", mem)
+        assert result != ""
+
+    def test_spain_not_in_memory_returns_empty(self):
+        """If R7 Spain is not in memory, 'spain' query must return '' (no wrong-race fallback)."""
+        mem = self._mem(self._ep(5, "Canadian Grand Prix", "Montreal"))
+        result = bot.get_race_replay_context(
+            "what happened in qualifying spain", mem)
+        assert result == "", (
+            "must not fall back to Canadian GP when Spain isn't in memory"
+        )
+
+    # ── Mexico / Mexico City ───────────────────────────────────────────────────
+
+    def test_mexico_matches_mexico_city_grand_prix_episode(self):
+        """'explain the strategy in mexico' must match episode with race_name containing 'Mexico'."""
+        mem = self._mem(self._ep(17, "Mexico City Grand Prix", "Mexico City"))
+        result = bot.get_race_replay_context(
+            "explain the strategy in mexico", mem)
+        assert result != "", (
+            "'mexico' must match episode with race_name='Mexico City Grand Prix'"
+        )
+
+    def test_mexico_not_in_memory_returns_empty(self):
+        """If Mexico isn't in memory, 'mexico' query must not fall back to a different race."""
+        mem = self._mem(self._ep(7, "Spanish Grand Prix", "Barcelona"))
+        result = bot.get_race_replay_context(
+            "explain the strategy in mexico", mem)
+        assert result == "", (
+            "must not return Spanish GP data for a Mexico query"
+        )
+
+    # ── Austria / Spielberg ───────────────────────────────────────────────────
+
+    def test_spielberg_matches_austrian_grand_prix_episode(self):
+        """'spielberg' (Red Bull Ring locality) must now match Austrian GP episode."""
+        mem = self._mem(self._ep(8, "Austrian Grand Prix", "Spielberg"))
+        result = bot.get_race_replay_context(
+            "what happened at spielberg", mem)
+        assert result != "", (
+            "'spielberg' must match episode with race_name='Austrian Grand Prix'"
+        )
+
+    # ── RACE_KEYWORDS is the single source of truth ───────────────────────────
+
+    def test_race_keywords_module_constant_exists(self):
+        """RACE_KEYWORDS must be a module-level dict, not a local inside _gather_context."""
+        assert hasattr(bot, "RACE_KEYWORDS"), (
+            "RACE_KEYWORDS must be a module-level constant"
+        )
+        assert isinstance(bot.RACE_KEYWORDS, dict)
+        assert "spain" in bot.RACE_KEYWORDS
+        assert bot.RACE_KEYWORDS["spain"] == "Spanish"
+        assert "barcelona" in bot.RACE_KEYWORDS
+        assert "mexico" in bot.RACE_KEYWORDS
+        assert "spielberg" in bot.RACE_KEYWORDS
+        assert "austin" in bot.RACE_KEYWORDS

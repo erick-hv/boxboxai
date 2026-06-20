@@ -3174,6 +3174,56 @@ def _is_weather_query(text: str) -> bool:
     return any(kw in t for kw in weather_keywords)
 
 
+RACE_KEYWORDS = {
+    # Monaco
+    "monaco": "Monaco", "mónaco": "Monaco",
+    # Spain
+    "barcelona": "Spanish", "spain": "Spanish", "spanish": "Spanish",
+    "españa": "Spanish", "catalunya": "Spanish",
+    # Australia
+    "australia": "Australian", "australian": "Australian", "melbourne": "Australian",
+    # China
+    "china": "Chinese", "chinese": "Chinese", "shanghai": "Chinese",
+    # Japan
+    "japan": "Japanese", "japanese": "Japanese", "suzuka": "Japanese",
+    # Miami
+    "miami": "Miami",
+    # Canada
+    "canada": "Canadian", "canadian": "Canadian", "montreal": "Canadian",
+    # Austria
+    "austria": "Austrian", "austrian": "Austrian",
+    "spielberg": "Austrian", "red bull ring": "Austrian",
+    # Britain
+    "britain": "British", "british": "British", "silverstone": "British",
+    # Belgium
+    "belgium": "Belgian", "belgian": "Belgian", "spa": "Belgian",
+    # Hungary
+    "hungary": "Hungarian", "hungarian": "Hungarian", "budapest": "Hungarian",
+    # Netherlands
+    "netherlands": "Dutch", "dutch": "Dutch", "zandvoort": "Dutch",
+    # Italy
+    "italy": "Italian", "italian": "Italian", "monza": "Italian",
+    # Singapore
+    "singapore": "Singapore",
+    # Azerbaijan
+    "azerbaijan": "Azerbaijan", "baku": "Azerbaijan",
+    # United States
+    "united states": "United States", "us gp": "United States",
+    "austin": "United States", "cota": "United States",
+    # Mexico
+    "mexico": "Mexico", "méxico": "Mexico",
+    # Brazil / São Paulo
+    "brazil": "São Paulo", "brasil": "São Paulo",
+    "interlagos": "São Paulo", "são paulo": "São Paulo", "sao paulo": "São Paulo",
+    # Las Vegas
+    "vegas": "Las Vegas", "las vegas": "Las Vegas",
+    # Qatar
+    "qatar": "Qatar", "lusail": "Qatar",
+    # Abu Dhabi
+    "abu dhabi": "Abu Dhabi", "yas marina": "Abu Dhabi",
+}
+
+
 def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     """Gathers all context blocks for a query. Returns a dict of raw context strings."""
     news_ctx          = ""
@@ -3221,31 +3271,8 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
 
         # Detect race from the QUERY first — "in Monaco" should mean
         # Monaco's episode, not whatever the most recent race is.
-        race_keywords = {
-            "monaco": "Monaco", "mónaco": "Monaco",
-            "barcelona": "Spanish", "spain": "Spanish", "spanish": "Spanish",
-            "españa": "Spanish", "catalunya": "Spanish",
-            "australia": "Australian", "australian": "Australian",
-            "china": "Chinese", "chinese": "Chinese",
-            "japan": "Japanese", "japanese": "Japanese",
-            "miami": "Miami",
-            "canada": "Canadian", "canadian": "Canadian", "montreal": "Canadian",
-            "austria": "Austrian", "austrian": "Austrian",
-            "britain": "British", "british": "British", "silverstone": "British",
-            "belgium": "Belgian", "belgian": "Belgian", "spa": "Belgian",
-            "hungary": "Hungarian", "hungarian": "Hungarian",
-            "netherlands": "Dutch", "dutch": "Dutch", "zandvoort": "Dutch",
-            "italy": "Italian", "italian": "Italian", "monza": "Italian",
-            "singapore": "Singapore",
-            "azerbaijan": "Azerbaijan", "baku": "Azerbaijan",
-            "mexico": "Mexico", "méxico": "Mexico",
-            "brazil": "São Paulo", "brasil": "São Paulo", "interlagos": "São Paulo",
-            "vegas": "Las Vegas",
-            "qatar": "Qatar",
-            "abu dhabi": "Abu Dhabi",
-        }
         named_episode = None
-        for kw, race_word in race_keywords.items():
+        for kw, race_word in RACE_KEYWORDS.items():
             if kw in t_lower:
                 named_episode = next(
                     (e for e in episodes
@@ -4878,7 +4905,15 @@ def get_race_replay_context(query: str, mem: dict):
         score = 0
         track    = ep.get("track", "").lower()
         racename = ep.get("race_name", "").lower()
-        if track in t or any(w in t for w in racename.split() if len(w) > 4):
+        name_match = (
+            track in t
+            or any(w in t for w in racename.split() if len(w) > 4)
+            or any(
+                kw in t and (rw.lower() in track or rw.lower() in racename)
+                for kw, rw in RACE_KEYWORDS.items()
+            )
+        )
+        if name_match:
             score += 5
         for driver in [ep.get("winner",""), ep.get("p2",""), ep.get("p3","")]:
             if driver.lower() in t:
@@ -4899,35 +4934,21 @@ def get_race_replay_context(query: str, mem: dict):
     # don't fall back to a different (most recent) race — that would
     # confidently describe the wrong Grand Prix. Return empty instead so
     # the live-search / session-intercept path can handle it honestly.
-    OTHER_CIRCUIT_NAMES = [
-        "spain", "spanish", "barcelona", "españa", "catalunya",
-        "austria", "austrian", "spielberg", "red bull ring",
-        "silverstone", "british", "britain",
-        "spa", "belgian", "belgium",
-        "hungary", "hungarian", "budapest",
-        "zandvoort", "dutch", "netherlands",
-        "monza", "italian", "italy",
-        "baku", "azerbaijan",
-        "singapore",
-        "austin", "cota", "united states", "us gp",
-        "mexico", "méxico",
-        "brazil", "brasil", "interlagos", "são paulo", "sao paulo",
-        "vegas", "las vegas",
-        "qatar", "lusail",
-        "abu dhabi", "yas marina",
-    ]
+    # Uses RACE_KEYWORDS so normalization ("spain" → "Spanish") is applied
+    # consistently with the FIA-docs and scoring paths above.
     if best_score == 0:
-        for name in OTHER_CIRCUIT_NAMES:
-            if name in t:
-                # Check if any episode in memory actually covers this circuit
+        for kw, race_word in RACE_KEYWORDS.items():
+            if kw in t:
+                rw = race_word.lower()
                 in_memory = any(
-                    name in ep.get("track","").lower()
-                    or name in ep.get("race_name","").lower()
+                    rw in ep.get("track","").lower()
+                    or rw in ep.get("race_name","").lower()
                     for ep in episodes)
                 if not in_memory:
-                    log.info(f"Race replay: '{name}' mentioned but not in "
-                             f"memory yet — returning empty, not Monaco fallback")
+                    log.info(f"Race replay: '{kw}' → '{race_word}' mentioned "
+                             f"but not in memory yet — returning empty")
                     return ""
+                break
 
     # Default to most recent race
     if not best_ep and episodes:
