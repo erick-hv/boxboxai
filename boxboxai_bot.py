@@ -3224,6 +3224,31 @@ RACE_KEYWORDS = {
 }
 
 
+def _detect_driver_stat_query(text: str) -> str | None:
+    """Returns driver code if query is asking for career stats."""
+    stat_keywords = ["how many wins", "career stats", "total wins", "how many poles",
+                     "career wins", "all time wins", "cuántas victorias", "estadísticas",
+                     "cuántos podios", "cuántas poles"]
+    t = text.lower()
+    if not any(kw in t for kw in stat_keywords):
+        return None
+    driver_map = {
+        "hamilton": "HAM", "lewis": "HAM",
+        "verstappen": "VER", "max": "VER",
+        "leclerc": "LEC", "charles": "LEC",
+        "alonso": "ALO", "nano": "ALO", "fernando": "ALO",
+        "perez": "PER", "checo": "PER", "pérez": "PER",
+        "russell": "RUS", "george": "RUS",
+        "norris": "NOR", "lando": "NOR",
+        "bottas": "BOT", "valtteri": "BOT",
+        "sainz": "SAI", "carlitos": "SAI",
+    }
+    for name, code in driver_map.items():
+        if name in t:
+            return code
+    return None
+
+
 def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     """Gathers all context blocks for a query. Returns a dict of raw context strings."""
     news_ctx          = ""

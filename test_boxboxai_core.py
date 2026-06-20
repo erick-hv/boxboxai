@@ -113,6 +113,27 @@ class TestIsWeatherQuery:
         assert bot._is_weather_query("hace tiempo que no gana alonso") is False
 
 
+# ── _detect_driver_stat_query ─────────────────────────────────────────────────
+
+class TestDetectDriverStatQuery:
+
+    def test_how_many_wins_hamilton_returns_HAM(self):
+        assert bot._detect_driver_stat_query("how many wins does hamilton have") == "HAM"
+
+    def test_career_stats_verstappen_returns_VER(self):
+        assert bot._detect_driver_stat_query("what are verstappen career stats") == "VER"
+
+    def test_no_stat_keyword_returns_none(self):
+        assert bot._detect_driver_stat_query("who is winning the championship") is None
+
+    def test_no_driver_name_returns_none(self):
+        # stat keyword present but no recognized driver name
+        assert bot._detect_driver_stat_query("how many wins did that guy get") is None
+
+    def test_spanish_cuantas_victorias_norris_returns_NOR(self):
+        assert bot._detect_driver_stat_query("cuántas victorias tiene lando") == "NOR"
+
+
 # ── _resolve_multiple_driver_codes ────────────────────────────────────────────
 
 class TestResolveMultipleDriverCodes:
