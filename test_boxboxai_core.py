@@ -791,6 +791,76 @@ def _empty_ctx():
     }
 
 
+# ── check_and_send_circuit_map_notification ───────────────────────────────────
+
+class TestCircuitMapNotification:
+    """
+    check_and_send_circuit_map_notification sends photo+text to owner first,
+    then to users with session_notifications enabled.  Saves notified state and
+    does NOT send again on a second call for the same round.
+    """
+
+    def test_sends_to_owner_and_enabled_users_saves_state_no_second_send(self, tmp_path):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Pre-existing rendered image on disk (> 10 KB)
+        img_path = tmp_path / f"barcelona_v{bot.CIRCUIT_MAP_VERSION}.jpg"
+        img_path.write_bytes(b"X" * 20_000)
+
+        sessions = {
+            "111": {"notification_prefs": {"session_notifications": True}},
+            "222": {"notification_prefs": {"session_notifications": False}},
+        }
+        saved_states = []
+
+        async def _run():
+            fake_app = MagicMock()
+            fake_app.bot.send_photo = AsyncMock()
+            fake_app.bot.send_message = AsyncMock()
+
+            # First call: image already on disk, state empty → should notify
+            with patch.object(bot, "fetch_next_race",
+                              return_value={"raceName": "Spanish Grand Prix", "round": "7"}), \
+                 patch.object(bot, "CIRCUIT_MAPS_DIR", tmp_path), \
+                 patch.object(bot, "get_circuit_guide",
+                              return_value=("Barcelona circuit guide text.", None)), \
+                 patch.object(bot, "load_circuit_map_notified_state", return_value={}), \
+                 patch.object(bot, "save_circuit_map_notified_state",
+                              side_effect=lambda s: saved_states.append(s)), \
+                 patch.object(bot, "get_active_user_ids", return_value=["111", "222"]):
+                await bot.check_and_send_circuit_map_notification(
+                    fake_app, sessions, {})
+
+            # Owner + user 111 each get one send_photo call; user 222 gets none
+            chat_ids = [c.kwargs["chat_id"]
+                        for c in fake_app.bot.send_photo.call_args_list]
+            assert bot.BOT_OWNER_ID in chat_ids, "owner did not receive circuit map photo"
+            assert "111" in chat_ids, "enabled user did not receive circuit map photo"
+            assert "222" not in chat_ids, "disabled user should not receive circuit map photo"
+
+            # State saved with the correct round and notified=True
+            assert saved_states, "save_circuit_map_notified_state was never called"
+            assert saved_states[-1] == {"round": 7, "notified": True}
+
+            # Second call with notified state for the same round → no further sends
+            fake_app.bot.send_photo.reset_mock()
+            with patch.object(bot, "fetch_next_race",
+                              return_value={"raceName": "Spanish Grand Prix", "round": "7"}), \
+                 patch.object(bot, "CIRCUIT_MAPS_DIR", tmp_path), \
+                 patch.object(bot, "load_circuit_map_notified_state",
+                              return_value={"round": 7, "notified": True}), \
+                 patch.object(bot, "save_circuit_map_notified_state"):
+                await bot.check_and_send_circuit_map_notification(
+                    fake_app, sessions, {})
+
+            assert fake_app.bot.send_photo.call_count == 0, (
+                "notification was sent again for the same round — "
+                "notified state was not checked correctly")
+
+        asyncio.run(_run())
+
+
 class TestFormatDebugContextReport:
 
     def test_empty_context_shows_no_blocks_triggered(self):

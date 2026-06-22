@@ -61,7 +61,7 @@ from context_builder import (
     _gather_context, _format_debug_context_report,
     _is_live_session_question, detect_fan_declaration,
     FIA_DRIVER_NAMES, FIA_DRIVER_CAR_NUMBERS,
-    get_circuit_map_image,
+    get_circuit_map_image, get_circuit_guide,
 )
 
 # ── dependency check ──────────────────────────────────────────
@@ -105,8 +105,9 @@ SEASON        = 2026
 # Telegram message limit
 TG_MAX_CHARS  = 4096
 
-CIRCUIT_MAP_CACHE_FILE = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
-CIRCUIT_MAPS_DIR       = Path(__file__).parent / "boxboxai_circuit_maps"
+CIRCUIT_MAP_CACHE_FILE      = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
+CIRCUIT_MAPS_DIR            = Path(__file__).parent / "boxboxai_circuit_maps"
+CIRCUIT_MAP_NOTIFIED_FILE   = Path(__file__).parent / "boxboxai_circuit_map_notified.json"
 from models import CIRCUIT_MAP_VERSION  # noqa: E402
 
 # Serialise concurrent Playwright sessions (prewarm + user request can race).
@@ -535,6 +536,20 @@ def save_notification_state(state: dict):
     except Exception:
         pass
 
+def load_circuit_map_notified_state() -> dict:
+    if CIRCUIT_MAP_NOTIFIED_FILE.exists():
+        try:
+            return json.loads(CIRCUIT_MAP_NOTIFIED_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+def save_circuit_map_notified_state(state: dict):
+    try:
+        CIRCUIT_MAP_NOTIFIED_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
+
 def get_active_user_ids(sessions: dict) -> list:
     """Returns user IDs active in the last 30 days."""
     cutoff = datetime.now().timestamp() - (30 * 24 * 3600)
@@ -814,7 +829,7 @@ async def notification_loop(app, sessions_ref: list, mem_ref: list):
             # Every 5 min — session notifications
             await send_session_notifications(app, sessions_ref[0])
 
-            # Every 30 min — session debriefs + auto-verify ingest
+            # Every 30 min — session debriefs + auto-verify ingest + circuit map
             if check_count % 6 == 0:
                 # DISABLED: automatic prose debrief via send_session_debrief.
                 # The "RACE OVER!" instant notification (_notify_race_result,
@@ -830,6 +845,10 @@ async def notification_loop(app, sessions_ref: list, mem_ref: list):
 
                 # Auto-verify: check if predictor ran after qualifying
                 await _verify_predictor_ran(app, mem_ref[0])
+
+                # Notify when FIA circuit map PDF becomes available
+                await check_and_send_circuit_map_notification(
+                    app, sessions_ref[0], mem_ref[0])
 
             # Every hour — weekly digest
             check_count += 1
@@ -1781,6 +1800,79 @@ async def _prewarm_circuit_map_for_next_race():
         await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
     except Exception as e:
         log.info(f"Circuit map pre-warm failed (non-fatal): {e}")
+
+
+async def check_and_send_circuit_map_notification(app, sessions: dict, mem: dict):
+    """
+    Sends a circuit map notification when the FIA PDF for the next race becomes
+    available.  Fires at most once per race round — tracked in
+    boxboxai_circuit_map_notified.json.  Runs every 30 min from notification_loop.
+    """
+    import asyncio as _asyncio
+
+    next_race = fetch_next_race()
+    if not next_race:
+        return
+    race_name     = next_race.get("raceName", "")
+    current_round = int(next_race.get("round", 0))
+    if not current_round:
+        return
+
+    circuit_key = next(
+        (k for k, v in _CIRCUIT_KEY_TO_FIA_EVENT.items()
+         if v.lower() == race_name.lower()), "")
+    if not circuit_key:
+        log.info(f"Circuit map notification: no circuit key for '{race_name}'")
+        return
+
+    state = load_circuit_map_notified_state()
+    if state.get("round") == current_round and state.get("notified"):
+        return
+
+    img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}_v{CIRCUIT_MAP_VERSION}.jpg"
+    if not (img_path.exists() and img_path.stat().st_size > 10_000):
+        loop = _asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
+        except Exception as e:
+            log.info(f"Circuit map notification: fetch failed — {e}")
+            return
+        if not (img_path.exists() and img_path.stat().st_size > 10_000):
+            return  # PDF not published yet — retry next 30-min cycle
+
+    guide_text, _ = get_circuit_guide(circuit_key)
+
+    # Owner first
+    try:
+        with open(img_path, "rb") as fh:
+            await app.bot.send_photo(
+                chat_id=BOT_OWNER_ID, photo=fh,
+                caption=f"🗺 {race_name} circuit map is now available on FIA season page")
+        if guide_text:
+            await app.bot.send_message(chat_id=BOT_OWNER_ID, text=guide_text[:4000])
+    except Exception as e:
+        log.info(f"Circuit map notification: owner send failed — {e}")
+
+    # All active users with session_notifications enabled
+    sent = 0
+    for uid in get_active_user_ids(sessions):
+        user_prefs = sessions.get(uid, {}).get("notification_prefs", {})
+        if not user_prefs.get("session_notifications", True):
+            continue
+        try:
+            with open(img_path, "rb") as fh:
+                await app.bot.send_photo(
+                    chat_id=uid, photo=fh,
+                    caption=f"🗺 {race_name} circuit map just dropped! Here's the track layout 👇")
+            if guide_text:
+                await app.bot.send_message(chat_id=uid, text=guide_text[:800])
+            sent += 1
+            await _asyncio.sleep(0.05)
+        except Exception as e:
+            log.info(f"Circuit map notification: send to {uid} failed — {e}")
+
+    save_circuit_map_notified_state({"round": current_round, "notified": True})
+    log.info(f"Circuit map notification sent for {race_name} to {sent} users")
 
 
 def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
