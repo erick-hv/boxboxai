@@ -1551,6 +1551,7 @@ def _run_circuit_map_playwright(race_name: str, circuit_key: str = "") -> bytes:
         if word not in ("grand", "prix", "the", "de"):
             match_kws.add(word)
 
+    _circuit_map_playwright_lock.acquire()
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -1615,6 +1616,8 @@ def _run_circuit_map_playwright(race_name: str, circuit_key: str = "") -> bytes:
     except Exception as e:
         log.info(f"Circuit map Playwright fetch failed — {e}")
         return b""
+    finally:
+        _circuit_map_playwright_lock.release()
 
 
 def _fetch_circuit_map_pdf(race_name: str, circuit_key: str = "") -> bytes:
@@ -1634,11 +1637,10 @@ def _fetch_circuit_map_pdf(race_name: str, circuit_key: str = "") -> bytes:
 
     try:
         from concurrent.futures import ThreadPoolExecutor
-        with _circuit_map_playwright_lock:  # one Playwright session at a time
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    _run_circuit_map_playwright, race_name, circuit_key)
-                return future.result(timeout=60)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _run_circuit_map_playwright, race_name, circuit_key)
+            return future.result(timeout=60)
     except Exception as e:
         log.info(f"Circuit map [{circuit_key}]: thread execution failed — {e}")
         return b""
@@ -1814,16 +1816,9 @@ async def _prewarm_circuit_map_for_next_race():
         if cache.get(circuit_key):
             log.info(f"Circuit map pre-warm: '{circuit_key}' already cached")
             return
-        # Acquire lock non-blocking — skip rather than block user requests.
-        if not _circuit_map_playwright_lock.acquire(blocking=False):
-            log.info("Circuit map pre-warm: skipping — Playwright lock held by user request")
-            return
-        try:
-            log.info(f"Circuit map pre-warm: fetching '{circuit_key}' ({race_name})")
-            loop = _asyncio.get_event_loop()
-            await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
-        finally:
-            _circuit_map_playwright_lock.release()
+        log.info(f"Circuit map pre-warm: fetching '{circuit_key}' ({race_name})")
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
     except Exception as e:
         log.info(f"Circuit map pre-warm failed (non-fatal): {e}")
 
@@ -4396,8 +4391,9 @@ def main():
             auto_predictor_loop(application))
         _asyncio.create_task(
             auto_memory_enrichment_loop(mem_ref, application))
-        _asyncio.create_task(
-            _prewarm_circuit_map_for_next_race())
+        # Prewarm disabled: it blocked user requests by holding the Playwright
+        # lock for ~49s at startup.  Re-enable once a non-blocking solution exists.
+        # _asyncio.create_task(_prewarm_circuit_map_for_next_race())
         await alert_owner(application,
             f"✅ *BoxBoxAI is online*\n\n"
             f"Memory: {len(mem.get('episodic',[]))} races ingested\n"
