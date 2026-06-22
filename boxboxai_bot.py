@@ -1682,7 +1682,18 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
             None,
         )
         if _cached_img:
-            return cache[circuit_key]   # zone data cached + image on disk — skip fetch
+            try:
+                from PIL import Image as _PIL
+                _im = _PIL.open(_cached_img)
+                _w, _h = _im.size
+                if _h > 0 and (_w / _h) <= 4.0 and _w >= 400:
+                    return cache[circuit_key]   # good image — skip fetch
+                # Stale bad image (logo or pit lane strip) — delete and re-fetch
+                _cached_img.unlink(missing_ok=True)
+                log.info(f"Circuit map [{circuit_key}]: deleted stale image "
+                         f"({_w}×{_h}, ratio {_w/_h:.1f}) — will re-fetch")
+            except Exception:
+                pass  # can't read image — fall through to re-fetch
 
     # Look up the FIA event name for this circuit
     race_name = _CIRCUIT_KEY_TO_FIA_EVENT.get(circuit_key)
