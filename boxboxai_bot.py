@@ -107,6 +107,7 @@ TG_MAX_CHARS  = 4096
 
 CIRCUIT_MAP_CACHE_FILE = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
 CIRCUIT_MAPS_DIR       = Path(__file__).parent / "boxboxai_circuit_maps"
+from models import CIRCUIT_MAP_VERSION  # noqa: E402
 
 # Serialise concurrent Playwright sessions (prewarm + user request can race).
 import threading as _threading
@@ -1678,9 +1679,9 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
     cache = _load_circuit_map_cache()
     if cache.get(circuit_key):
         _cached_img = next(
-            (CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}"
-             for ext in (".png", ".jpg", ".jpeg")
-             if (CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}").exists()),
+            (CIRCUIT_MAPS_DIR / f"{circuit_key}_v{CIRCUIT_MAP_VERSION}{ext}"
+             for ext in (".jpg", ".jpeg", ".png")
+             if (CIRCUIT_MAPS_DIR / f"{circuit_key}_v{CIRCUIT_MAP_VERSION}{ext}").exists()),
             None,
         )
         if _cached_img and _cached_img.stat().st_size > 10_000:
@@ -1728,7 +1729,7 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
             pix = page.get_pixmap(matrix=mat)
             img_bytes = pix.tobytes("jpeg", jpg_quality=85)
             CIRCUIT_MAPS_DIR.mkdir(exist_ok=True)
-            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}.jpg"
+            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}_v{CIRCUIT_MAP_VERSION}.jpg"
             img_path.write_bytes(img_bytes)
             log.info(f"Circuit map [{circuit_key}]: saved rendered page 1 "
                      f"({len(img_bytes):,} bytes)")

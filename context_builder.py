@@ -9,7 +9,7 @@ from pathlib import Path
 import requests
 import anthropic
 
-from models import ContextBlock, _unpack_ctx
+from models import ContextBlock, _unpack_ctx, CIRCUIT_MAP_VERSION
 from news import get_news_context, get_news_cache_time
 from security import alert_owner
 from data_layer import (
@@ -574,8 +574,8 @@ _CIRCUIT_MAPS_DIR = Path(__file__).parent / "boxboxai_circuit_maps"
 
 def _find_circuit_map_image(circuit_key: str) -> Path | None:
     """Return path to a saved circuit map image, or None if not on disk."""
-    for ext in (".png", ".jpg", ".jpeg"):
-        p = _CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}"
+    for ext in (".jpg", ".jpeg", ".png"):
+        p = _CIRCUIT_MAPS_DIR / f"{circuit_key}_v{CIRCUIT_MAP_VERSION}{ext}"
         if p.exists():
             return p
     return None

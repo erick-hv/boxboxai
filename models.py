@@ -1,6 +1,10 @@
 """Shared data models for BoxBoxAI context assembly."""
 from dataclasses import dataclass
 
+# Increment when the circuit map extraction method changes so stale on-disk
+# images from older versions are automatically ignored and re-fetched.
+CIRCUIT_MAP_VERSION = 2
+
 
 @dataclass
 class ContextBlock:
