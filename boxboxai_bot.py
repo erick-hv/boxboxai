@@ -1711,22 +1711,47 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
     # handle_message.  Stored at CIRCUIT_MAPS_DIR/{circuit_key}.{ext}.
     # Image failure never blocks zone-data caching.
     #
-    # Heuristic: page 0 of FIA circuit-map PDFs is always the cover /
-    # letterhead; skip it.  Among pages 1+, pick the largest image by
-    # byte size — no PIL/Pillow dependency required.
+    # Heuristic (derived from Barcelona PDF inventory):
+    #   Pick the FIRST image in page order where PIL can decode it,
+    #   aspect ratio (w/h) ≤ 4.0, and width ≥ 400 px.
+    #   This selects the overhead circuit layout (Im1.jpg, page 1, 702×387,
+    #   ratio 1.81) and skips the FIA header bar (ratio 11.2) and the pit
+    #   lane drawing (R9.png, 3016×431, ratio 7.0).
+    #   Fallback: if nothing passes the filter, take the largest by byte size.
     try:
+        from PIL import Image as _PILImage
+
         best_data: bytes = b""
         best_ext: str = ".png"
+        fallback_data: bytes = b""
+        fallback_ext: str = ".png"
 
         for pg in reader.pages:
+            if best_data:
+                break
             for img in pg.images:
-                if len(img.data) > len(best_data):
-                    best_data = img.data
-                    best_ext = (
-                        ".jpg"
-                        if img.name.lower().endswith((".jpg", ".jpeg"))
-                        else ".png"
-                    )
+                raw = img.data
+                # track fallback (largest overall) before filter
+                if len(raw) > len(fallback_data):
+                    fallback_data = raw
+                    fallback_ext = (
+                        ".jpg" if img.name.lower().endswith((".jpg", ".jpeg"))
+                        else ".png")
+                try:
+                    pil = _PILImage.open(__import__("io").BytesIO(raw))
+                    w, h = pil.size
+                except Exception:
+                    continue
+                if h == 0 or (w / h) > 4.0 or w < 400:
+                    continue
+                best_data = raw
+                best_ext = (
+                    ".jpg" if img.name.lower().endswith((".jpg", ".jpeg"))
+                    else ".png")
+                break  # first qualifying image wins
+
+        if not best_data:
+            best_data, best_ext = fallback_data, fallback_ext
 
         if best_data:
             CIRCUIT_MAPS_DIR.mkdir(exist_ok=True)
