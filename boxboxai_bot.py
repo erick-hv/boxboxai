@@ -1792,6 +1792,10 @@ async def _prewarm_circuit_map_for_next_race():
     Fire-and-forget startup task: fetches and caches circuit zone data for
     the next/current race weekend so the first user query isn't delayed.
     Failures are logged but never propagate — bot startup is unaffected.
+
+    Uses non-blocking lock acquisition so a concurrent user request always
+    wins: if the Playwright lock is already held, the prewarm skips rather
+    than queuing behind and delaying the user.
     """
     import asyncio as _asyncio
     try:
@@ -1810,9 +1814,16 @@ async def _prewarm_circuit_map_for_next_race():
         if cache.get(circuit_key):
             log.info(f"Circuit map pre-warm: '{circuit_key}' already cached")
             return
-        log.info(f"Circuit map pre-warm: fetching '{circuit_key}' ({race_name})")
-        loop = _asyncio.get_event_loop()
-        await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
+        # Acquire lock non-blocking — skip rather than block user requests.
+        if not _circuit_map_playwright_lock.acquire(blocking=False):
+            log.info("Circuit map pre-warm: skipping — Playwright lock held by user request")
+            return
+        try:
+            log.info(f"Circuit map pre-warm: fetching '{circuit_key}' ({race_name})")
+            loop = _asyncio.get_event_loop()
+            await loop.run_in_executor(None, _get_circuit_zone_data, circuit_key)
+        finally:
+            _circuit_map_playwright_lock.release()
     except Exception as e:
         log.info(f"Circuit map pre-warm failed (non-fatal): {e}")
 
@@ -4277,7 +4288,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if _circuit_img:
             try:
                 log.info(f"Circuit map: sending photo {_circuit_img}")
-                await update.message.reply_photo(_circuit_img)
+                with open(_circuit_img, "rb") as _img_fh:
+                    await update.message.reply_photo(_img_fh)
                 log.info(f"Circuit map: photo sent successfully")
             except Exception as _img_err:
                 log.info(f"Circuit map photo send failed — {_img_err}")
