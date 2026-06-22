@@ -1706,49 +1706,32 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
     # handle_message.  Stored at CIRCUIT_MAPS_DIR/{circuit_key}.{ext}.
     # Image failure never blocks zone-data caching.
     #
-    # Heuristic: skip RGBA images (FIA letterhead/logos); among the
-    # remaining RGB images pick the one whose aspect ratio (w/h) is
-    # closest to 2.0, which is typical for an overhead circuit map.
-    # Fall back to the largest non-RGBA image if PIL can't decode any
-    # image's dimensions.
+    # Heuristic: page 0 of FIA circuit-map PDFs is always the cover /
+    # letterhead; skip it.  Among pages 1+, pick the largest image by
+    # byte size — no PIL/Pillow dependency required.
     try:
-        from PIL import Image as _PIL
-        best_by_ratio = None   # (score, data, ext) — lowest score wins
-        best_by_size  = None   # (nbytes, data, ext) — largest wins (fallback)
+        best_data: bytes = b""
+        best_ext: str = ".png"
 
-        for pg in reader.pages:
+        for pg_num, pg in enumerate(reader.pages):
+            if pg_num == 0:
+                continue  # always FIA cover / letterhead
             for img in pg.images:
-                ext = (
-                    ".jpg"
-                    if img.name.lower().endswith((".jpg", ".jpeg"))
-                    else ".png"
-                )
-                try:
-                    im = _PIL.open(io.BytesIO(img.data))
-                except Exception:
-                    continue  # can't decode — skip
-                if im.mode == "RGBA":
-                    continue  # logo / letterhead
-                # Fallback: largest non-RGBA by byte size
-                if best_by_size is None or len(img.data) > best_by_size[0]:
-                    best_by_size = (len(img.data), img.data, ext)
-                # Primary: closest aspect ratio to 2.0 (w:h)
-                w, h = im.size
-                if h > 0:
-                    score = abs(w / h - 2.0)
-                    if best_by_ratio is None or score < best_by_ratio[0]:
-                        best_by_ratio = (score, img.data, ext)
+                if len(img.data) > len(best_data):
+                    best_data = img.data
+                    best_ext = (
+                        ".jpg"
+                        if img.name.lower().endswith((".jpg", ".jpeg"))
+                        else ".png"
+                    )
 
-        chosen = best_by_ratio or best_by_size
-        if chosen:
-            chosen_data = chosen[1]
-            chosen_ext  = chosen[2]
+        if best_data:
             CIRCUIT_MAPS_DIR.mkdir(exist_ok=True)
-            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}{chosen_ext}"
-            img_path.write_bytes(chosen_data)
+            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}{best_ext}"
+            img_path.write_bytes(best_data)
             log.info(
                 f"Circuit map: saved image {img_path.name} "
-                f"({len(chosen_data):,} bytes)")
+                f"({len(best_data):,} bytes)")
     except Exception as e:
         log.info(f"Circuit map: image extraction failed — {e}")
 
