@@ -4254,21 +4254,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         update_user_history(sessions, user_id, "assistant", reply)
         save_sessions(sessions)
 
-        # Send circuit map image before the text reply.
-        # Failure is non-fatal — text guide always goes through.
-        _circuit_img = get_circuit_map_image(text)
-        if _circuit_img:
-            try:
-                log.info(f"Circuit map: sending photo {_circuit_img}")
-                await update.message.reply_photo(_circuit_img)
-                log.info(f"Circuit map: photo sent successfully")
-            except Exception as _img_err:
-                log.info(f"Circuit map photo send failed — {_img_err}")
-
         # Show rate limit warning if near limit
         if rate_msg:
             await update.message.reply_text(rate_msg)
 
+        # Send text reply first so user gets the answer immediately
         for part in split_message(reply):
             try:
                 # Try with Markdown first
@@ -4278,6 +4268,19 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 # Fall back to plain text if markdown fails
                 clean = re.sub(r"[*_`\[\]]", "", part)
                 await update.message.reply_text(clean)
+
+        # Circuit map image as a follow-up.  The short sleep lets the thread
+        # executor finish writing the file before we check disk.
+        import asyncio as _asyncio
+        await _asyncio.sleep(2)
+        _circuit_img = get_circuit_map_image(text)
+        if _circuit_img:
+            try:
+                log.info(f"Circuit map: sending photo {_circuit_img}")
+                await update.message.reply_photo(_circuit_img)
+                log.info(f"Circuit map: photo sent successfully")
+            except Exception as _img_err:
+                log.info(f"Circuit map photo send failed — {_img_err}")
 
     except Exception as e:
         log.error(f"handle_message error for {user_id}: {e}")
