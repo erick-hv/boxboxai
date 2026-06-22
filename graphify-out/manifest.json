@@ -1,0 +1,112 @@
+{
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/settings.json": {
+    "mtime": 1781564903.9668908,
+    "ast_hash": "e1073342e958ac9f00716938c8f165e3",
+    "semantic_hash": "e1073342e958ac9f00716938c8f165e3"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/settings.local.json": {
+    "mtime": 1781563217.7828774,
+    "ast_hash": "48300bcd4b6ffb8706488765e21132e9",
+    "semantic_hash": "48300bcd4b6ffb8706488765e21132e9"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/boxboxai_bot.py": {
+    "mtime": 1781563462.0335217,
+    "ast_hash": "974e1c11b123dbe3eeb6f4f3bef02815",
+    "semantic_hash": "974e1c11b123dbe3eeb6f4f3bef02815"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/build_2026_memory.py": {
+    "mtime": 1781188541.4340827,
+    "ast_hash": "73ba43fccbd4952077bd99d58a267c50",
+    "semantic_hash": "73ba43fccbd4952077bd99d58a267c50"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/f1_2026_bayesian_priors.json": {
+    "mtime": 1781218215.1390889,
+    "ast_hash": "3bc1970abd1450066aacb6a88221c25e",
+    "semantic_hash": "3bc1970abd1450066aacb6a88221c25e"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/f1_2026_predictor.py": {
+    "mtime": 1780600339.8841362,
+    "ast_hash": "dbc3c23d30f8f145c24cc54d4e30a8de",
+    "semantic_hash": "dbc3c23d30f8f145c24cc54d4e30a8de"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/f1_agent.py": {
+    "mtime": 1780613110.4211829,
+    "ast_hash": "dbc3af689fb938e754bab0e04053b989",
+    "semantic_hash": "dbc3af689fb938e754bab0e04053b989"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/f1_briefings.json": {
+    "mtime": 1780613290.970329,
+    "ast_hash": "021311eef24573d425c72acc59cdd003",
+    "semantic_hash": "021311eef24573d425c72acc59cdd003"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/f1_diagnostico_openf1.py": {
+    "mtime": 1774709249.6384904,
+    "ast_hash": "b5ba432818afcc7f43cd193b705fe2a1",
+    "semantic_hash": "b5ba432818afcc7f43cd193b705fe2a1"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/f1_memory_2026.json": {
+    "mtime": 1781218007.2024238,
+    "ast_hash": "ac43cca92669178b8a2eee70a36b60fe",
+    "semantic_hash": "ac43cca92669178b8a2eee70a36b60fe"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/CLAUDE.md": {
+    "mtime": 1781564903.9643254,
+    "ast_hash": "db73b0edd7ffbc61ceac177130730865",
+    "semantic_hash": "db73b0edd7ffbc61ceac177130730865"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/SKILL.md": {
+    "mtime": 1781564903.962556,
+    "ast_hash": "97c2755905a5a0e53b96b31c725a7010",
+    "semantic_hash": "97c2755905a5a0e53b96b31c725a7010"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/add-watch.md": {
+    "mtime": 1781564850.267232,
+    "ast_hash": "0df0589623217ca38a12bdcabfb42f4c",
+    "semantic_hash": "0df0589623217ca38a12bdcabfb42f4c"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/exports.md": {
+    "mtime": 1781564850.268007,
+    "ast_hash": "c04ddf8f1f5ef5e262ebec491a523c74",
+    "semantic_hash": "c04ddf8f1f5ef5e262ebec491a523c74"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/extraction-spec.md": {
+    "mtime": 1781564850.2683764,
+    "ast_hash": "24808b03abfeaf5f6435bb69c0125b2c",
+    "semantic_hash": "24808b03abfeaf5f6435bb69c0125b2c"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/github-and-merge.md": {
+    "mtime": 1781564850.268686,
+    "ast_hash": "cde13df085e4c492aeb7ba298a996d0d",
+    "semantic_hash": "cde13df085e4c492aeb7ba298a996d0d"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/hooks.md": {
+    "mtime": 1781564850.268944,
+    "ast_hash": "3f545db6ce646650bb9de588f5512a27",
+    "semantic_hash": "3f545db6ce646650bb9de588f5512a27"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/query.md": {
+    "mtime": 1781564850.269231,
+    "ast_hash": "8b40ed8c9e9060fc215219a8fc964091",
+    "semantic_hash": "8b40ed8c9e9060fc215219a8fc964091"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/transcribe.md": {
+    "mtime": 1781564850.273038,
+    "ast_hash": "70f6aa30d6211f3a2c7e9fc45479f50c",
+    "semantic_hash": "70f6aa30d6211f3a2c7e9fc45479f50c"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/.claude/skills/graphify/references/update.md": {
+    "mtime": 1781564850.2733862,
+    "ast_hash": "0dad167a95bdb389f02fecffb60b1bc8",
+    "semantic_hash": "0dad167a95bdb389f02fecffb60b1bc8"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/CLAUDE.md": {
+    "mtime": 1781564903.9661105,
+    "ast_hash": "6c1e24875e2f336f13bc646119938592",
+    "semantic_hash": "6c1e24875e2f336f13bc646119938592"
+  },
+  "/Users/erick.hernandez/Documents/Erick stuff/F1_Agent/requirements.txt": {
+    "mtime": 1781404458.4646819,
+    "ast_hash": "bbe00f3a7b418f6a7ea743b5e88d4ad4",
+    "semantic_hash": "bbe00f3a7b418f6a7ea743b5e88d4ad4"
+  }
+}

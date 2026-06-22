@@ -1664,10 +1664,20 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
     On a miss, runs the Playwright fetch + pypdf parse synchronously, caches
     the result, and returns it.  Returns {} on any failure.
     """
-    # Cache hit (non-empty value = real data was previously fetched)
+    # Cache hit — only skip the full fetch if zone data AND image are both on disk.
+    # A Railway redeploy wipes the filesystem, so the image may be missing even
+    # when the JSON cache has a valid zone-data entry.  Falling through in that
+    # case re-fetches the PDF and re-saves the image.
     cache = _load_circuit_map_cache()
     if cache.get(circuit_key):
-        return cache[circuit_key]
+        _cached_img = next(
+            (CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}"
+             for ext in (".png", ".jpg", ".jpeg")
+             if (CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}").exists()),
+            None,
+        )
+        if _cached_img:
+            return cache[circuit_key]   # zone data cached + image on disk — skip fetch
 
     # Look up the FIA event name for this circuit
     race_name = _CIRCUIT_KEY_TO_FIA_EVENT.get(circuit_key)
@@ -4213,20 +4223,23 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         history   = get_user_history(sessions, user_id)
         user_data = sessions.get(user_id, {})
 
-        # Send circuit map image before the text reply if one is cached.
-        # Failure is non-fatal — the text guide still goes through.
+        # ask_claude triggers _get_circuit_zone_data which fetches the PDF
+        # and saves the circuit map image as a side effect.  The image check
+        # must happen AFTER ask_claude so the file is on disk in time.
+        reply     = ask_claude(text, history, mem, user_data)
+
+        update_user_history(sessions, user_id, "user", text)
+        update_user_history(sessions, user_id, "assistant", reply)
+        save_sessions(sessions)
+
+        # Send circuit map image before the text reply.
+        # Failure is non-fatal — text guide always goes through.
         _circuit_img = get_circuit_map_image(text)
         if _circuit_img:
             try:
                 await update.message.reply_photo(_circuit_img)
             except Exception as _img_err:
                 log.info(f"Circuit map photo send failed — {_img_err}")
-
-        reply     = ask_claude(text, history, mem, user_data)
-
-        update_user_history(sessions, user_id, "user", text)
-        update_user_history(sessions, user_id, "assistant", reply)
-        save_sessions(sessions)
 
         # Show rate limit warning if near limit
         if rate_msg:
