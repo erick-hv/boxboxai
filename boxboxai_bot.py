@@ -1683,19 +1683,13 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
              if (CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}").exists()),
             None,
         )
-        if _cached_img:
-            try:
-                from PIL import Image as _PIL
-                _im = _PIL.open(_cached_img)
-                _w, _h = _im.size
-                if _h > 0 and (_w / _h) <= 4.0 and _w >= 400:
-                    return cache[circuit_key]   # good image — skip fetch
-                # Stale bad image (logo or pit lane strip) — delete and re-fetch
-                _cached_img.unlink(missing_ok=True)
-                log.info(f"Circuit map [{circuit_key}]: deleted stale image "
-                         f"({_w}×{_h}, ratio {_w/_h:.1f}) — will re-fetch")
-            except Exception:
-                pass  # can't read image — fall through to re-fetch
+        if _cached_img and _cached_img.stat().st_size > 10_000:
+            return cache[circuit_key]   # good image on disk — skip fetch
+        elif _cached_img:
+            _sz = _cached_img.stat().st_size
+            _cached_img.unlink(missing_ok=True)
+            log.info(f"Circuit map [{circuit_key}]: deleted undersized cached image "
+                     f"({_sz} bytes) — will re-fetch")
 
     # Look up the FIA event name for this circuit
     race_name = _CIRCUIT_KEY_TO_FIA_EVENT.get(circuit_key)
@@ -1720,61 +1714,26 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
 
     result = _parse_circuit_map_pdf_text(full_text)
 
-    # Extract and save the best circuit-map image for send_photo in
-    # handle_message.  Stored at CIRCUIT_MAPS_DIR/{circuit_key}.{ext}.
+    # Render page 1 (the overhead circuit layout) to JPEG via pymupdf.
+    # pypdf's pg.images only finds raster images; the circuit diagram is a
+    # vector graphic so pg.images returns only the FIA logo.  pymupdf renders
+    # the full page (vectors + text) to a bitmap, giving the correct result.
     # Image failure never blocks zone-data caching.
-    #
-    # Heuristic (derived from Barcelona PDF inventory):
-    #   Pick the FIRST image in page order where PIL can decode it,
-    #   aspect ratio (w/h) ≤ 4.0, and width ≥ 400 px.
-    #   This selects the overhead circuit layout (Im1.jpg, page 1, 702×387,
-    #   ratio 1.81) and skips the FIA header bar (ratio 11.2) and the pit
-    #   lane drawing (R9.png, 3016×431, ratio 7.0).
-    #   Fallback: if nothing passes the filter, take the largest by byte size.
     try:
-        from PIL import Image as _PILImage
-
-        best_data: bytes = b""
-        best_ext: str = ".png"
-        fallback_data: bytes = b""
-        fallback_ext: str = ".png"
-
-        for pg in reader.pages:
-            if best_data:
-                break
-            for img in pg.images:
-                raw = img.data
-                # track fallback (largest overall) before filter
-                if len(raw) > len(fallback_data):
-                    fallback_data = raw
-                    fallback_ext = (
-                        ".jpg" if img.name.lower().endswith((".jpg", ".jpeg"))
-                        else ".png")
-                try:
-                    pil = _PILImage.open(__import__("io").BytesIO(raw))
-                    w, h = pil.size
-                except Exception:
-                    continue
-                if h == 0 or (w / h) > 4.0 or w < 400:
-                    continue
-                best_data = raw
-                best_ext = (
-                    ".jpg" if img.name.lower().endswith((".jpg", ".jpeg"))
-                    else ".png")
-                break  # first qualifying image wins
-
-        if not best_data:
-            best_data, best_ext = fallback_data, fallback_ext
-
-        if best_data:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if len(doc) > 1:
+            page = doc[1]   # page 1 is the overhead circuit map
+            mat = fitz.Matrix(150 / 72, 150 / 72)   # 150 DPI
+            pix = page.get_pixmap(matrix=mat)
+            img_bytes = pix.tobytes("jpeg", jpg_quality=85)
             CIRCUIT_MAPS_DIR.mkdir(exist_ok=True)
-            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}{best_ext}"
-            img_path.write_bytes(best_data)
-            log.info(
-                f"Circuit map [{circuit_key}]: saved image {img_path.name} "
-                f"({len(best_data):,} bytes)")
+            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}.jpg"
+            img_path.write_bytes(img_bytes)
+            log.info(f"Circuit map [{circuit_key}]: saved rendered page 1 "
+                     f"({len(img_bytes):,} bytes)")
     except Exception as e:
-        log.info(f"Circuit map [{circuit_key}]: image extraction failed — {e}")
+        log.info(f"Circuit map [{circuit_key}]: image render failed — {e}")
 
     # Cache even an empty result so we know we tried; caller retries on empty.
     cache[circuit_key] = result
