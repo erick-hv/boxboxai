@@ -4,6 +4,7 @@ import re
 import logging
 import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
 import anthropic
@@ -568,14 +569,33 @@ def _resolve_circuit_key(query: str) -> str:
     return ""
 
 
-def get_circuit_guide(query: str) -> str:
-    """Returns circuit guide if query mentions a specific circuit."""
+_CIRCUIT_MAPS_DIR = Path(__file__).parent / "boxboxai_circuit_maps"
+
+
+def _find_circuit_map_image(circuit_key: str) -> Path | None:
+    """Return path to a saved circuit map image, or None if not on disk."""
+    for ext in (".png", ".jpg", ".jpeg"):
+        p = _CIRCUIT_MAPS_DIR / f"{circuit_key}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
+def get_circuit_guide(query: str) -> tuple[str, Path | None]:
+    """Returns (circuit_guide_text, image_path_or_None) for the circuit in query."""
     key = _resolve_circuit_key(query)
     if not key:
-        return ""
+        return "", None
     guide = CIRCUIT_GUIDES[key]
     zone_suffix = _build_zone_suffix(key)
-    return f"CIRCUIT GUIDE — {key.upper()}:{guide}{zone_suffix}"
+    text = f"CIRCUIT GUIDE — {key.upper()}:{guide}{zone_suffix}"
+    return text, _find_circuit_map_image(key)
+
+
+def get_circuit_map_image(query: str) -> Path | None:
+    """Return cached circuit map image path for the circuit in query, or None."""
+    key = _resolve_circuit_key(query)
+    return _find_circuit_map_image(key) if key else None
 
 
 def _build_zone_suffix(circuit_key: str) -> str:
@@ -1112,8 +1132,8 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     # Live session
     live_ctx = get_live_session_context()
 
-    # Circuit guide
-    circuit_ctx = get_circuit_guide(user_msg)
+    # Circuit guide (image path stored separately; only text used in system prompt)
+    circuit_ctx, _ = get_circuit_guide(user_msg)
 
     # Prediction accuracy
     if any(w in user_msg.lower() for w in

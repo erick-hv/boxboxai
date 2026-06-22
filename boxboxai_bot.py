@@ -61,6 +61,7 @@ from context_builder import (
     _gather_context, _format_debug_context_report,
     _is_live_session_question, detect_fan_declaration,
     FIA_DRIVER_NAMES, FIA_DRIVER_CAR_NUMBERS,
+    get_circuit_map_image,
 )
 
 # ── dependency check ──────────────────────────────────────────
@@ -105,6 +106,7 @@ SEASON        = 2026
 TG_MAX_CHARS  = 4096
 
 CIRCUIT_MAP_CACHE_FILE = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
+CIRCUIT_MAPS_DIR       = Path(__file__).parent / "boxboxai_circuit_maps"
 
 
 # ═════════════════════════════════════════════════════════════
@@ -1242,6 +1244,15 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
         "https://www.fia.com/documents/championships/"
         "fia-formula-one-world-championship-14/season/season-2026-2072")
 
+    # Keywords that should appear in the FIA URL slug for this race.
+    # The slug uses the venue name ("barcelona-catalunya_grand_prix"), not
+    # the national name ("spanish_grand_prix"), so we check significant words
+    # from the race name ("spanish", "canadian", "austrian", …).
+    race_kws: set[str] = set()
+    for word in race_name_clean.lower().split():
+        if word not in ("grand", "prix", "the", "de"):
+            race_kws.add(word)
+
     try:
         with sync_playwright() as p:
             # --single-process is known to crash Chromium on launch in
@@ -1257,22 +1268,13 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                 page = browser.new_page()
                 page.set_default_timeout(15000)  # 15s — fail fast
 
-                # ── Step 1: find the event's documents page ──────
+                # ── Step 1: load FIA season document library ──────────
+                # FIA site change (2026): per-event document URLs now
+                # 302-redirect to the homepage; the season library page is
+                # the only reliable source of /system/files/decision-document/
+                # links. Documents for past races won't be on this page —
+                # graceful empty return in that case.
                 page.goto(season_url, wait_until="domcontentloaded")
-                event_link = page.locator(
-                    f"a:has-text('{race_name_clean}')").first
-                if event_link.count() == 0:
-                    log.info(f"FIA official: event '{race_name_clean}' "
-                             f"not found on season page")
-                    return ""
-                event_href = event_link.get_attribute("href")
-                if not event_href:
-                    return ""
-                if event_href.startswith("/"):
-                    event_href = "https://www.fia.com" + event_href
-
-                # ── Step 2: load event documents list ─────────────
-                page.goto(event_href, wait_until="domcontentloaded")
 
                 # Build search terms for the doc link text based on
                 # incident type and driver. Real FIA doc titles are varied
@@ -1301,33 +1303,41 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                             car_token = f"car {num}"
                             break
 
-                # Find all document links on the page
-                all_links = page.locator("a[href*='decision-document']")
-                count = min(all_links.count(), 60)  # cap for safety
+                # ── Step 2: scan season-page PDF links ────────────────
+                # Only /system/files/decision-document/ links are published
+                # docs; filter by race keyword in href slug and incident
+                # keywords in link text.
+                all_links = page.locator(
+                    "a[href*='/system/files/decision-document/']").all()
+                count = len(all_links)  # all() materialises the list
 
                 candidate_url  = ""   # best match so far
                 candidate_text = ""
                 fallback_url   = ""   # first stewards-keyword doc (no car)
                 fallback_text  = ""
-                for i in range(count):
-                    link = all_links.nth(i)
+                for link in all_links:
+                    href = (link.get_attribute("href") or "").lower()
                     text = (link.inner_text() or "").lower()
+                    # Skip docs for other races (season page may list several)
+                    if race_kws and not any(
+                            kw in href for kw in race_kws if len(kw) > 3):
+                        continue
                     has_kw  = any(kw in text for kw in doc_keywords)
                     has_car = bool(car_token) and car_token in text
                     if not (has_kw or has_car):
                         continue
                     # Best: doc names the driver's car AND is a stewards doc
                     if has_car and has_kw:
-                        candidate_url  = link.get_attribute("href")
+                        candidate_url  = href
                         candidate_text = text
                         break
                     # Next best: names the car (even without a keyword hit)
                     if has_car and not candidate_url:
-                        candidate_url  = link.get_attribute("href")
+                        candidate_url  = href
                         candidate_text = text
                     # Fallback: a stewards-keyword doc with no driver named
                     if has_kw and not fallback_url:
-                        fallback_url  = link.get_attribute("href")
+                        fallback_url  = href
                         fallback_text = text
 
                 if not candidate_url:
@@ -1509,18 +1519,33 @@ _CIRCUIT_KEY_TO_FIA_EVENT = {
 }
 
 
-def _run_circuit_map_playwright(race_name: str) -> bytes:
+def _run_circuit_map_playwright(race_name: str, circuit_key: str = "") -> bytes:
     """
     Playwright sync-API work (runs in its own thread — no asyncio event loop).
-    Navigates to the FIA season page, finds the event matching race_name,
-    then finds the 'Competition Notes - Circuit Map / Pit Lane Drawing' PDF
-    and returns its bytes.  Returns b"" on any failure.
+    Fetches the FIA season document library page and finds the
+    'Competition Notes - Circuit Map / Pit Lane Drawing' PDF for the given
+    race, then returns its bytes.  Returns b"" on any failure.
+
+    FIA site change (2026): per-event document URLs now redirect to the
+    homepage; the season library page is the only reliable source of
+    /system/files/decision-document/ PDF links.
     """
     from playwright.sync_api import sync_playwright
 
     season_url = (
         "https://www.fia.com/documents/championships/"
         "fia-formula-one-world-championship-14/season/season-2026-2072")
+
+    # Keywords that should appear in the FIA URL slug for this race.
+    # The slug uses venue name (e.g. "barcelona-catalunya_grand_prix"), not the
+    # national race name ("spanish_grand_prix"), so we check both the circuit
+    # key ("barcelona") and significant words from the race name ("spanish").
+    match_kws: set[str] = set()
+    if circuit_key:
+        match_kws.add(circuit_key.lower())
+    for word in race_name.lower().split():
+        if word not in ("grand", "prix", "the", "de"):
+            match_kws.add(word)
 
     try:
         with sync_playwright() as p:
@@ -1533,36 +1558,41 @@ def _run_circuit_map_playwright(race_name: str) -> bytes:
                 page = browser.new_page()
                 page.set_default_timeout(15000)
 
-                # ── Step 1: find this race's event page ───────────────
+                # ── Step 1: load FIA season document library ───────────
+                # Documents are published at /system/files/decision-document/
+                # links directly on this page (per-event URLs now redirect).
                 page.goto(season_url, wait_until="domcontentloaded")
-                event_link = page.locator(
-                    f"a:has-text('{race_name}')").first
-                if event_link.count() == 0:
-                    log.info(f"Circuit map: event '{race_name}' not found "
-                             f"on FIA season page")
-                    return b""
-                event_href = event_link.get_attribute("href") or ""
-                if event_href.startswith("/"):
-                    event_href = "https://www.fia.com" + event_href
 
-                # ── Step 2: load event documents list ─────────────────
-                page.goto(event_href, wait_until="domcontentloaded")
+                # ── Step 2: find circuit-map PDF link ──────────────────
+                all_links = page.locator(
+                    "a[href*='/system/files/decision-document/']").all()
 
-                # Find link whose text contains BOTH identifying substrings
-                all_links = page.locator("a[href*='decision-document']")
-                count = min(all_links.count(), 80)
                 pdf_url = ""
-                for i in range(count):
-                    link = all_links.nth(i)
+                for link in all_links:
+                    href = (link.get_attribute("href") or "").lower()
                     text = (link.inner_text() or "").lower()
-                    if "circuit map" in text and "pit lane drawing" in text:
-                        pdf_url = link.get_attribute("href") or ""
-                        log.info(f"Circuit map: found doc '{text[:80]}'")
-                        break
+
+                    # Must be a circuit-map document
+                    if "circuit_map" not in href and "circuit map" not in text:
+                        continue
+
+                    # Must belong to this race (slug keyword check)
+                    if match_kws and not any(
+                            kw in href for kw in match_kws if len(kw) > 3):
+                        log.info(
+                            f"Circuit map: skipping doc '{text[:60]}' "
+                            f"(no race keyword match for {race_name!r})")
+                        continue
+
+                    pdf_url = link.get_attribute("href") or ""
+                    log.info(f"Circuit map: found doc '{text[:80]}'")
+                    break
 
                 if not pdf_url:
-                    log.info(f"Circuit map: no circuit-map doc found "
-                             f"for {race_name}")
+                    log.warning(
+                        f"Circuit map: no circuit-map doc found for "
+                        f"'{race_name}' on FIA season page "
+                        f"(document may not be published yet)")
                     return b""
 
                 if pdf_url.startswith("/"):
@@ -1583,7 +1613,7 @@ def _run_circuit_map_playwright(race_name: str) -> bytes:
         return b""
 
 
-def _fetch_circuit_map_pdf(race_name: str) -> bytes:
+def _fetch_circuit_map_pdf(race_name: str, circuit_key: str = "") -> bytes:
     """
     Thread-executor wrapper around _run_circuit_map_playwright.
     Returns PDF bytes or b"" on any failure.  Never raises.
@@ -1601,7 +1631,8 @@ def _fetch_circuit_map_pdf(race_name: str) -> bytes:
     try:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_run_circuit_map_playwright, race_name)
+            future = executor.submit(
+                _run_circuit_map_playwright, race_name, circuit_key)
             return future.result(timeout=60)
     except Exception as e:
         log.info(f"Circuit map: thread execution failed — {e}")
@@ -1644,7 +1675,7 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
         return {}
 
     log.info(f"Circuit map: fetching for '{circuit_key}' ({race_name})")
-    pdf_bytes = _fetch_circuit_map_pdf(race_name)
+    pdf_bytes = _fetch_circuit_map_pdf(race_name, circuit_key)
     if not pdf_bytes:
         return {}
 
@@ -1660,6 +1691,56 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
         return {}
 
     result = _parse_circuit_map_pdf_text(full_text)
+
+    # Extract and save the best circuit-map image for send_photo in
+    # handle_message.  Stored at CIRCUIT_MAPS_DIR/{circuit_key}.{ext}.
+    # Image failure never blocks zone-data caching.
+    #
+    # Heuristic: skip RGBA images (FIA letterhead/logos); among the
+    # remaining RGB images pick the one whose aspect ratio (w/h) is
+    # closest to 2.0, which is typical for an overhead circuit map.
+    # Fall back to the largest non-RGBA image if PIL can't decode any
+    # image's dimensions.
+    try:
+        from PIL import Image as _PIL
+        best_by_ratio = None   # (score, data, ext) — lowest score wins
+        best_by_size  = None   # (nbytes, data, ext) — largest wins (fallback)
+
+        for pg in reader.pages:
+            for img in pg.images:
+                ext = (
+                    ".jpg"
+                    if img.name.lower().endswith((".jpg", ".jpeg"))
+                    else ".png"
+                )
+                try:
+                    im = _PIL.open(io.BytesIO(img.data))
+                except Exception:
+                    continue  # can't decode — skip
+                if im.mode == "RGBA":
+                    continue  # logo / letterhead
+                # Fallback: largest non-RGBA by byte size
+                if best_by_size is None or len(img.data) > best_by_size[0]:
+                    best_by_size = (len(img.data), img.data, ext)
+                # Primary: closest aspect ratio to 2.0 (w:h)
+                w, h = im.size
+                if h > 0:
+                    score = abs(w / h - 2.0)
+                    if best_by_ratio is None or score < best_by_ratio[0]:
+                        best_by_ratio = (score, img.data, ext)
+
+        chosen = best_by_ratio or best_by_size
+        if chosen:
+            chosen_data = chosen[1]
+            chosen_ext  = chosen[2]
+            CIRCUIT_MAPS_DIR.mkdir(exist_ok=True)
+            img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}{chosen_ext}"
+            img_path.write_bytes(chosen_data)
+            log.info(
+                f"Circuit map: saved image {img_path.name} "
+                f"({len(chosen_data):,} bytes)")
+    except Exception as e:
+        log.info(f"Circuit map: image extraction failed — {e}")
 
     # Cache even an empty result so we know we tried; caller retries on empty.
     cache[circuit_key] = result
@@ -4131,6 +4212,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         history   = get_user_history(sessions, user_id)
         user_data = sessions.get(user_id, {})
+
+        # Send circuit map image before the text reply if one is cached.
+        # Failure is non-fatal — the text guide still goes through.
+        _circuit_img = get_circuit_map_image(text)
+        if _circuit_img:
+            try:
+                await update.message.reply_photo(_circuit_img)
+            except Exception as _img_err:
+                log.info(f"Circuit map photo send failed — {_img_err}")
+
         reply     = ask_claude(text, history, mem, user_data)
 
         update_user_history(sessions, user_id, "user", text)

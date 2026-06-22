@@ -532,7 +532,7 @@ class TestCircuitGuideWithZoneData:
     def test_zone_data_appended_when_available(self):
         with patch.object(context_builder, "_get_circuit_zone_data_fn",
                           new=[lambda _: _BARCELONA_ZONE_DATA]):
-            guide = context_builder.get_circuit_guide("what about barcelona strategy")
+            guide, _img = context_builder.get_circuit_guide("what about barcelona strategy")
         assert "PRECISE 2026 ZONE DATA" in guide
         assert "Apex T13" in guide
         assert "Entry T14" in guide
@@ -542,7 +542,7 @@ class TestCircuitGuideWithZoneData:
     def test_qualitative_guide_still_present(self):
         with patch.object(context_builder, "_get_circuit_zone_data_fn",
                           new=[lambda _: _BARCELONA_ZONE_DATA]):
-            guide = context_builder.get_circuit_guide("barcelona")
+            guide, _img = context_builder.get_circuit_guide("barcelona")
         # Qualitative content from CIRCUIT_GUIDES must still be there
         assert "CIRCUIT GUIDE" in guide
         assert "BARCELONA" in guide
@@ -550,23 +550,24 @@ class TestCircuitGuideWithZoneData:
     def test_graceful_degradation_when_no_zone_data(self):
         with patch.object(context_builder, "_get_circuit_zone_data_fn",
                           new=[lambda _: {}]):
-            guide = context_builder.get_circuit_guide("barcelona")
+            guide, _img = context_builder.get_circuit_guide("barcelona")
         assert "CIRCUIT GUIDE" in guide
         assert "PRECISE 2026 ZONE DATA" not in guide
 
     def test_no_zone_data_for_unknown_circuit(self):
-        # No circuit match → empty string regardless of zone data
+        # No circuit match → empty string and None image regardless of zone data
         with patch.object(context_builder, "_get_circuit_zone_data_fn",
                           new=[lambda _: {}]):
-            guide = context_builder.get_circuit_guide("what is F1?")
+            guide, img = context_builder.get_circuit_guide("what is F1?")
         assert guide == ""
+        assert img is None
 
     def test_zone_suffix_exception_does_not_propagate(self):
         # If _get_circuit_zone_data raises, guide still returns qualitative text
         def _raise(_): raise RuntimeError("network down")
         with patch.object(context_builder, "_get_circuit_zone_data_fn",
                           new=[_raise]):
-            guide = context_builder.get_circuit_guide("barcelona")
+            guide, _img = context_builder.get_circuit_guide("barcelona")
         assert "CIRCUIT GUIDE" in guide
         assert "PRECISE 2026 ZONE DATA" not in guide
 
