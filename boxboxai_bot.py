@@ -108,6 +108,10 @@ TG_MAX_CHARS  = 4096
 CIRCUIT_MAP_CACHE_FILE = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
 CIRCUIT_MAPS_DIR       = Path(__file__).parent / "boxboxai_circuit_maps"
 
+# Serialise concurrent Playwright sessions (prewarm + user request can race).
+import threading as _threading
+_circuit_map_playwright_lock = _threading.Lock()
+
 
 # ═════════════════════════════════════════════════════════════
 #  TIMEZONE SYSTEM
@@ -1580,17 +1584,17 @@ def _run_circuit_map_playwright(race_name: str, circuit_key: str = "") -> bytes:
                     if match_kws and not any(
                             kw in href for kw in match_kws if len(kw) > 3):
                         log.info(
-                            f"Circuit map: skipping doc '{text[:60]}' "
+                            f"Circuit map [{circuit_key}]: skipping doc '{text[:60]}' "
                             f"(no race keyword match for {race_name!r})")
                         continue
 
                     pdf_url = link.get_attribute("href") or ""
-                    log.info(f"Circuit map: found doc '{text[:80]}'")
+                    log.info(f"Circuit map [{circuit_key}]: found doc '{text[:80]}'")
                     break
 
                 if not pdf_url:
                     log.warning(
-                        f"Circuit map: no circuit-map doc found for "
+                        f"Circuit map [{circuit_key}]: no circuit-map doc found for "
                         f"'{race_name}' on FIA season page "
                         f"(document may not be published yet)")
                     return b""
@@ -1630,12 +1634,13 @@ def _fetch_circuit_map_pdf(race_name: str, circuit_key: str = "") -> bytes:
 
     try:
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                _run_circuit_map_playwright, race_name, circuit_key)
-            return future.result(timeout=60)
+        with _circuit_map_playwright_lock:  # one Playwright session at a time
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    _run_circuit_map_playwright, race_name, circuit_key)
+                return future.result(timeout=60)
     except Exception as e:
-        log.info(f"Circuit map: thread execution failed — {e}")
+        log.info(f"Circuit map [{circuit_key}]: thread execution failed — {e}")
         return b""
 
 
@@ -1697,7 +1702,7 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
         full_text = "\n".join(
             (pg.extract_text() or "") for pg in reader.pages)
     except Exception as e:
-        log.info(f"Circuit map: PDF text extraction failed — {e}")
+        log.info(f"Circuit map [{circuit_key}]: PDF text extraction failed — {e}")
         return {}
 
     result = _parse_circuit_map_pdf_text(full_text)
@@ -1713,9 +1718,7 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
         best_data: bytes = b""
         best_ext: str = ".png"
 
-        for pg_num, pg in enumerate(reader.pages):
-            if pg_num == 0:
-                continue  # always FIA cover / letterhead
+        for pg in reader.pages:
             for img in pg.images:
                 if len(img.data) > len(best_data):
                     best_data = img.data
@@ -1730,10 +1733,10 @@ def _get_circuit_zone_data(circuit_key: str) -> dict:
             img_path = CIRCUIT_MAPS_DIR / f"{circuit_key}{best_ext}"
             img_path.write_bytes(best_data)
             log.info(
-                f"Circuit map: saved image {img_path.name} "
+                f"Circuit map [{circuit_key}]: saved image {img_path.name} "
                 f"({len(best_data):,} bytes)")
     except Exception as e:
-        log.info(f"Circuit map: image extraction failed — {e}")
+        log.info(f"Circuit map [{circuit_key}]: image extraction failed — {e}")
 
     # Cache even an empty result so we know we tried; caller retries on empty.
     cache[circuit_key] = result
