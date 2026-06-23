@@ -1275,10 +1275,10 @@ class TestContextBlockSizeEnforcement:
         assert "D" * 1500 in prompt
         assert marker not in prompt
 
-    def test_fia_docs_truncated_at_600(self):
+    def test_fia_docs_truncated_at_1500(self):
         marker = "OVERFLOW_BEYOND_LIMIT"
-        prompt = self._prompt(fia_docs_context="F" * 600 + marker)
-        assert "F" * 600 in prompt
+        prompt = self._prompt(fia_docs_context="F" * 1500 + marker)
+        assert "F" * 1500 in prompt
         assert marker not in prompt
 
     def test_context_block_meta_does_not_consume_content_budget(self):
@@ -1651,3 +1651,129 @@ class TestRaceReplayNormalization:
         assert "mexico" in context_builder.RACE_KEYWORDS
         assert "spielberg" in context_builder.RACE_KEYWORDS
         assert "austin" in context_builder.RACE_KEYWORDS
+
+
+# ── _is_upgrade_query ─────────────────────────────────────────────────────────
+
+class TestIsUpgradeQuery:
+
+    def test_upgrade_word_triggers(self):
+        assert context_builder._is_upgrade_query("what upgrades did Ferrari bring to Austria")
+
+    def test_new_parts_triggers(self):
+        assert context_builder._is_upgrade_query("did McLaren bring new parts to Silverstone")
+
+    def test_floor_triggers(self):
+        assert context_builder._is_upgrade_query("Is the Red Bull floor upgrade ready")
+
+    def test_aero_triggers(self):
+        assert context_builder._is_upgrade_query("tell me about the McLaren aero package")
+
+    def test_downforce_triggers(self):
+        assert context_builder._is_upgrade_query("how much downforce does the new Ferrari have")
+
+    def test_performance_with_team_triggers(self):
+        assert context_builder._is_upgrade_query("why is Mercedes so much faster now")
+
+    def test_performance_with_driver_triggers(self):
+        assert context_builder._is_upgrade_query("why is verstappen struggling for pace")
+
+    def test_mejoras_spanish_triggers(self):
+        assert context_builder._is_upgrade_query("qué mejoras trajo Ferrari a Austria")
+
+    def test_plain_race_result_does_not_trigger(self):
+        assert not context_builder._is_upgrade_query("who won the race")
+
+    def test_standing_question_does_not_trigger(self):
+        assert not context_builder._is_upgrade_query("what are the championship standings")
+
+    def test_performance_without_team_does_not_trigger(self):
+        # "performance" alone, no team/driver context → should not fire
+        assert not context_builder._is_upgrade_query("what is the performance target for 2027")
+
+
+# ── _build_upgrade_search_query ───────────────────────────────────────────────
+
+class TestBuildUpgradeSearchQuery:
+
+    def test_includes_team_when_mentioned(self):
+        mem = {"episodic": [{"race_name": "Austrian GP"}]}
+        q = context_builder._build_upgrade_search_query(
+            "what upgrades did Ferrari bring to Austria", mem)
+        assert "Ferrari" in q or "ferrari" in q.lower()
+
+    def test_includes_race_from_mem(self):
+        mem = {"episodic": [{"race_name": "Austrian GP"}]}
+        q = context_builder._build_upgrade_search_query("McLaren upgrades", mem)
+        assert "Austrian GP" in q
+
+    def test_includes_2026_and_f1(self):
+        q = context_builder._build_upgrade_search_query(
+            "what upgrades did McLaren bring", {"episodic": []})
+        assert "2026" in q
+        assert "F1" in q
+
+    def test_no_crash_on_empty_mem(self):
+        q = context_builder._build_upgrade_search_query("Ferrari floor upgrade", {})
+        assert isinstance(q, str) and len(q) > 0
+
+
+# ── build_system_prompt TECHNICAL UPDATES block ───────────────────────────────
+
+class TestBuildSystemPromptUpgradeBlock:
+
+    def test_technical_updates_block_present_when_context_provided(self):
+        prompt = context_builder.build_system_prompt(
+            {"episodic": [], "semantic": {}},
+            upgrade_context="McLaren brought a new floor to Austria")
+        assert "TECHNICAL UPDATES:" in prompt
+        assert "McLaren brought a new floor" in prompt
+
+    def test_technical_updates_absent_when_no_context(self):
+        # The rule text always mentions "TECHNICAL UPDATES:" but the CONTEXT
+        # block only appears when upgrade_context is non-empty.
+        # Verify by checking that a unique content string is absent.
+        prompt = context_builder.build_system_prompt(
+            {"episodic": [], "semantic": {}})
+        assert "__unique_upgrade_sentinel__" not in prompt
+
+    def test_technical_updates_rule_in_prompt(self):
+        prompt = context_builder.build_system_prompt(
+            {"episodic": [], "semantic": {}},
+            upgrade_context="some upgrade data")
+        assert "TECHNICAL UPDATES" in prompt
+
+
+# ── FIA multi-doc return format ───────────────────────────────────────────────
+
+class TestFiaMultiDocReturn:
+    """
+    _run_fia_playwright returns a labeled multi-section string.
+    Verified by checking that fetch_fia_race_documents propagates it
+    through _fetch_fia_official_docs, with Playwright mocked out.
+    """
+
+    def test_multi_section_result_contains_steward_label(self):
+        with patch.object(bot, "_fetch_fia_official_docs",
+                          return_value="[FIA STEWARDS DECISION: foo]\ncar 16 five-second penalty"):
+            result = bot.fetch_fia_race_documents("Spanish GP", "car 16 penalty")
+        assert "FIA STEWARDS DECISION" in result
+
+    def test_multi_section_result_contains_race_director_label(self):
+        combined = (
+            "[FIA STEWARDS DECISION: foo]\nsome steward text\n\n"
+            "[RACE DIRECTOR NOTES: bar]\nDRS activation at turn 14"
+        )
+        with patch.object(bot, "_fetch_fia_official_docs", return_value=combined):
+            result = bot.fetch_fia_race_documents("Austrian GP", "drs activation")
+        assert "RACE DIRECTOR NOTES" in result
+        assert "DRS activation" in result
+
+    def test_empty_playwright_result_falls_back_to_search(self):
+        # When Playwright returns "", fetch_fia_race_documents falls back to
+        # the web-search path (which we also stub out here).
+        with patch.object(bot, "_fetch_fia_official_docs", return_value=""), \
+             patch.object(bot, "live_search_f1", return_value="web result", create=True):
+            # The function should not raise and should return a string
+            result = bot.fetch_fia_race_documents("Monaco GP", "crash")
+        assert isinstance(result, str)

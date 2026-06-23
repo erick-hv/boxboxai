@@ -148,6 +148,70 @@ def _needs_fia_docs(query: str) -> bool:
         "decisión de los comisarios", "los comisarios",
     ]
     return any(tr in t for tr in triggers)
+
+
+def _is_upgrade_query(text: str) -> bool:
+    """Returns True for queries about team upgrades, technical development, or performance changes."""
+    t = text.lower()
+    upgrade_vocab = [
+        "upgrade", "updates", "new parts", "development", "floor",
+        "sidepod", "front wing", "rear wing", "diffuser", "suspension",
+        "package", "b-spec", "b spec", "evolution", "improvement",
+        "modification", "homologation",
+        # Spanish
+        "actualización", "actualizacion", "mejoras", "desarrollo",
+        "paquete", "alerón", "aleron", "evolución", "evolucion",
+    ]
+    technical_vocab = [
+        "downforce", "drag", "aero", "aerodynamics", "mechanical grip",
+        "cooling", "power unit mode", "engine mode", "gearbox",
+    ]
+    if any(w in t for w in upgrade_vocab + technical_vocab):
+        return True
+    # Performance vocab only triggers alongside a team/driver name
+    perf_vocab = [
+        "performance", "faster", "slower", "pace", "gap", "deficit",
+        "advantage", "competitive", "struggling", "improved",
+        "rendimiento", "ventaja", "desventaja",
+    ]
+    team_driver_hints = [
+        "ferrari", "mclaren", "mercedes", "red bull", "redbull", "aston",
+        "alpine", "williams", "haas", "audi", "cadillac",
+        "norris", "piastri", "verstappen", "leclerc", "hamilton",
+        "russell", "alonso", "sainz", "stroll", "albon",
+    ]
+    return any(w in t for w in perf_vocab) and any(w in t for w in team_driver_hints)
+
+
+def _build_upgrade_search_query(user_msg: str, mem: dict) -> str:
+    """Builds a focused search string for upgrade/technical context."""
+    t = user_msg.lower()
+    parts: list[str] = []
+
+    # Team mention (checked before driver to prefer the broader entity)
+    for team, keywords in TEAM_KEYWORDS.items():
+        if any(kw in t for kw in keywords):
+            parts.append(team.replace("_", " ").title())
+            break
+
+    # Driver mention as fallback
+    if not parts:
+        for key in sorted(DRIVER_CODE_MAP.keys(), key=len, reverse=True):
+            if re.search(rf"\b{re.escape(key)}\b", t):
+                parts.append(key.upper())
+                break
+
+    # Add last known race name for recency
+    episodes = mem.get("episodic", [])
+    if episodes:
+        last_race = episodes[-1].get("race_name", "")
+        if last_race:
+            parts.append(last_race)
+
+    parts.append("upgrades technical development 2026 F1")
+    return " ".join(parts)
+
+
 def _is_live_session_question(text: str) -> bool:
     """
     Detects if a question needs live session data.
@@ -651,7 +715,8 @@ def build_system_prompt(mem: dict, news_context: str = "",
                         driver_profile: str = "",
                         race_replay: str = "",
                         champ_scenarios: str = "",
-                        fan_profile: str = "") -> str:
+                        fan_profile: str = "",
+                        upgrade_context: str = "") -> str:
     """
     Token-optimized system prompt builder.
     Core: ~400 tokens always. Context: injected only when needed.
@@ -702,8 +767,11 @@ def build_system_prompt(mem: dict, news_context: str = "",
         ctx_blocks.append(f"LIVE SEARCH:{live_search_context[:800]}")
         log.debug(f"ctx_block LIVE_SEARCH: {len(live_search_context[:800])} chars")
     if fia_docs_context:
-        ctx_blocks.append(f"FIA STEWARDS DOCS:{fia_docs_context[:600]}")
-        log.debug(f"ctx_block FIA_DOCS: {len(fia_docs_context[:600])} chars")
+        ctx_blocks.append(f"FIA STEWARDS DOCS:{fia_docs_context[:1500]}")
+        log.debug(f"ctx_block FIA_DOCS: {len(fia_docs_context[:1500])} chars")
+    if upgrade_context:
+        ctx_blocks.append(f"TECHNICAL UPDATES:{upgrade_context[:600]}")
+        log.debug(f"ctx_block TECHNICAL_UPDATES: {len(upgrade_context[:600])} chars")
     if weather_context:
         ctx_blocks.append(f"WEATHER:{weather_context[:150]}")
         log.debug(f"ctx_block WEATHER: {len(weather_context[:150])} chars")
@@ -769,7 +837,8 @@ RULES:
 - When no SESSION DATA and the question needs it: admit it in one honest sentence, no padding, no speculation dressed as analysis.
 - STALE OR PARTIAL CONTEXT: When a block label includes an age (e.g. "2.3h old") or is marked "partial" or "unknown", state that explicitly in your answer — e.g. "that session data is from 2h ago" or "tyre strategy may be incomplete as FastF1 data is still being processed". Never silently fill gaps with inference when context is marked partial or unknown.
 - STRATEGY/TYRE QUESTIONS WITHOUT REAL DATA: CIRCUIT GUIDE info (degradation, overtaking difficulty, "usually 2-stop") is general historical knowledge — fine to share AS general knowledge. But NEVER invent specific lap numbers for pit stops, per-driver stint plans (e.g. "Stint 1: Laps 1-20"), fake statistics ("Barcelona averages 0.8 safety cars"), or confidence percentages ("90% of the field does 2 stops") when you don't have this year's tyre allocation or practice data. One paragraph of general circuit context is enough — do not pad it into a multi-driver strategy report.
-- FIA STEWARDS DOCS / STEWARDS DECISION SOURCES = ground truth for incidents and penalties. If present, cite "FIA stewards found..." with the specific finding.
+- FIA STEWARDS DOCS = ground truth for incidents and penalties. When FIA STEWARDS DECISION is present, cite "FIA stewards found..." with the specific finding. When RACE DIRECTOR NOTES is present, cite "Race Director notes for [circuit] state..." for circuit-specific rules or procedures. When PIRELLI TYRE NOTES is present, use it for tyre compound and strategy context.
+- TECHNICAL UPDATES: When TECHNICAL UPDATES context is present, use it to answer questions about team development, new parts, or performance changes. Cite the source ("According to [publication]...") rather than presenting it as established fact. If no TECHNICAL UPDATES context is present and the question requires specific upgrade knowledge, say clearly that you don't have confirmed information about specific parts brought to this race rather than speculating.
 - DNF QUESTIONS WITH NO FIA STEWARDS DOC: stewards documents cover on-track incidents and regulation violations — NOT mechanical failures. If a driver DNF'd and no FIA stewards document or race control message mentions them, that absence is itself informative: it suggests the retirement was mechanical or self-inflicted (no third party / no investigation needed), not a gap in your knowledge. Say something like "no stewards investigation was opened for [driver]'s retirement, which points to a mechanical issue rather than an on-track incident" — don't say "I don't have that information" as if it's missing data.
 - RACE CONTROL FACT = messages from the live FIA timing feed about incidents, investigations, and flags during the race. IMPORTANT: these messages never literally say "PENALTY" — instead look for: "TIME DELETED" (lap time invalidated, usually track limits), "BLACK AND WHITE FLAG" (warning), "INCIDENT INVOLVING CAR X NOTED/WILL BE INVESTIGATED", and crucially "REVIEWED — NO FURTHER INVESTIGATION" (stewards looked into it and took NO action — this means NO penalty, the matter was CLEARED). Read the full sequence for a driver: an "incident noted" message followed by "no further investigation" means stewards investigated and found nothing wrong — report this as "investigated but cleared, no penalty issued", not as evidence of a penalty. If RACE CONTROL FACT shows nothing for a driver AND no stewards doc exists either, that's a real "no penalty/no incident" — state it plainly.
 - NEVER invent specific incident details (crashes, collisions, spins, mechanical failures) beyond what race control messages or FIA stewards documents explicitly state. If race control shows track limits violations for a driver who finished P16, say "track limits issues and a classified P16 finish" — not "crashed out". "Crashed out" implies a retirement-ending collision; only say this if race control explicitly shows a collision/crash message for that driver.
@@ -983,6 +1052,7 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
 
     fia_docs_ctx      = ""
     next_race_ctx     = ""
+    upgrade_ctx       = ""
 
     # Next/upcoming race context — also feeds weather fallback
     if _is_next_race_query(user_msg) or _is_weather_query(user_msg) \
@@ -1110,6 +1180,13 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
                     fia_docs_ctx = (fia_docs_ctx + "\n\n" + no_rc_grounding).strip() \
                         if fia_docs_ctx else no_rc_grounding
 
+    # Upgrade / technical development search
+    if _is_upgrade_query(user_msg):
+        upgrade_search_q = _build_upgrade_search_query(user_msg, mem)
+        upgrade_ctx = _live_search_fn[0](upgrade_search_q) if _live_search_fn[0] else ""
+        if upgrade_ctx:
+            log.info(f"Upgrade/tech search for: {user_msg[:40]}")
+
     # News
     if _is_news_query(user_msg):
         news_ctx = get_news_context(user_msg)
@@ -1200,6 +1277,7 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
         "driver_deep_ctx":    driver_deep_ctx,
         "fia_docs_ctx":       fia_docs_ctx,
         "next_race_ctx":      next_race_ctx,
+        "upgrade_ctx":        upgrade_ctx,
     }
 
 
@@ -1216,6 +1294,7 @@ def ask_claude(user_msg: str, history: list, mem: dict,
         race_replay=ctx["race_replay_ctx"],
         champ_scenarios=ctx["champ_scenario_ctx"],
         fan_profile=ctx["fan_ctx"],
+        upgrade_context=ctx["upgrade_ctx"],
     )
     messages = history + [{"role": "user", "content": user_msg}]
 
@@ -1471,7 +1550,8 @@ def _format_debug_context_report(query: str, ctx: dict) -> str:
         ("next_race_ctx",      "NEXT_RACE",              None),
         ("news_ctx",           "NEWS",                   300),
         ("live_search_ctx",    "LIVE_SEARCH",            800),
-        ("fia_docs_ctx",       "FIA_DOCS",               600),
+        ("fia_docs_ctx",       "FIA_DOCS",               1500),
+        ("upgrade_ctx",        "TECHNICAL_UPDATES",       600),
         ("weather_ctx",        "WEATHER",                150),
         ("live_ctx",           "LIVE_SESSION",           200),
         ("practice_ctx",       "SESSION_DATA",           800),

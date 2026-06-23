@@ -1299,6 +1299,12 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                 # links. Documents for past races won't be on this page —
                 # graceful empty return in that case.
                 page.goto(season_url, wait_until="domcontentloaded")
+                # FIA page lazy-loads document links as the user scrolls.
+                # Without these scroll steps the locator returns 0 results.
+                for _ in range(5):
+                    page.evaluate("window.scrollBy(0, 800)")
+                    page.wait_for_timeout(500)
+                page.wait_for_timeout(1000)
 
                 # Build search terms for the doc link text based on
                 # incident type and driver. Real FIA doc titles are varied
@@ -1328,84 +1334,108 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                             break
 
                 # ── Step 2: scan season-page PDF links ────────────────
-                # Only /system/files/decision-document/ links are published
-                # docs; filter by race keyword in href slug and incident
-                # keywords in link text.
                 all_links = page.locator(
                     "a[href*='/system/files/decision-document/']").all()
-                count = len(all_links)  # all() materialises the list
 
-                candidate_url  = ""   # best match so far
-                candidate_text = ""
-                fallback_url   = ""   # first stewards-keyword doc (no car)
-                fallback_text  = ""
+                steward_url    = ""   # best stewards decision match
+                steward_text   = ""
+                steward_fb_url = ""   # stewards fallback (no car token)
+                steward_fb_txt = ""
+                rd_notes_vers  = []   # race director competition notes
+                pirelli_vers   = []   # pirelli tyre preview
+
                 for link in all_links:
                     href = (link.get_attribute("href") or "").lower()
                     text = (link.inner_text() or "").lower()
-                    # Skip docs for other races (season page may list several)
+                    # Skip docs for other races
                     if race_kws and not any(
                             kw in href for kw in race_kws if len(kw) > 3):
                         continue
+                    # Circuit map PDF is handled by a separate pipeline
+                    if "circuit_map" in href or "pit_lane" in href:
+                        continue
+                    # Race Director Competition Notes (collect all versions)
+                    if "race_directors_competition_notes" in href:
+                        rd_notes_vers.append(href)
+                        continue
+                    # Pirelli tyre preview
+                    if "pirelli_preview" in href:
+                        pirelli_vers.append(href)
+                        continue
+                    # Steward decisions — match by car token and/or keyword
                     has_kw  = any(kw in text for kw in doc_keywords)
                     has_car = bool(car_token) and car_token in text
                     if not (has_kw or has_car):
                         continue
-                    # Best: doc names the driver's car AND is a stewards doc
                     if has_car and has_kw:
-                        candidate_url  = href
-                        candidate_text = text
-                        break
-                    # Next best: names the car (even without a keyword hit)
-                    if has_car and not candidate_url:
-                        candidate_url  = href
-                        candidate_text = text
-                    # Fallback: a stewards-keyword doc with no driver named
-                    if has_kw and not fallback_url:
-                        fallback_url  = href
-                        fallback_text = text
+                        steward_url  = href
+                        steward_text = text
+                        break   # best possible match found
+                    if has_car and not steward_url:
+                        steward_url  = href
+                        steward_text = text
+                    if has_kw and not steward_fb_url:
+                        steward_fb_url = href
+                        steward_fb_txt = text
 
-                if not candidate_url:
-                    candidate_url  = fallback_url
-                    candidate_text = fallback_text
+                if not steward_url:
+                    steward_url  = steward_fb_url
+                    steward_text = steward_fb_txt
 
-                if not candidate_url:
-                    log.info(f"FIA official: no infringement doc found "
-                             f"for {race_name_clean}")
-                    return ""
+                # Latest version of each doc type (lex sort: _v3 > _v2 > _v1)
+                rd_notes_url = sorted(rd_notes_vers)[-1] if rd_notes_vers else ""
+                pirelli_url  = sorted(pirelli_vers)[-1]  if pirelli_vers  else ""
 
-                if candidate_url.startswith("/"):
-                    candidate_url = "https://www.fia.com" + candidate_url
+                def _norm(url: str) -> str:
+                    return ("https://www.fia.com" + url) if url.startswith("/") else url
 
-                log.info(f"FIA official: found doc '{candidate_text[:60]}'")
+                def _pdf_text(url: str, label: str) -> str:
+                    if not url:
+                        return ""
+                    try:
+                        resp = page.request.get(_norm(url))
+                        if resp.status != 200:
+                            return ""
+                        import io, pypdf
+                        reader = pypdf.PdfReader(io.BytesIO(resp.body()))
+                        raw = "\n".join(
+                            (pg.extract_text() or "") for pg in reader.pages)
+                        raw = re.sub(r'\s+', ' ', raw).strip()
+                        if len(raw) < 50:
+                            return ""
+                        slug = url.split("/")[-1].replace(".pdf", "")[:80]
+                        return f"[{label}: {slug}]\n{raw[:800]}"
+                    except Exception as _e:
+                        log.info(f"FIA official: {label} fetch failed — {_e}")
+                        return ""
 
-                # ── Step 3: download the PDF via the browser context ──
-                pdf_response = page.request.get(candidate_url)
-                if pdf_response.status != 200:
-                    log.info(f"FIA official: PDF fetch returned "
-                             f"{pdf_response.status}")
-                    return ""
-                pdf_bytes = pdf_response.body()
+                # ── Step 3: download and extract each doc type ────────
+                sections = []
+
+                s_txt = _pdf_text(steward_url, "FIA STEWARDS DECISION")
+                if s_txt:
+                    sections.append(s_txt)
+                    log.info(f"FIA official: steward doc ✅ {steward_text[:40]}")
+
+                rd_txt = _pdf_text(rd_notes_url, "RACE DIRECTOR NOTES")
+                if rd_txt:
+                    sections.append(rd_txt)
+                    log.info("FIA official: race director notes ✅")
+
+                pir_txt = _pdf_text(pirelli_url, "PIRELLI TYRE NOTES")
+                if pir_txt:
+                    sections.append(pir_txt)
+                    log.info("FIA official: pirelli preview ✅")
 
             finally:
                 browser.close()
 
+        if not sections:
+            log.info(f"FIA official: no docs found for {race_name_clean}")
+        return "\n\n".join(sections)
+
     except Exception as e:
         log.info(f"FIA official: Playwright fetch failed — {e}")
-        return ""
-
-    # ── Step 4: extract text from PDF ─────────────────────────────
-    try:
-        import io
-        import pypdf
-        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-        text = "\n".join(
-            (p.extract_text() or "") for p in reader.pages)
-        text = re.sub(r'\s+', ' ', text).strip()
-        if len(text) < 50:
-            return ""
-        return f"[FIA OFFICIAL DOCUMENT: {candidate_text.strip()[:80]}]\n{text[:1000]}"
-    except Exception as e:
-        log.info(f"FIA official: PDF text extraction failed — {e}")
         return ""
 
 
