@@ -62,6 +62,7 @@ from context_builder import (
     _is_live_session_question, detect_fan_declaration,
     FIA_DRIVER_NAMES, FIA_DRIVER_CAR_NUMBERS,
     get_circuit_map_image, get_circuit_guide, _is_circuit_guide_query,
+    _resolve_circuit_key,
 )
 
 # ── dependency check ──────────────────────────────────────────
@@ -1276,6 +1277,9 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
     for word in race_name_clean.lower().split():
         if word not in ("grand", "prix", "the", "de"):
             race_kws.add(word)
+    # circuit_key supplements race_kws for pirelli slug matching: FIA may use
+    # venue name ("barcelona") while race_kws only has national name ("spanish").
+    circuit_key = _resolve_circuit_key(race_name_clean.lower())
 
     try:
         with sync_playwright() as p:
@@ -1347,20 +1351,25 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                 for link in all_links:
                     href = (link.get_attribute("href") or "").lower()
                     text = (link.inner_text() or "").lower()
+                    # Circuit map PDF is handled by a separate pipeline
+                    if "circuit_map" in href or "pit_lane" in href:
+                        continue
+                    # Pirelli tyre preview — checked before race_kws skip
+                    # because FIA slug may use venue name ("barcelona") while
+                    # race_kws only has national name ("spanish").
+                    if "pirelli_preview" in href or "pirelli_preview" in text:
+                        if not race_kws or any(
+                                kw in href for kw in race_kws if len(kw) > 3
+                        ) or (circuit_key and circuit_key in href):
+                            pirelli_vers.append(href)
+                        continue
                     # Skip docs for other races
                     if race_kws and not any(
                             kw in href for kw in race_kws if len(kw) > 3):
                         continue
-                    # Circuit map PDF is handled by a separate pipeline
-                    if "circuit_map" in href or "pit_lane" in href:
-                        continue
                     # Race Director Competition Notes (collect all versions)
                     if "race_directors_competition_notes" in href:
                         rd_notes_vers.append(href)
-                        continue
-                    # Pirelli tyre preview
-                    if "pirelli_preview" in href:
-                        pirelli_vers.append(href)
                         continue
                     # Steward decisions — match by car token and/or keyword
                     has_kw  = any(kw in text for kw in doc_keywords)

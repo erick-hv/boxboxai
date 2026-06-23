@@ -141,11 +141,17 @@ def _needs_fia_docs(query: str) -> bool:
         "retired because", "dnf because", "why retire",
         "tarmac", "track surface", "red flag because",
         "reprimand", "article b", "regulation",
+        # Tyre/compound queries
+        "tyre", "tyres", "tire", "tires", "compound", "compounds", "allocation",
+        "soft", "medium", "hard", "pirelli", "c1", "c2", "c3", "c4", "c5",
+        "which tyres", "what tyres", "tyre choice", "tyre selection",
         # Spanish
         "por qué", "qué pasó", "por que",
         "penaliz", "infracción", "infraccion",
         "chocaron", "se retiró", "descalificado",
         "decisión de los comisarios", "los comisarios",
+        "neumático", "neumáticos", "compuesto", "asignación",
+        "blandos", "medios", "duros",
     ]
     return any(tr in t for tr in triggers)
 
