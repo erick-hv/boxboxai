@@ -662,6 +662,23 @@ def get_circuit_map_image(query: str) -> Path | None:
     return _find_circuit_map_image(key) if key else None
 
 
+def _is_circuit_guide_query(text: str) -> bool:
+    """Returns True only for explicit circuit guide / track info requests."""
+    t = text.lower()
+    if not _resolve_circuit_key(t):
+        return False
+    guide_intent = [
+        "circuit guide", "track guide", "circuit map", "track map",
+        "circuit info", "track info", "tell me about the circuit",
+        "tell me about the track", "about the circuit", "about the track",
+        "circuit layout", "track layout", "corners", "corner guide",
+        "drs zones", "overtaking spots", "overtaking opportunities",
+        "guía del circuito", "mapa del circuito", "circuito de",
+        "info del circuito", "sobre el circuito",
+    ]
+    return any(kw in t for kw in guide_intent)
+
+
 def _build_zone_suffix(circuit_key: str) -> str:
     """
     Returns a formatted zone-data suffix for get_circuit_guide(), or "".

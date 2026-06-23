@@ -61,7 +61,7 @@ from context_builder import (
     _gather_context, _format_debug_context_report,
     _is_live_session_question, detect_fan_declaration,
     FIA_DRIVER_NAMES, FIA_DRIVER_CAR_NUMBERS,
-    get_circuit_map_image, get_circuit_guide,
+    get_circuit_map_image, get_circuit_guide, _is_circuit_guide_query,
 )
 
 # ── dependency check ──────────────────────────────────────────
@@ -4361,7 +4361,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # executor finish writing the file before we check disk.
         import asyncio as _asyncio
         await _asyncio.sleep(2)
-        _circuit_img = get_circuit_map_image(text)
+        _circuit_img = get_circuit_map_image(text) if _is_circuit_guide_query(text) else None
         if _circuit_img:
             try:
                 log.info(f"Circuit map: sending photo {_circuit_img}")
