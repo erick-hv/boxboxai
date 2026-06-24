@@ -1440,7 +1440,31 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                 browser.close()
 
         if not sections:
-            log.info(f"FIA official: no docs found for {race_name_clean}")
+            _links_n = len(all_links)
+            log.warning(
+                f"FIA official: no docs found for '{race_name_clean}' — "
+                f"{_links_n} doc links on FIA page — "
+                f"URL: {season_url} — FIA page structure may have changed"
+            )
+            if _links_n > 0:
+                # Page has docs (race weekend active) but none matched our query —
+                # alert owner best-effort from this background thread.
+                try:
+                    import context_builder as _cb
+                    _app = _cb._app_ref[0]
+                    if _app:
+                        asyncio.run(alert_owner(
+                            _app,
+                            f"⚠️ *FIA Scraper — No Docs Matched*\n\n"
+                            f"URL: `{season_url}`\n"
+                            f"Race: `{race_name_clean}`\n"
+                            f"Found *{_links_n}* doc links on page but none matched "
+                            f"the race query.\n"
+                            f"FIA page structure or slug format may have changed — "
+                            f"check the season page."
+                        ))
+                except Exception:
+                    pass
         return "\n\n".join(sections)
 
     except Exception as e:
