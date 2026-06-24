@@ -2872,13 +2872,18 @@ def update_bayesian_priors(priors: dict,
     # Mapa de posición real en la última carrera
     real_pos = dict(zip(last_race["code"], last_race["pos"]))
 
-    # Mapa de win_pct del modelo → convertir a posición esperada estimada
+    # Rank-based predicted positions: sort all drivers by win_pct descending,
+    # assign 1-indexed rank as pred_pos. This ensures the predicted P1 is the
+    # driver with highest win_pct, P2 the next, etc. — rather than the old
+    # linear formula which placed a 10% win-pct driver at ~P20 and made every
+    # error massive and negative, inflating all priors to the ceiling.
     n_drivers = len(scored)
+    _sorted = scored.sort_values("win_pct", ascending=False).reset_index(drop=True)
+    pred_pos_map = {row["code"]: rank + 1 for rank, (_, row) in enumerate(_sorted.iterrows())}
+
     for _, row in scored.iterrows():
         code     = row["code"]
-        win_pct  = row.get("win_pct", 0)
-        # Estimar posición predicha del modelo (heurística: mayor win_pct = menor posición)
-        pred_pos = n_drivers * (1 - win_pct / 100) + 1
+        pred_pos = pred_pos_map.get(code, n_drivers)
 
         actual_pos = real_pos.get(code, np.nan)
         if np.isnan(actual_pos):
