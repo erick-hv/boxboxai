@@ -403,7 +403,31 @@
         "pole_time": "1:18.518",
         "top10": "P1:RUS(1:18.518) | P2:ANT(1:18.811) | P3:HAD(1:19.303) | P4:LEC(1:19.327) | P5:PIA(1:19.380) | P6:NOR(1:19.475) | P7:HAM(1:19.478) | P8:LAW(1:19.994) | P9:LIN(1:21.247) | P10:BOR(1:20.221)"
       },
-      "story": "R1 Australian Grand Prix: RUS wins. P2: ANT. P3: LEC. Fastest lap: VER (1:22.091). Pole: RUS (1:18.518). DNFs: BEA(Lapped), LIN(Lapped), BOR(Lapped), GAS(Lapped), OCO(Lapped), ALB(Lapped). Championship after: RUS 25pts | ANT 18pts | LEC 15pts | HAM 12pts | NOR 10pts."
+      "story": "R1 Australian Grand Prix: RUS wins. P2: ANT. P3: LEC. Fastest lap: VER (1:22.091). Pole: RUS (1:18.518). DNFs: BEA(Lapped), LIN(Lapped), BOR(Lapped), GAS(Lapped), OCO(Lapped), ALB(Lapped). Championship after: RUS 25pts | ANT 18pts | LEC 15pts | HAM 12pts | NOR 10pts.",
+      "tyre_strategies": {
+        "NOR": "M(1-10), H(11-33), M(34-58)",
+        "VER": "H(1-17), M(18-40), H(41-58)",
+        "BOR": "M(1-17), H(18-32), H(33-57)",
+        "HAD": "M(1-10)",
+        "GAS": "H(11-57) [DNF]",
+        "PER": "H(18-42), S(43-55) [DNF]",
+        "ANT": "M(1-11), H(12-58)",
+        "ALO": "S(1-10), S(11-12), S(13-21)",
+        "LEC": "M(1-24), H(25-58)",
+        "STR": "M(1-10), H(11-25), S(26-33), S(34-38), S(39-43)",
+        "ALB": "H(12-32), S(33-57) [DNF]",
+        "HUL": "H(1-1)",
+        "LAW": "H(11-32), S(33-57) [DNF]",
+        "OCO": "H(11-57) [DNF]",
+        "LIN": "M(1-17), H(18-57)",
+        "COL": "H(1-8), H(9-45), S(46-56)",
+        "HAM": "M(1-27), H(28-58)",
+        "SAI": "S(1-10), H(11-32), M(33-44), S(45-56)",
+        "RUS": "H(12-58) [DNF]",
+        "BOT": "H(1-11), H(12-15)",
+        "BEA": "M(1-17), H(18-57)"
+      },
+      "stint_source": "openf1"
     },
     {
       "round": 2,
@@ -469,7 +493,32 @@
         "sprint_p3": "HAM",
         "sprint_top3": "P1:RUS | P2:LEC | P3:HAM"
       },
-      "story": "R2 Chinese Grand Prix: ANT wins. P2: RUS. P3: HAM. Fastest lap: ANT (1:35.275). Pole: ANT (1:32.064). DNFs: SAI(Lapped), COL(Lapped), HUL(Lapped), LIN(Lapped), BOT(Lapped), OCO(Lapped). Championship after: RUS 51pts | ANT 47pts | LEC 34pts | HAM 33pts | BEA 17pts. Sprint: RUS won."
+      "story": "R2 Chinese Grand Prix: ANT wins. P2: RUS. P3: HAM. Fastest lap: ANT (1:35.275). Pole: ANT (1:32.064). DNFs: SAI(Lapped), COL(Lapped), HUL(Lapped), LIN(Lapped), BOT(Lapped), OCO(Lapped). Championship after: RUS 51pts | ANT 47pts | LEC 34pts | HAM 33pts | BEA 17pts. Sprint: RUS won.",
+      "tyre_strategies": {
+        "NOR": "H(1-1)",
+        "VER": "S(1-9), H(10-45)",
+        "BOR": "H(1-1)",
+        "HAD": "S(1-1), H(2-10), H(11-56)",
+        "GAS": "M(1-10), H(11-56)",
+        "PER": "M(1-11), H(12-55)",
+        "ANT": "M(1-10), H(11-56)",
+        "ALO": "H(1-31), M(32-32)",
+        "LEC": "M(1-10), H(11-56)",
+        "STR": "H(1-9)",
+        "ALB": "H(1-1)",
+        "HUL": "H(1-35), M(36-55)",
+        "LAW": "M(1-9), H(10-56)",
+        "OCO": "H(1-29), M(30-46), S(47-55)",
+        "LIN": "H(1-42), M(43-55)",
+        "COL": "H(1-32), M(33-55)",
+        "HAM": "M(1-10), H(11-56)",
+        "SAI": "M(1-9), H(10-55)",
+        "RUS": "M(1-10), H(11-56)",
+        "BOT": "M(1-10), H(11-55)",
+        "PIA": "M(1-1)",
+        "BEA": "M(1-10), H(11-56)"
+      },
+      "stint_source": "openf1"
     },
     {
       "round": 3,
@@ -520,7 +569,32 @@
         "pole_time": "1:28.778",
         "top10": "P1:ANT(1:28.778) | P2:RUS(1:29.076) | P3:PIA(1:29.132) | P4:LEC(1:29.405) | P5:NOR(1:29.409) | P6:HAM(1:29.567) | P7:GAS(1:29.691) | P8:HAD(1:29.978) | P9:BOR(1:30.274) | P10:LIN(1:30.319)"
       },
-      "story": "R3 Japanese Grand Prix: ANT wins. P2: PIA. P3: LEC. Fastest lap: ANT (1:32.432). Pole: ANT (1:28.778). DNFs: ALO(Lapped), BOT(Lapped), ALB(Lapped), STR(Retired), BEA(Retired). Championship after: ANT 72pts | RUS 63pts | LEC 49pts | HAM 41pts | NOR 25pts."
+      "story": "R3 Japanese Grand Prix: ANT wins. P2: PIA. P3: LEC. Fastest lap: ANT (1:32.432). Pole: ANT (1:28.778). DNFs: ALO(Lapped), BOT(Lapped), ALB(Lapped), STR(Retired), BEA(Retired). Championship after: ANT 72pts | RUS 63pts | LEC 49pts | HAM 41pts | NOR 25pts.",
+      "tyre_strategies": {
+        "NOR": "M(1-16), H(17-53)",
+        "VER": "M(1-22), H(23-53)",
+        "BOR": "M(1-22), H(23-53)",
+        "HAD": "M(1-19), H(20-53)",
+        "GAS": "M(1-22), H(23-53)",
+        "PER": "M(1-21), H(22-53)",
+        "ANT": "M(1-22), H(23-53)",
+        "ALO": "M(1-21), H(22-23), M(24-52)",
+        "LEC": "M(1-17), H(18-53)",
+        "STR": "M(1-21), H(22-24), M(25-30)",
+        "ALB": "M(1-22), H(23-45), S(46-46), S(47-47), S(48-48), S(49-49), M(50-51)",
+        "HUL": "M(1-23), H(24-53)",
+        "LAW": "M(1-22), H(23-53)",
+        "OCO": "M(1-19), H(20-53)",
+        "LIN": "M(1-18), H(19-53)",
+        "COL": "M(1-17), H(18-53)",
+        "HAM": "M(1-22), H(23-53)",
+        "SAI": "M(1-22), H(23-53)",
+        "RUS": "M(1-21), H(22-53)",
+        "BOT": "H(1-19), M(20-52)",
+        "PIA": "M(1-18), H(19-53)",
+        "BEA": "M(1-16), H(17-20)"
+      },
+      "stint_source": "openf1"
     },
     {
       "round": 4,
@@ -584,7 +658,32 @@
         "sprint_p3": "LEC",
         "sprint_top3": "P1:NOR | P2:PIA | P3:LEC"
       },
-      "story": "R4 Miami Grand Prix: ANT wins. P2: NOR. P3: PIA. Fastest lap: NOR (1:31.869). Pole: ANT (1:27.798). DNFs: BEA(Lapped), BOR(Lapped), OCO(Lapped), LIN(Lapped), ALO(Lapped), PER(Lapped). Championship after: ANT 100pts | RUS 80pts | LEC 59pts | NOR 51pts | HAM 51pts. Sprint: NOR won."
+      "story": "R4 Miami Grand Prix: ANT wins. P2: NOR. P3: PIA. Fastest lap: NOR (1:31.869). Pole: ANT (1:27.798). DNFs: BEA(Lapped), BOR(Lapped), OCO(Lapped), LIN(Lapped), ALO(Lapped), PER(Lapped). Championship after: ANT 100pts | RUS 80pts | LEC 59pts | NOR 51pts | HAM 51pts. Sprint: NOR won.",
+      "tyre_strategies": {
+        "NOR": "M(1-27), H(28-57)",
+        "VER": "M(1-6), H(7-57)",
+        "BOR": "M(1-32), H(33-56)",
+        "HAD": "H(1-4)",
+        "GAS": "M(1-4)",
+        "PER": "M(1-29), H(30-56)",
+        "ANT": "M(1-26), H(27-57)",
+        "ALO": "M(1-41), S(42-56)",
+        "LEC": "M(1-21), H(22-57)",
+        "STR": "M(1-21), S(22-37), S(38-56)",
+        "ALB": "M(1-27), H(28-57)",
+        "HUL": "M(1-1), M(2-7)",
+        "LAW": "M(1-6)",
+        "OCO": "M(1-31), H(32-56)",
+        "LIN": "M(1-28), H(29-56)",
+        "COL": "M(1-31), H(32-57)",
+        "HAM": "M(1-27), H(28-57)",
+        "SAI": "M(1-28), H(29-57)",
+        "RUS": "M(1-20), H(21-57)",
+        "BOT": "M(1-6), S(7-21), M(22-30), M(31-55)",
+        "PIA": "M(1-28), H(29-57)",
+        "BEA": "M(1-26), H(27-56)"
+      },
+      "stint_source": "openf1"
     },
     {
       "round": 5,
@@ -648,7 +747,32 @@
         "pole_time": "1:12.578",
         "top10": "P1:RUS(1:12.578) | P2:ANT(1:12.646) | P3:NOR(1:12.729) | P4:PIA(1:12.781) | P5:HAM(1:12.868) | P6:VER(1:12.907) | P7:HAD(1:12.935) | P8:LEC(1:12.976) | P9:LIN(1:13.280) | P10:COL(1:13.697)"
       },
-      "story": "R5 Canadian Grand Prix: ANT wins. P2: HAM. P3: VER. Fastest lap: ANT (1:14.210). Pole: RUS (1:12.578). DNFs: HAD(Lapped), COL(Lapped), LAW(Lapped), GAS(Lapped), SAI(Lapped), BEA(Lapped). Championship after: ANT 131pts | RUS 88pts | LEC 75pts | HAM 72pts | NOR 58pts."
+      "story": "R5 Canadian Grand Prix: ANT wins. P2: HAM. P3: VER. Fastest lap: ANT (1:14.210). Pole: RUS (1:12.578). DNFs: HAD(Lapped), COL(Lapped), LAW(Lapped), GAS(Lapped), SAI(Lapped), BEA(Lapped). Championship after: ANT 131pts | RUS 88pts | LEC 75pts | HAM 72pts | NOR 58pts.",
+      "tyre_strategies": {
+        "NOR": "I(1-1), M(2-14), M(15-38)",
+        "VER": "S(1-30), M(31-68)",
+        "BOR": "I(1-1), S(2-17), M(18-66)",
+        "HAD": "S(1-30), M(31-51), S(52-61), S(62-67)",
+        "GAS": "M(1-29), H(30-67)",
+        "PER": "I(1-1), S(2-14), M(15-28), S(29-39)",
+        "ANT": "S(1-30), M(31-68)",
+        "ALO": "S(1-19), S(20-23)",
+        "LEC": "S(1-30), M(31-68)",
+        "STR": "S(1-13), S(14-48), M(49-64)",
+        "ALB": "S(1-11)",
+        "HUL": "I(1-1), S(2-19), M(20-66)",
+        "LAW": "M(1-29), S(30-67)",
+        "OCO": "S(1-15), M(16-29), S(30-66)",
+        "LIN": "M(1-1)",
+        "COL": "M(1-29), H(30-67)",
+        "HAM": "S(1-30), M(31-68)",
+        "SAI": "I(1-1), M(2-29), M(30-67)",
+        "RUS": "S(1-29)",
+        "BOT": "I(1-2), S(3-8), M(9-28), S(29-48), M(49-64)",
+        "PIA": "M(1-11), M(12-50), S(51-66)",
+        "BEA": "S(1-29), M(30-67)"
+      },
+      "stint_source": "openf1"
     },
     {
       "round": 6,
@@ -701,7 +825,32 @@
         "pole_time": "1:12.051",
         "top10": "P1:ANT(1:12.051) | P2:VER(1:12.094) | P3:HAM(1:12.279) | P4:LEC(1:12.351) | P5:HAD(1:12.434) | P6:RUS(1:12.445) | P7:PIA(1:12.624) | P8:NOR(1:12.765) | P9:GAS(1:13.226) | P10:LAW(1:13.412)"
       },
-      "story": "R6 Monaco Grand Prix: ANT wins. P2: HAM. P3: HAD. Fastest lap: ANT (1:13.481). Pole: ANT (1:12.051). DNFs: SAI(Retired), LEC(Retired), STR(Retired), NOR(Retired), BEA(Retired), BOT(Retired). Championship after: ANT 156pts | HAM 90pts | RUS 88pts | LEC 75pts | PIA 60pts."
+      "story": "R6 Monaco Grand Prix: ANT wins. P2: HAM. P3: HAD. Fastest lap: ANT (1:13.481). Pole: ANT (1:12.051). DNFs: SAI(Retired), LEC(Retired), STR(Retired), NOR(Retired), BEA(Retired), BOT(Retired). Championship after: ANT 156pts | HAM 90pts | RUS 88pts | LEC 75pts | PIA 60pts.",
+      "tyre_strategies": {
+        "NOR": "M(1-43)",
+        "VER": "M(1-1)",
+        "BOR": "H(1-42), M(43-57), M(58-58), S(59-64), S(65-66), S(67-67), S(68-78)",
+        "HAD": "M(1-31), H(32-59), H(60-65), H(66-67), S(68-78)",
+        "GAS": "M(1-44), H(45-59), H(60-65), H(66-67), S(68-78)",
+        "PER": "S(1-3), M(4-8), M(9-58), S(59-64), S(65-66), S(67-67), S(68-78)",
+        "ANT": "M(1-36), H(37-60), S(61-65), S(66-67), S(68-78)",
+        "ALO": "M(1-2), S(3-57), S(58-58), S(59-64), S(65-66), S(67-67), S(68-78)",
+        "LEC": "M(1-34), H(35-59), S(60-60), S(61-64)",
+        "STR": "M(1-3), S(4-56)",
+        "ALB": "M(1-42), S(43-58), S(59-64), S(65-66), S(67-67), S(68-78)",
+        "HUL": "M(1-11), H(12-57), H(58-58), H(59-64), H(65-66), S(67-67), S(68-78)",
+        "LAW": "M(1-43), S(44-59), S(60-65), S(66-67), S(68-78)",
+        "OCO": "M(1-8), H(9-58), H(59-64), H(65-66), S(67-67), S(68-78)",
+        "LIN": "M(1-58), M(59-64), M(65-66), S(67-67), S(68-78)",
+        "COL": "M(1-34), H(35-58), H(59-64), H(65-66), S(67-67), S(68-78)",
+        "HAM": "M(1-27), H(28-59), S(60-60), S(61-65), S(66-67), S(68-78)",
+        "SAI": "M(1-51), S(52-58), S(59-64), S(65-66), S(67-67), S(68-70)",
+        "RUS": "M(1-30), H(31-59), S(60-65), S(66-67), S(68-71), S(72-78)",
+        "BOT": "M(1-15)",
+        "PIA": "M(1-47), H(48-58), S(59-59), S(60-65), S(66-67), S(68-78)",
+        "BEA": "H(1-27)"
+      },
+      "stint_source": "openf1"
     }
   ],
   "meta": {
