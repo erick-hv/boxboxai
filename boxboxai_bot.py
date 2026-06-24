@@ -2308,27 +2308,28 @@ async def _check_and_run_predictor(app=None):
     today = datetime.now().date()
 
     for rnd, name, date_str in [
-        (1,"Australian GP","2026-03-15"),
-        (2,"Chinese GP","2026-03-22"),
-        (3,"Japanese GP","2026-04-06"),
-        (4,"Miami GP","2026-05-04"),
-        (5,"Canadian GP","2026-05-24"),
-        (6,"Monaco GP","2026-06-07"),
-        (7,"Spanish GP","2026-06-14"),
-        (8,"Austrian GP","2026-06-28"),
-        (9,"British GP","2026-07-05"),
-        (10,"Belgian GP","2026-07-19"),
-        (11,"Hungarian GP","2026-07-26"),
-        (12,"Dutch GP","2026-08-23"),
-        (13,"Italian GP","2026-09-06"),
-        (14,"Singapore GP","2026-09-20"),
-        (15,"Azerbaijan GP","2026-09-27"),
-        (16,"US GP","2026-10-18"),
-        (17,"Mexico City GP","2026-10-25"),
-        (18,"São Paulo GP","2026-11-08"),
-        (19,"Las Vegas GP","2026-11-21"),
-        (20,"Qatar GP","2026-11-29"),
-        (21,"Abu Dhabi GP","2026-12-06"),
+        (1, "Australian GP",  "2026-03-15"),
+        (2, "Chinese GP",     "2026-03-22"),
+        (3, "Japanese GP",    "2026-04-06"),
+        (4, "Miami GP",       "2026-05-04"),
+        (5, "Canadian GP",    "2026-05-24"),
+        (6, "Monaco GP",      "2026-06-07"),
+        (7, "Spanish GP",     "2026-06-14"),
+        (8, "Austrian GP",    "2026-06-28"),
+        (9, "British GP",     "2026-07-05"),
+        (10,"Belgian GP",     "2026-07-19"),
+        (11,"Hungarian GP",   "2026-07-26"),
+        (12,"Dutch GP",       "2026-08-23"),
+        (13,"Italian GP",     "2026-09-06"),
+        (14,"Madring GP",     "2026-09-13"),  # new Madrid circuit (R14 in MEETING_KEY_2026)
+        (15,"Singapore GP",   "2026-09-20"),
+        (16,"Azerbaijan GP",  "2026-09-27"),
+        (17,"US GP",          "2026-10-18"),
+        (18,"Mexico City GP", "2026-10-25"),
+        (19,"São Paulo GP",   "2026-11-08"),
+        (20,"Las Vegas GP",   "2026-11-21"),
+        (21,"Qatar GP",       "2026-11-29"),
+        (22,"Abu Dhabi GP",   "2026-12-06"),
     ]:
         race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
         days_until = (race_date - today).days
@@ -2368,8 +2369,8 @@ async def _check_and_run_predictor(app=None):
             state[state_key] = datetime.now().isoformat()
             save_predictor_state(state)
 
-            # Read top prediction for the alert
-            _, rows = get_predictor_context()
+            # Read top prediction for the alert — pass rnd so stale CSV is rejected
+            _, rows = get_predictor_context(rnd)
             pred_summary = ""
             if rows:
                 r = rows[0]
@@ -2407,27 +2408,28 @@ async def _check_and_ingest(mem_ref: list, app=None,
     today      = datetime.now().date()
 
     RACE_CALENDAR = [
-        (1,"Australian GP","2026-03-15"),
-        (2,"Chinese GP","2026-03-22"),
-        (3,"Japanese GP","2026-04-06"),
-        (4,"Miami GP","2026-05-04"),
-        (5,"Canadian GP","2026-05-24"),
-        (6,"Monaco GP","2026-06-07"),
-        (7,"Spanish GP","2026-06-14"),
-        (8,"Austrian GP","2026-06-28"),
-        (9,"British GP","2026-07-05"),
-        (10,"Belgian GP","2026-07-19"),
-        (11,"Hungarian GP","2026-07-26"),
-        (12,"Dutch GP","2026-08-23"),
-        (13,"Italian GP","2026-09-06"),
-        (14,"Singapore GP","2026-09-20"),
-        (15,"Azerbaijan GP","2026-09-27"),
-        (16,"US GP","2026-10-18"),
-        (17,"Mexico City GP","2026-10-25"),
-        (18,"São Paulo GP","2026-11-08"),
-        (19,"Las Vegas GP","2026-11-21"),
-        (20,"Qatar GP","2026-11-29"),
-        (21,"Abu Dhabi GP","2026-12-06"),
+        (1, "Australian GP",  "2026-03-15"),
+        (2, "Chinese GP",     "2026-03-22"),
+        (3, "Japanese GP",    "2026-04-06"),
+        (4, "Miami GP",       "2026-05-04"),
+        (5, "Canadian GP",    "2026-05-24"),
+        (6, "Monaco GP",      "2026-06-07"),
+        (7, "Spanish GP",     "2026-06-14"),
+        (8, "Austrian GP",    "2026-06-28"),
+        (9, "British GP",     "2026-07-05"),
+        (10,"Belgian GP",     "2026-07-19"),
+        (11,"Hungarian GP",   "2026-07-26"),
+        (12,"Dutch GP",       "2026-08-23"),
+        (13,"Italian GP",     "2026-09-06"),
+        (14,"Madring GP",     "2026-09-13"),  # new Madrid circuit (R14 in MEETING_KEY_2026)
+        (15,"Singapore GP",   "2026-09-20"),
+        (16,"Azerbaijan GP",  "2026-09-27"),
+        (17,"US GP",          "2026-10-18"),
+        (18,"Mexico City GP", "2026-10-25"),
+        (19,"São Paulo GP",   "2026-11-08"),
+        (20,"Las Vegas GP",   "2026-11-21"),
+        (21,"Qatar GP",       "2026-11-29"),
+        (22,"Abu Dhabi GP",   "2026-12-06"),
     ]
 
     for rnd, name, date_str in RACE_CALENDAR:

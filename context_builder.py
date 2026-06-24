@@ -1084,22 +1084,26 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
         next_race_ctx = get_next_race_context()
 
     # ── Session data (OpenF1 direct — highest priority) ──────
-    session_ctx = get_session_context(user_msg, live_search_fn=_live_search_fn[0])
-    if session_ctx:
-        practice_ctx    = session_ctx
-        live_search_ctx = ""  # OpenF1 data is better than search
-        log.info(f"OpenF1 session data fetched for: {user_msg[:40]}")
-    elif _is_live_session_question(user_msg):
-        # No OpenF1 data — live search only, clearly label as news not timing
-        if _live_search_fn[0]:
-            raw_search = _live_search_fn[0](user_msg)
+    # Only make the live OpenF1 API call when the message is actually about
+    # session timing, practice results, or qualifying. _is_live_session_question
+    # already gates the search fallback below — now it gates the API call too.
+    if _is_live_session_question(user_msg):
+        session_ctx = get_session_context(user_msg, live_search_fn=_live_search_fn[0])
+        if session_ctx:
+            practice_ctx    = session_ctx
+            live_search_ctx = ""  # OpenF1 data is better than search
+            log.info(f"OpenF1 session data fetched for: {user_msg[:40]}")
         else:
-            log.warning("context_builder._live_search_fn not wired — live search unavailable")
-            raw_search = ""
-        if raw_search:
-            live_search_ctx = (
-                f"[NEWS COVERAGE — not official timing data]\n{raw_search}")
-        log.info(f"Live search fallback for: {user_msg[:40]}")
+            # No OpenF1 data — live search only, clearly label as news not timing
+            if _live_search_fn[0]:
+                raw_search = _live_search_fn[0](user_msg)
+            else:
+                log.warning("context_builder._live_search_fn not wired — live search unavailable")
+                raw_search = ""
+            if raw_search:
+                live_search_ctx = (
+                    f"[NEWS COVERAGE — not official timing data]\n{raw_search}")
+            log.info(f"Live search fallback for: {user_msg[:40]}")
 
     # FIA stewards documents
     if _needs_fia_docs(user_msg):
