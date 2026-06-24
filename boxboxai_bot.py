@@ -4628,10 +4628,37 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
         log.info(f"Auto-enrichment: starting R{rnd} {name}...")
 
         # ── Enrich race with FastF1 ───────────────────────────
-        episode = enrich_episode_with_telemetry(episode, rnd)
+        loop = asyncio.get_event_loop()
+        try:
+            episode = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    enrich_episode_with_telemetry,
+                    episode,
+                    rnd
+                ),
+                timeout=120
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"FastF1 enrichment timed out after 120s for round {rnd} — skipping")
+        except Exception as e:
+            log.error(f"FastF1 enrichment failed for round {rnd}: {e}", exc_info=True)
 
         # ── Enrich qualifying with FastF1 ─────────────────────
-        episode = enrich_qualifying_with_telemetry(episode, rnd)
+        try:
+            episode = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    enrich_qualifying_with_telemetry,
+                    episode,
+                    rnd
+                ),
+                timeout=120
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"FastF1 qualifying enrichment timed out after 120s for round {rnd} — skipping")
+        except Exception as e:
+            log.error(f"FastF1 qualifying enrichment failed for round {rnd}: {e}", exc_info=True)
 
         # ── Enrich sprint if applicable ───────────────────────
         if rnd in SPRINT_ROUNDS_2026 and not episode.get("sprint",{}).get("sprint_winner"):
