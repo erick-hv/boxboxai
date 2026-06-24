@@ -862,8 +862,9 @@ RULES:
 - STRATEGY/TYRE QUESTIONS WITHOUT REAL DATA: CIRCUIT GUIDE info (degradation, overtaking difficulty, "usually 2-stop") is general historical knowledge — fine to share AS general knowledge. But NEVER invent specific lap numbers for pit stops, per-driver stint plans (e.g. "Stint 1: Laps 1-20"), fake statistics ("Barcelona averages 0.8 safety cars"), or confidence percentages ("90% of the field does 2 stops") when you don't have this year's tyre allocation or practice data. One paragraph of general circuit context is enough — do not pad it into a multi-driver strategy report.
 - FIA STEWARDS DOCS = ground truth for incidents and penalties. When FIA STEWARDS DECISION is present, cite "FIA stewards found..." with the specific finding. When RACE DIRECTOR NOTES is present, cite "Race Director notes for [circuit] state..." for circuit-specific rules or procedures. When PIRELLI TYRE NOTES is present, use it for tyre compound and strategy context.
   FIA documents are only available for the current race weekend — for past race penalties or incidents, rely on race control messages and memory rather than claiming to have checked FIA documents. If asked about a past race incident with no FIA STEWARDS DECISION block present, say clearly that the FIA documents for that race are no longer available and answer from what is known.
+  When FIA STEWARDS DOCS contains "[MEDIA SOURCES — NOT OFFICIAL FIA DOCUMENT]", attribute all claims to the media outlet — use "According to [source]..." — never use "FIA stewards found" or "FIA confirmed" for media-sourced content.
 - TECHNICAL UPDATES: When TECHNICAL UPDATES context is present, use it to answer questions about team development, new parts, or performance changes. Cite the source ("According to [publication]...") rather than presenting it as established fact. If no TECHNICAL UPDATES context is present and the question requires specific upgrade knowledge, say clearly that you don't have confirmed information about specific parts brought to this race rather than speculating.
-- DNF QUESTIONS WITH NO FIA STEWARDS DOC: stewards documents cover on-track incidents and regulation violations — NOT mechanical failures. If a driver DNF'd and no FIA stewards document or race control message mentions them, that absence is itself informative: it suggests the retirement was mechanical or self-inflicted (no third party / no investigation needed), not a gap in your knowledge. Say something like "no stewards investigation was opened for [driver]'s retirement, which points to a mechanical issue rather than an on-track incident" — don't say "I don't have that information" as if it's missing data.
+- DNF QUESTIONS WITH NO FIA STEWARDS DOC: stewards documents cover on-track incidents and regulation violations — NOT mechanical failures. If a driver DNF'd and no FIA stewards document or race control message mentions them, that absence is itself informative: it suggests the retirement was mechanical or self-inflicted (no third party / no investigation needed), not a gap in your knowledge. Say something like "no stewards investigation was opened for [driver]'s retirement, which points to a mechanical issue rather than an on-track incident" — don't say "I don't have that information" as if it's missing data. IMPORTANT EXCEPTION: If RACE CONTROL FACT for a race is an empty list [], the feed was not loaded for that race — do not treat the empty list as confirmed evidence of no investigation. State only that the classification shows DNF or Lapped and that the retirement cause is not available in memory. Never infer "mechanical" from an unloaded feed.
 - RACE CONTROL FACT = messages from the live FIA timing feed about incidents, investigations, and flags during the race. IMPORTANT: these messages never literally say "PENALTY" — instead look for: "TIME DELETED" (lap time invalidated, usually track limits), "BLACK AND WHITE FLAG" (warning), "INCIDENT INVOLVING CAR X NOTED/WILL BE INVESTIGATED", and crucially "REVIEWED — NO FURTHER INVESTIGATION" (stewards looked into it and took NO action — this means NO penalty, the matter was CLEARED). Read the full sequence for a driver: an "incident noted" message followed by "no further investigation" means stewards investigated and found nothing wrong — report this as "investigated but cleared, no penalty issued", not as evidence of a penalty. If RACE CONTROL FACT shows nothing for a driver AND no stewards doc exists either, that's a real "no penalty/no incident" — state it plainly.
 - NEVER invent specific incident details (crashes, collisions, spins, mechanical failures) beyond what race control messages or FIA stewards documents explicitly state. If race control shows track limits violations for a driver who finished P16, say "track limits issues and a classified P16 finish" — not "crashed out". "Crashed out" implies a retirement-ending collision; only say this if race control explicitly shows a collision/crash message for that driver.
 - [NEWS COVERAGE] labeled context = background only, not a timing sheet — don't extract positions/times from it, use it for storylines and reactions only.
@@ -1346,6 +1347,20 @@ def ask_claude(user_msg: str, history: list, mem: dict,
             "Check console.anthropic.com/billing to top up."
         )) if _app_ref[0] else None
         return "⚠️ Too many requests right now. Try again in a moment!"
+    except anthropic.APIStatusError as e:
+        if e.status_code == 529:
+            asyncio.create_task(alert_owner(
+                _app_ref[0],
+                f"🔴 *Anthropic 529 — Overloaded*\n\nAPI is under heavy load. "
+                f"Users are seeing retry prompts. Will recover automatically."
+            )) if _app_ref[0] else None
+            return "F1 HQ is overloaded right now 🏎️ Try again in a moment."
+        log.error(f"Anthropic API {e.status_code}: {e}", exc_info=True)
+        asyncio.create_task(alert_owner(
+            _app_ref[0],
+            f"⚠️ *Anthropic API Error {e.status_code}*\n\n{str(e)[:200]}"
+        )) if _app_ref[0] else None
+        return "⚠️ API error. Try again in a moment!"
     except Exception as e:
         log.error(f"Claude API error: {type(e).__name__}: {e}", exc_info=True)
         return f"⚠️ Error calling Claude: {type(e).__name__}: {str(e)[:80]}"

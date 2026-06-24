@@ -2039,6 +2039,7 @@ def fetch_fia_race_documents(race_name: str, query: str = "") -> str:
         return ""
 
     result_text = (
+        f"[MEDIA SOURCES — NOT OFFICIAL FIA DOCUMENT]\n"
         f"STEWARDS DECISION SOURCES ({race_context}):\n\n" +
         "\n\n".join(collected)
     )
@@ -2283,6 +2284,11 @@ async def _check_and_run_predictor(app=None):
     today = datetime.now().date()
 
     for rnd, name, date_str in [
+        (1,"Australian GP","2026-03-15"),
+        (2,"Chinese GP","2026-03-22"),
+        (3,"Japanese GP","2026-04-06"),
+        (4,"Miami GP","2026-05-04"),
+        (5,"Canadian GP","2026-05-24"),
         (6,"Monaco GP","2026-06-07"),
         (7,"Spanish GP","2026-06-14"),
         (8,"Austrian GP","2026-06-28"),
