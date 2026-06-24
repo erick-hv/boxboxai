@@ -33,7 +33,6 @@ HISTORICAL_DATA = """
 HISTORICAL F1 RECORDS AND COMPARISONS (for context when asked):
 
 Rookie seasons — wins in first 5 races:
-- Antonelli 2026: 4 wins from 5 races (Shanghai, Suzuka, Miami, Montreal) — HISTORIC
 - Verstappen 2015: 0 wins (Toro Rosso, first full season)
 - Hamilton 2007: 0 wins in first 5, won USA R7 (finished season with 4 wins)
 - Leclerc 2018: 0 wins (Sauber)
@@ -2031,7 +2030,7 @@ def build_championship_scenarios(query: str, mem: dict) -> str:
 
     episodes       = mem.get("episodic", [])
     races_done     = len(episodes)
-    total_races    = 21
+    total_races    = 22  # 2026 season: verified from MEETING_KEY_2026 (R1–R22)
     races_left     = total_races - races_done
     max_pts_left   = races_left * 26  # 25 for win + 1 for fastest lap
 

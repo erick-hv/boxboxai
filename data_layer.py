@@ -2,6 +2,7 @@
 FastF1/OpenF1 telemetry enrichment, and predictor I/O."""
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -166,7 +167,12 @@ def load_sessions() -> dict:
     return {}
 
 def save_sessions(sessions: dict):
-    SESSIONS_FILE.write_text(json.dumps(sessions, indent=2))
+    try:
+        tmp = SESSIONS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(sessions, indent=2))
+        os.replace(tmp, SESSIONS_FILE)
+    except Exception as e:
+        log.error(f"Failed to save sessions: {e}")
 
 def get_user_history(sessions: dict, user_id: str) -> list:
     return sessions.get(user_id, {}).get("history", [])
@@ -728,26 +734,35 @@ def fetch_practice_results(round_num: int, season: int = SEASON) -> str:
     Fetches FP1/FP2/FP3 results from OpenF1 for a given round.
     Uses meeting_key matching for reliability.
     """
-    # Step 1: get the meeting_key for this round via meetings endpoint
-    try:
-        meetings = fetch_openf1("meetings", {"year": season})
-        if not meetings:
+    # Step 1: resolve meeting_key via MEETING_KEY_2026 (avoids off-by-two from
+    # Sakhir/Jeddah meetings that exist in OpenF1 but not in Jolpica calendar)
+    meeting_key = MEETING_KEY_2026.get(round_num) if season == SEASON else None
+    circuit = ""
+    if not meeting_key:
+        # Fallback for non-2026 seasons or unmapped rounds: sort by date + index
+        try:
+            meetings = fetch_openf1("meetings", {"year": season})
+            if not meetings:
+                return ""
+            sorted_meetings = sorted(meetings, key=lambda x: x.get("date_start", ""))
+            if round_num < 1 or round_num > len(sorted_meetings):
+                return ""
+            mtg = sorted_meetings[round_num - 1]
+            meeting_key = mtg.get("meeting_key")
+            circuit = mtg.get("circuit_short_name", "")
+            if not meeting_key:
+                return ""
+        except Exception as e:
+            log.warning(f"Meeting lookup failed: {e}")
             return ""
-
-        # Sort meetings by date and pick by round index
-        sorted_meetings = sorted(meetings, key=lambda x: x.get("date_start",""))
-        if round_num < 1 or round_num > len(sorted_meetings):
-            return ""
-
-        meeting = sorted_meetings[round_num - 1]
-        meeting_key = meeting.get("meeting_key")
-        circuit     = meeting.get("circuit_short_name", "")
-        if not meeting_key:
-            return ""
-
-    except Exception as e:
-        log.warning(f"Meeting lookup failed: {e}")
-        return ""
+    else:
+        # Get circuit name from the specific meeting record
+        try:
+            mtg_data = fetch_openf1("meetings", {"meeting_key": meeting_key})
+            if mtg_data:
+                circuit = mtg_data[0].get("circuit_short_name", "")
+        except Exception:
+            pass
 
     # Step 2: get all sessions for this meeting
     try:
