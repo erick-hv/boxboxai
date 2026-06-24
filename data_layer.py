@@ -19,6 +19,34 @@ log = logging.getLogger(__name__)
 # ═════════════════════════════════════════════════════════════
 SEASON        = 2026
 JOLPICA       = "https://api.jolpi.ca/ergast/f1"
+
+# OpenF1 meeting_key per Jolpica round number for the 2026 season.
+# Sakhir (mk=1282) and Jeddah (mk=1283) appear in OpenF1 but are not
+# part of the 2026 Jolpica/FIA championship calendar, so R4+ skip them.
+MEETING_KEY_2026: dict[int, int] = {
+    1:  1279,  # Australian GP   — Melbourne
+    2:  1280,  # Chinese GP      — Shanghai
+    3:  1281,  # Japanese GP     — Suzuka
+    4:  1284,  # Miami GP        — Miami (skips Sakhir=1282, Jeddah=1283)
+    5:  1285,  # Canadian GP     — Montreal
+    6:  1286,  # Monaco GP       — Monte Carlo
+    7:  1287,  # Barcelona GP    — Catalunya
+    8:  1288,  # Austrian GP     — Spielberg
+    9:  1289,  # British GP      — Silverstone
+    10: 1290,  # Belgian GP      — Spa-Francorchamps
+    11: 1291,  # Hungarian GP    — Hungaroring
+    12: 1292,  # Dutch GP        — Zandvoort
+    13: 1293,  # Italian GP      — Monza
+    14: 1294,  # Spanish GP      — Madring (new Madrid circuit)
+    15: 1295,  # Azerbaijan GP   — Baku
+    16: 1296,  # Singapore GP    — Marina Bay
+    17: 1297,  # US GP           — Austin
+    18: 1298,  # Mexico City GP  — Rodríguez
+    19: 1299,  # Brazilian GP    — Interlagos
+    20: 1300,  # Las Vegas GP    — Las Vegas
+    21: 1301,  # Qatar GP        — Lusail
+    22: 1302,  # Abu Dhabi GP    — Yas Marina
+}
 MEMORY_FILE   = Path(__file__).parent / "f1_memory_2026.json"
 SESSIONS_FILE = Path(__file__).parent / "boxboxai_sessions.json"
 PREDICTIONS_FILE       = Path(__file__).parent / "boxboxai_predictions.json"
@@ -822,8 +850,13 @@ def get_actual_grid_for_prediction(round_num: int | None = None) -> str:
     """
     # Try OpenF1 first — most current
     try:
-        sessions_data = fetch_openf1("sessions", {
-            "year": SEASON, "session_name": "Qualifying"})
+        _mk = MEETING_KEY_2026.get(round_num) if round_num else None
+        if _mk:
+            _q_params = {"meeting_key": _mk, "session_name": "Qualifying"}
+        else:
+            log.warning(f"get_actual_grid_for_prediction: no meeting_key for round {round_num!r} — falling back to year filter")
+            _q_params = {"year": SEASON, "session_name": "Qualifying"}
+        sessions_data = fetch_openf1("sessions", _q_params)
         if sessions_data:
             now_ts = datetime.now().timestamp()
             completed = []
@@ -887,7 +920,7 @@ def get_actual_grid_for_prediction(round_num: int | None = None) -> str:
     return ""
 
 
-def get_session_context(query: str, live_search_fn=None):
+def get_session_context(query: str, live_search_fn=None, round_num: int | None = None):
     """
     Fetches real session timing data from OpenF1 first.
     Falls back to live search only if OpenF1 has no data.
@@ -931,10 +964,24 @@ def get_session_context(query: str, live_search_fn=None):
 
     # ── Try OpenF1 first — ground truth timing data ───────────
     try:
-        sessions_data = fetch_openf1("sessions", {
-            "year": SEASON,
-            "session_name": session_name,
-        })
+        # Resolve meeting_key so we return data for the correct race,
+        # not just the most recently completed session of this type.
+        if round_num is None:
+            try:
+                nr = fetch_next_race()
+                round_num = int(nr.get("round", 0)) if nr else None
+            except Exception:
+                pass
+        _mk = MEETING_KEY_2026.get(round_num) if round_num else None
+        if _mk:
+            _s_params = {"meeting_key": _mk, "session_name": session_name}
+        else:
+            log.warning(
+                f"get_session_context: no meeting_key for round {round_num!r} "
+                f"— falling back to year filter (may return wrong race)"
+            )
+            _s_params = {"year": SEASON, "session_name": session_name}
+        sessions_data = fetch_openf1("sessions", _s_params)
 
         if not sessions_data:
             log.info(f"OpenF1: no '{session_name}' sessions returned for {SEASON}")
