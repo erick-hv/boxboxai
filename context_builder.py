@@ -412,7 +412,6 @@ Circuit de Monaco — The most famous street circuit
 - Rascasse: final hairpin, notorious for time-wasting in qualifying
 - Tyres: low deg due to low speeds, usually 1-stop
 - Strategy: SC timing is everything — all pit stops happen under SC
-- Checo is the God of Monaco — 2x wins, perfect car placement on walls
 """,
     "montreal": """
 Circuit Gilles Villeneuve, Canada
@@ -1234,8 +1233,10 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     # Live session
     live_ctx = get_live_session_context()
 
-    # Circuit guide (image path stored separately; only text used in system prompt)
-    circuit_ctx, _ = get_circuit_guide(user_msg)
+    # Circuit guide — only inject when user explicitly asks about the circuit/track
+    circuit_ctx = ""
+    if _is_circuit_guide_query(user_msg):
+        circuit_ctx, _ = get_circuit_guide(user_msg)
 
     # Prediction accuracy
     if any(w in user_msg.lower() for w in
