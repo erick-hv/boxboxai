@@ -219,9 +219,18 @@ def check_rate_limit(user_id: str) -> tuple[bool, str]:
     Checks if a user has exceeded the rate limit.
     Returns (allowed: bool, message: str)
     """
+    global _rate_limits, _abuse_strikes
     now      = time.time()
     uid      = str(user_id)
     window   = now - RATE_LIMIT_WINDOW
+
+    # Evict stale entries to bound memory growth
+    cutoff_rl = now - RATE_LIMIT_WINDOW
+    cutoff_ab = now - 86400
+    _rate_limits   = {k: v for k, v in _rate_limits.items()
+                      if v and max(v) > cutoff_rl}
+    _abuse_strikes = {k: v for k, v in _abuse_strikes.items()
+                      if v.get("banned_until", 0) > cutoff_ab}
 
     # Clean old timestamps
     if uid not in _rate_limits:

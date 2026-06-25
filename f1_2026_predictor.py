@@ -2582,12 +2582,11 @@ def monte_carlo_simulation(
         pos_all[:, sim] = pos_sim
 
         # Acumular métricas
-        winner_idx = order[0]
-        if not dnf_mask[winner_idx]:
-            wins[winner_idx] += 1
-        for idx in order[:3]:
-            if not dnf_mask[idx]:
-                podiums[idx] += 1
+        non_dnf = [idx for idx in order if not dnf_mask[idx]]
+        if non_dnf:
+            wins[non_dnf[0]] += 1
+        for idx in non_dnf[:3]:
+            podiums[idx] += 1
         finishes += (~dnf_mask).astype(int)
 
     # Calcular estadísticas finales

@@ -771,7 +771,7 @@ def build_system_prompt(mem: dict, news_context: str = "",
 
     # ── Compact semantic facts ────────────────────────────────
     sem_lines = []
-    for k, v in list(mem.get("semantic", {}).items())[:15]:
+    for k, v in list(mem.get("semantic", {}).items())[-15:]:
         text = v["text"] if isinstance(v, dict) else v
         sem_lines.append(f"{k}: {text[:120]}")
 
@@ -841,7 +841,7 @@ CRITICAL: Checo(PER) is at CADILLAC not Red Bull. Lawson replaced him at RBR.
 NICKNAMES: Checo/Viejo Sabroso/God of Monaco=PER | Magic/GOAT/Sir Lewis=HAM | Mr Saturday=RUS | El Nano/Smooth Operator=ALO | Super Max=VER | Il Predestinato=LEC | El Pibe/La Bomba Argentina=COL | Baby Kimi/Il Bambino=ANT | Hulk=HUL | Carlitos/El Matador=SAI | El Kiwi=LAW
 
 SEASON FACTS:
-{chr(10).join(sem_lines[:10])}
+{chr(10).join(sem_lines[-10:])}
 
 RACE RESULTS:
 {chr(10).join(ep_lines)}
