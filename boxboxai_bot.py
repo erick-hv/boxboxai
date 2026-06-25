@@ -1651,6 +1651,21 @@ def _run_circuit_map_playwright(race_name: str, circuit_key: str = "") -> bytes:
                 # links directly on this page (per-event URLs now redirect).
                 page.goto(season_url, wait_until="domcontentloaded")
 
+                # ── Step 1b: expand all collapsed accordion sections ───
+                # The page shows only the current race weekend by default.
+                # Historical race sections are collapsed behind nojs toggle
+                # links; clicking each one fires an AJAX load of that
+                # section's documents.
+                nojs_toggles = page.locator(
+                    "a[href*='/decision-document-list/nojs/']").all()
+                for toggle in nojs_toggles:
+                    try:
+                        toggle.click(timeout=3000)
+                    except Exception as exc:
+                        log.info(f"Circuit map: accordion toggle click — {exc}")
+                if nojs_toggles:
+                    page.wait_for_load_state("networkidle", timeout=20000)
+
                 # ── Step 2: find circuit-map PDF link ──────────────────
                 all_links = page.locator(
                     "a[href*='/system/files/decision-document/']").all()
