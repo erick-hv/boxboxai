@@ -391,6 +391,7 @@ def retrieve_relevant_memory(query: str, mem: dict, top_k: int = TOP_K_MEMORY) -
             fc_txt  = (f" | FullResult: {' '.join(ep.get('full_classification',[])[:5])}"
                        if ep.get("full_classification") else "")
             telem_txt = ""
+            telem = ep.get("telemetry", {})
             if telem.get("fastest_lap_overall"):
                 fl_drv = telem.get("fastest_lap_driver","?")
                 telem_txt = (
@@ -1220,12 +1221,11 @@ def fetch_lap_times_fastest(season: int, round_num: int) -> list:
 
 # Canonical driver number → 3-letter code for 2026 grid
 OF1_DRIVER_MAP = {
-    "1":  "ANT", "63": "RUS", "44": "HAM", "16": "LEC",
-    "12": "ANT", "3":  "RIC", "6":  "LAW", "30": "LIN",
-    "81": "PIA", "4":  "NOR", "14": "ALO", "18": "STR",
-    "27": "HUL", "5":  "HAD", "43": "COL", "87": "BEA",
-    "10": "GAS", "31": "OCO", "23": "ALB", "55": "SAI",
-    "77": "BOT", "11": "PER", "41": "BOR", "2":  "SAR",
+    "1":"NOR","3":"VER","5":"BOR","6":"HAD","10":"GAS",
+    "11":"PER","12":"ANT","14":"ALO","16":"LEC","18":"STR",
+    "23":"ALB","27":"HUL","30":"LAW","31":"OCO","41":"LIN",
+    "43":"COL","44":"HAM","55":"SAI","63":"RUS","77":"BOT",
+    "81":"PIA","87":"BEA",
 }
 
 # Status strings from OpenF1 that mean "classified finisher"
@@ -1672,6 +1672,8 @@ def race_to_episode(race: dict, season: int = SEASON) -> dict:
     of1_data = fetch_race_results_openf1(round_num, season)
     time.sleep(0.3)
 
+    fl_code = ""
+    fl_time = ""
     if of1_data and of1_data.get("winner"):
         # OpenF1 has reliable data — use it as primary
         p1_code  = of1_data["winner"]

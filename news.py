@@ -126,7 +126,7 @@ def _search_the_race(query: str, max_results: int = 3) -> list:
         # The Race search results use article tags with h2/h3 titles
         articles = []
         pattern  = r'<h[23][^>]*>\s*<a\s+href="([^"]+)"[^>]*>([^<]+)</a>'
-        for match in re.finditer(pattern, r.text)[:max_results * 2]:
+        for match in list(re.finditer(pattern, r.text))[:max_results * 2]:
             url_found = match.group(1).strip()
             title     = re.sub(r"\s+", " ", match.group(2)).strip()
             if "the-race.com" in url_found and title and len(title) > 10:

@@ -708,11 +708,11 @@ def get_live_session_context() -> str:
         order = sorted(latest.values(), key=lambda x: x.get("position", 99))[:10]
 
         OF1_DRV = {
-            "1":"ANT","63":"RUS","44":"HAM","16":"LEC","6":"LAW",
-            "5":"HAD","4":"NOR","81":"PIA","14":"ALO","18":"STR",
-            "10":"GAS","43":"COL","23":"ALB","55":"SAI","30":"LIN",
-            "87":"BEA","31":"OCO","27":"HUL","11":"PER","77":"BOT",
-            "41":"BOR",
+            "1":"NOR","3":"VER","5":"BOR","6":"HAD","10":"GAS",
+            "11":"PER","12":"ANT","14":"ALO","16":"LEC","18":"STR",
+            "23":"ALB","27":"HUL","30":"LAW","31":"OCO","41":"LIN",
+            "43":"COL","44":"HAM","55":"SAI","63":"RUS","77":"BOT",
+            "81":"PIA","87":"BEA",
         }
 
         pos_str = " | ".join(
