@@ -80,7 +80,9 @@ def load_f1_memory() -> dict:
 def save_f1_memory(mem: dict):
     """Saves updated memory to file."""
     try:
-        MEMORY_FILE.write_text(json.dumps(mem, indent=2))
+        tmp = MEMORY_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(mem, indent=2), encoding="utf-8")
+        os.replace(tmp, MEMORY_FILE)
         log.info("Memory saved successfully")
     except Exception as e:
         log.error(f"Failed to save memory: {e}")

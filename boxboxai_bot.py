@@ -111,6 +111,7 @@ TG_MAX_CHARS  = 4096
 CIRCUIT_MAP_CACHE_FILE      = Path(__file__).parent / "boxboxai_circuit_map_cache.json"
 CIRCUIT_MAPS_DIR            = Path(__file__).parent / "boxboxai_circuit_maps"
 CIRCUIT_MAP_NOTIFIED_FILE   = Path(__file__).parent / "boxboxai_circuit_map_notified.json"
+_main_loop: asyncio.AbstractEventLoop | None = None
 from models import CIRCUIT_MAP_VERSION  # noqa: E402
 
 # Serialise concurrent Playwright sessions (prewarm + user request can race).
@@ -535,7 +536,9 @@ def load_notification_state() -> dict:
 
 def save_notification_state(state: dict):
     try:
-        NOTIFICATIONS_FILE.write_text(json.dumps(state, indent=2))
+        tmp = NOTIFICATIONS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, NOTIFICATIONS_FILE)
     except Exception:
         pass
 
@@ -549,7 +552,9 @@ def load_circuit_map_notified_state() -> dict:
 
 def save_circuit_map_notified_state(state: dict):
     try:
-        CIRCUIT_MAP_NOTIFIED_FILE.write_text(json.dumps(state, indent=2))
+        tmp = CIRCUIT_MAP_NOTIFIED_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, CIRCUIT_MAP_NOTIFIED_FILE)
     except Exception:
         pass
 
@@ -687,7 +692,9 @@ def load_digest_state() -> dict:
     return {}
 
 def save_digest_state(state: dict):
-    DIGEST_STATE_FILE.write_text(json.dumps(state, indent=2))
+    tmp = DIGEST_STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(tmp, DIGEST_STATE_FILE)
 
 def build_user_stats_text(user_data: dict, user_name: str) -> str:
     """Builds a personalised stats summary for one user."""
@@ -1440,16 +1447,17 @@ def _run_fia_playwright(race_name_clean: str, driver_name: str,
                     import context_builder as _cb
                     _app = _cb._app_ref[0]
                     if _app:
-                        asyncio.run(alert_owner(
-                            _app,
-                            f"⚠️ *FIA Scraper — No Docs Matched*\n\n"
-                            f"URL: `{season_url}`\n"
-                            f"Race: `{race_name_clean}`\n"
-                            f"Found *{_links_n}* doc links on page but none matched "
-                            f"the race query.\n"
-                            f"FIA page structure or slug format may have changed — "
-                            f"check the season page."
-                        ))
+                        if _main_loop:
+                            asyncio.run_coroutine_threadsafe(alert_owner(
+                                _app,
+                                f"⚠️ *FIA Scraper — No Docs Matched*\n\n"
+                                f"URL: `{season_url}`\n"
+                                f"Race: `{race_name_clean}`\n"
+                                f"Found *{_links_n}* doc links on page but none matched "
+                                f"the race query.\n"
+                                f"FIA page structure or slug format may have changed — "
+                                f"check the season page."
+                            ), _main_loop)
                 except Exception:
                     pass
         return "\n\n".join(sections)
@@ -4425,6 +4433,8 @@ def main():
     context_builder._get_circuit_zone_data_fn[0] = _get_circuit_zone_data
 
     async def _post_init(application):
+        global _main_loop
+        _main_loop = asyncio.get_running_loop()
         context_builder._app_ref[0] = application  # first line
         _asyncio.create_task(
             notification_loop(application, sessions_ref, mem_ref))

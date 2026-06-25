@@ -313,8 +313,7 @@ async def alert_owner(app, message: str):
     try:
         await app.bot.send_message(
             chat_id=BOT_OWNER_ID,
-            text=f"🚨 *BoxBoxAI Alert*\n\n{message}",
-            parse_mode="Markdown"
+            text=f"🚨 BoxBoxAI Alert\n\n{message}",
         )
     except Exception as e:
         log.error(f"Failed to alert owner: {e}")
