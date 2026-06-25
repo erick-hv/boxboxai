@@ -2793,8 +2793,9 @@ def main():
         # ── Normal AI call (all non-/predict queries) ─────────
         live = ""
         system = build_system_prompt(mem, user_input, live)
-        if user_input not in [m["content"] for m in hist if m["role"]=="user"]:
-            hist.append({"role": "user", "content": user_input})
+        if user_input in [m["content"] for m in hist if m["role"]=="user"]:
+            continue
+        hist.append({"role": "user", "content": user_input})
 
         # Keep history to last 10 turns to avoid token bloat
         trimmed_hist = hist[-10:]

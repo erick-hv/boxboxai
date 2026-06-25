@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import requests
-requests.packages.urllib3.disable_warnings()
+import warnings
 
 try:
     import fitz
@@ -149,8 +149,11 @@ def _download_pdf(url: str) -> bytes:
         "Referer": SEASON_URL,
         "Accept": "application/pdf,*/*",
     }
-    r = requests.get(url, headers=hdrs, timeout=30, verify=False,
-                     stream=True, allow_redirects=True)
+    # FIA cert uses intermediate not in certifi; verify=False is intentional here only
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+        r = requests.get(url, headers=hdrs, timeout=30, verify=False,
+                         stream=True, allow_redirects=True)
     if r.status_code != 200:
         print(f"  HTTP {r.status_code}")
         return b""

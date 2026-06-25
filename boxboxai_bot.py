@@ -56,7 +56,7 @@ from data_layer import (
 
 import context_builder
 from context_builder import (
-    ANTHROPIC_KEY, MODEL, RACE_KEYWORDS,
+    MODEL, RACE_KEYWORDS,
     ask_claude, get_client,
     _gather_context, _format_debug_context_report,
     _is_live_session_question, detect_fan_declaration,
@@ -434,43 +434,6 @@ def format_session_times(session_name: str,
         f"  🕐 UTC: {utc_hour:02d}:{utc_min:02d}"
     )
 
-
-def get_sessions_for_current_round() -> tuple | None:
-    """Returns (round_data, race_date) for the current race weekend."""
-    today = datetime.now().date()
-    for entry in SESSION_SCHEDULE_2026:
-        rnd = entry[0]
-        # Find matching round in calendar
-        for cal_rnd, name, date_str in [
-            (r, n, d) for r, n, d in [
-                (e[0], e[1], d) for e in SESSION_SCHEDULE_2026
-                for d in [next((x[2] for x in [
-                    (1,"Australian GP","2026-03-15"),
-                    (2,"Chinese GP","2026-03-22"),
-                    (3,"Japanese GP","2026-04-06"),
-                    (4,"Miami GP","2026-05-04"),
-                    (5,"Canadian GP","2026-05-24"),
-                    (6,"Monaco GP","2026-06-07"),
-                    (7,"Spanish GP","2026-06-14"),
-                    (8,"Austrian GP","2026-06-28"),
-                    (9,"British GP","2026-07-05"),
-                    (10,"Belgian GP","2026-07-19"),
-                    (11,"Hungarian GP","2026-07-26"),
-                    (12,"Dutch GP","2026-08-23"),
-                    (13,"Italian GP","2026-09-06"),
-                    (14,"Singapore GP","2026-09-20"),
-                    (15,"Azerbaijan GP","2026-09-27"),
-                    (16,"US GP","2026-10-18"),
-                    (17,"Mexico City GP","2026-10-25"),
-                    (18,"São Paulo GP","2026-11-08"),
-                    (19,"Las Vegas GP","2026-11-21"),
-                    (20,"Qatar GP","2026-11-29"),
-                    (21,"Abu Dhabi GP","2026-12-06"),
-                ] if x[0] == e[0]), None)]
-            ]
-        ]:
-            pass
-    return None
 
 
 # Simpler version — direct lookup
@@ -4007,7 +3970,7 @@ def main():
         print("  export TELEGRAM_BOT_TOKEN=your_token_here\n")
         sys.exit(1)
 
-    if not ANTHROPIC_KEY:
+    if not os.environ.get("ANTHROPIC_API_KEY", ""):
         print("\n  ANTHROPIC_API_KEY not set.")
         print("  export ANTHROPIC_API_KEY=sk-ant-...\n")
         sys.exit(1)

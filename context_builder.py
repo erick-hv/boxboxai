@@ -26,7 +26,6 @@ _live_search_fn:           list = [None]  # context_builder._live_search_fn[0] =
 _fetch_fia_docs_fn:        list = [None]  # context_builder._fetch_fia_docs_fn[0] = fetch_fia_race_documents
 _get_circuit_zone_data_fn: list = [None]  # context_builder._get_circuit_zone_data_fn[0] = _get_circuit_zone_data
 
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL         = "claude-sonnet-4-5"
 MAX_TOKENS    = 1000
 HISTORICAL_DATA = """
@@ -876,7 +875,7 @@ client = None
 def get_client():
     global client
     if client is None:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
     return client
 
 def _is_news_query(text: str) -> bool:
