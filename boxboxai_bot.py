@@ -65,6 +65,8 @@ from context_builder import (
     _resolve_circuit_key,
 )
 
+from models import RACE_CALENDAR_2026
+
 # ── dependency check ──────────────────────────────────────────
 missing = []
 try:
@@ -871,23 +873,8 @@ async def _verify_predictor_ran(app, mem: dict):
     state = load_predictor_state()
     today = datetime.now().date()
 
-    for rnd, name, date_str in [
-        (7,"Spanish GP","2026-06-14"),
-        (8,"Austrian GP","2026-06-28"),
-        (9,"British GP","2026-07-05"),
-        (10,"Belgian GP","2026-07-19"),
-        (11,"Hungarian GP","2026-07-26"),
-        (12,"Dutch GP","2026-08-23"),
-        (13,"Italian GP","2026-09-06"),
-        (14,"Singapore GP","2026-09-20"),
-        (15,"Azerbaijan GP","2026-09-27"),
-        (16,"US GP","2026-10-18"),
-        (17,"Mexico City GP","2026-10-25"),
-        (18,"São Paulo GP","2026-11-08"),
-        (19,"Las Vegas GP","2026-11-21"),
-        (20,"Qatar GP","2026-11-29"),
-        (21,"Abu Dhabi GP","2026-12-06"),
-    ]:
+    for r in RACE_CALENDAR_2026:
+        rnd, name, date_str = r["round"], r["name"], r["date"]
         race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
         days_until = (race_date - today).days
 
@@ -2322,30 +2309,8 @@ async def _check_and_run_predictor(app=None):
     state = load_predictor_state()
     today = datetime.now().date()
 
-    for rnd, name, date_str in [
-        (1, "Australian GP",  "2026-03-15"),
-        (2, "Chinese GP",     "2026-03-22"),
-        (3, "Japanese GP",    "2026-04-06"),
-        (4, "Miami GP",       "2026-05-04"),
-        (5, "Canadian GP",    "2026-05-24"),
-        (6, "Monaco GP",      "2026-06-07"),
-        (7, "Spanish GP",     "2026-06-14"),
-        (8, "Austrian GP",    "2026-06-28"),
-        (9, "British GP",     "2026-07-05"),
-        (10,"Belgian GP",     "2026-07-19"),
-        (11,"Hungarian GP",   "2026-07-26"),
-        (12,"Dutch GP",       "2026-08-23"),
-        (13,"Italian GP",     "2026-09-06"),
-        (14,"Madring GP",     "2026-09-13"),  # new Madrid circuit (R14 in MEETING_KEY_2026)
-        (15,"Singapore GP",   "2026-09-20"),
-        (16,"Azerbaijan GP",  "2026-09-27"),
-        (17,"US GP",          "2026-10-18"),
-        (18,"Mexico City GP", "2026-10-25"),
-        (19,"São Paulo GP",   "2026-11-08"),
-        (20,"Las Vegas GP",   "2026-11-21"),
-        (21,"Qatar GP",       "2026-11-29"),
-        (22,"Abu Dhabi GP",   "2026-12-06"),
-    ]:
+    for r in RACE_CALENDAR_2026:
+        rnd, name, date_str = r["round"], r["name"], r["date"]
         race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
         days_until = (race_date - today).days
 
@@ -2422,32 +2387,8 @@ async def _check_and_ingest(mem_ref: list, app=None,
     state      = load_ingest_state()
     today      = datetime.now().date()
 
-    RACE_CALENDAR = [
-        (1, "Australian GP",  "2026-03-15"),
-        (2, "Chinese GP",     "2026-03-22"),
-        (3, "Japanese GP",    "2026-04-06"),
-        (4, "Miami GP",       "2026-05-04"),
-        (5, "Canadian GP",    "2026-05-24"),
-        (6, "Monaco GP",      "2026-06-07"),
-        (7, "Spanish GP",     "2026-06-14"),
-        (8, "Austrian GP",    "2026-06-28"),
-        (9, "British GP",     "2026-07-05"),
-        (10,"Belgian GP",     "2026-07-19"),
-        (11,"Hungarian GP",   "2026-07-26"),
-        (12,"Dutch GP",       "2026-08-23"),
-        (13,"Italian GP",     "2026-09-06"),
-        (14,"Madring GP",     "2026-09-13"),  # new Madrid circuit (R14 in MEETING_KEY_2026)
-        (15,"Singapore GP",   "2026-09-20"),
-        (16,"Azerbaijan GP",  "2026-09-27"),
-        (17,"US GP",          "2026-10-18"),
-        (18,"Mexico City GP", "2026-10-25"),
-        (19,"São Paulo GP",   "2026-11-08"),
-        (20,"Las Vegas GP",   "2026-11-21"),
-        (21,"Qatar GP",       "2026-11-29"),
-        (22,"Abu Dhabi GP",   "2026-12-06"),
-    ]
-
-    for rnd, name, date_str in RACE_CALENDAR:
+    for r in RACE_CALENDAR_2026:
+        rnd, name, date_str = r["round"], r["name"], r["date"]
         race_date  = datetime.strptime(date_str, "%Y-%m-%d").date()
         days_since = (today - race_date).days
 
@@ -2996,12 +2937,8 @@ async def cmd_season(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Add upcoming races
     today = datetime.now().date()
     upcoming = []
-    for rnd, name, date_str in [
-        (6,"Monaco GP","2026-06-07"),(7,"Spanish GP","2026-06-14"),
-        (8,"Austrian GP","2026-06-28"),(9,"British GP","2026-07-05"),
-        (10,"Belgian GP","2026-07-19"),(11,"Hungarian GP","2026-07-26"),
-        (12,"Dutch GP","2026-08-23"),(13,"Italian GP","2026-09-06"),
-    ]:
+    for r in RACE_CALENDAR_2026:
+        rnd, name, date_str = r["round"], r["name"], r["date"]
         race_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         if race_date >= today and not any(
                 e.get("round") == rnd for e in episodes):
@@ -3678,23 +3615,8 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         next_race = fetch_next_race()
         if not next_race:
             today = datetime.now().date()
-            for rnd, name, date_str in [
-                (7,"Spanish GP","2026-06-14"),
-                (8,"Austrian GP","2026-06-28"),
-                (9,"British GP","2026-07-05"),
-                (10,"Belgian GP","2026-07-19"),
-                (11,"Hungarian GP","2026-07-26"),
-                (12,"Dutch GP","2026-08-23"),
-                (13,"Italian GP","2026-09-06"),
-                (14,"Singapore GP","2026-09-20"),
-                (15,"Azerbaijan GP","2026-09-27"),
-                (16,"US GP","2026-10-18"),
-                (17,"Mexico City GP","2026-10-25"),
-                (18,"São Paulo GP","2026-11-08"),
-                (19,"Las Vegas GP","2026-11-21"),
-                (20,"Qatar GP","2026-11-29"),
-                (21,"Abu Dhabi GP","2026-12-06"),
-            ]:
+            for r in RACE_CALENDAR_2026:
+                rnd, name, date_str = r["round"], r["name"], r["date"]
                 if datetime.strptime(date_str,"%Y-%m-%d").date() >= today:
                     next_race = {"raceName": name, "round": str(rnd),
                                  "date": date_str}
@@ -3825,25 +3747,8 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         next_race = fetch_next_race()
         if not next_race:
             today = datetime.now().date()
-            for rnd, rname, date_str in [
-                (7,"Spanish GP","2026-06-14"),
-                (8,"Austrian GP","2026-06-28"),
-                (9,"British GP","2026-07-05"),
-                (10,"Belgian GP","2026-07-19"),
-                (11,"Hungarian GP","2026-07-26"),
-                (12,"Dutch GP","2026-08-23"),
-                (13,"Italian GP","2026-09-06"),
-                (14,"Singapore GP","2026-09-20"),
-                (15,"Azerbaijan GP","2026-09-27"),
-                (16,"US GP","2026-10-18"),
-                (17,"Mexico City GP","2026-10-25"),
-                (18,"São Paulo GP","2026-11-08"),
-                (19,"Las Vegas GP","2026-11-21"),
-                (20,"Qatar GP","2026-11-29"),
-                (21,"Abu Dhabi GP","2026-12-06"),
-                (10,"Belgian GP","2026-07-19"),
-                (11,"Hungarian GP","2026-07-26"),
-            ]:
+            for r in RACE_CALENDAR_2026:
+                rnd, rname, date_str = r["round"], r["name"], r["date"]
                 if datetime.strptime(date_str,"%Y-%m-%d").date() >= today:
                     next_race = {"raceName": rname, "round": str(rnd),
                                  "date": date_str}
@@ -4583,31 +4488,8 @@ async def _run_memory_enrichment(mem_ref: list, app=None):
     today    = datetime.now()
     enriched_results = []  # collect for single batched alert
 
-    RACE_CALENDAR = [
-        (1, "Australian GP",  "2026-03-15"),
-        (2, "Chinese GP",     "2026-03-22"),
-        (3, "Japanese GP",    "2026-04-06"),
-        (4, "Miami GP",       "2026-05-04"),
-        (5, "Canadian GP",    "2026-05-24"),
-        (6, "Monaco GP",      "2026-06-07"),
-        (7, "Spanish GP",     "2026-06-14"),
-        (8, "Austrian GP",    "2026-06-28"),
-        (9, "British GP",     "2026-07-05"),
-        (10,"Belgian GP",     "2026-07-19"),
-        (11,"Hungarian GP",   "2026-07-26"),
-        (12,"Dutch GP",       "2026-08-23"),
-        (13,"Italian GP",     "2026-09-06"),
-        (14,"Singapore GP",   "2026-09-20"),
-        (15,"Azerbaijan GP",  "2026-09-27"),
-        (16,"US GP",          "2026-10-18"),
-        (17,"Mexico City GP", "2026-10-25"),
-        (18,"São Paulo GP",   "2026-11-08"),
-        (19,"Las Vegas GP",   "2026-11-21"),
-        (20,"Qatar GP",       "2026-11-29"),
-        (21,"Abu Dhabi GP",   "2026-12-06"),
-    ]
-
-    for rnd, name, date_str in RACE_CALENDAR:
+    for r in RACE_CALENDAR_2026:
+        rnd, name, date_str = r["round"], r["name"], r["date"]
         race_date   = datetime.strptime(date_str, "%Y-%m-%d")
         days_since  = (today - race_date).days
 

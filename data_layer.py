@@ -10,7 +10,7 @@ from pathlib import Path
 
 import requests
 
-from models import ContextBlock
+from models import ContextBlock, RACE_CALENDAR_2026
 from news import get_news_context
 
 log = logging.getLogger(__name__)
@@ -25,28 +25,7 @@ JOLPICA       = "https://api.jolpi.ca/ergast/f1"
 # Sakhir (mk=1282) and Jeddah (mk=1283) appear in OpenF1 but are not
 # part of the 2026 Jolpica/FIA championship calendar, so R4+ skip them.
 MEETING_KEY_2026: dict[int, int] = {
-    1:  1279,  # Australian GP   — Melbourne
-    2:  1280,  # Chinese GP      — Shanghai
-    3:  1281,  # Japanese GP     — Suzuka
-    4:  1284,  # Miami GP        — Miami (skips Sakhir=1282, Jeddah=1283)
-    5:  1285,  # Canadian GP     — Montreal
-    6:  1286,  # Monaco GP       — Monte Carlo
-    7:  1287,  # Barcelona GP    — Catalunya
-    8:  1288,  # Austrian GP     — Spielberg
-    9:  1289,  # British GP      — Silverstone
-    10: 1290,  # Belgian GP      — Spa-Francorchamps
-    11: 1291,  # Hungarian GP    — Hungaroring
-    12: 1292,  # Dutch GP        — Zandvoort
-    13: 1293,  # Italian GP      — Monza
-    14: 1294,  # Spanish GP      — Madring (new Madrid circuit)
-    15: 1295,  # Azerbaijan GP   — Baku
-    16: 1296,  # Singapore GP    — Marina Bay
-    17: 1297,  # US GP           — Austin
-    18: 1298,  # Mexico City GP  — Rodríguez
-    19: 1299,  # Brazilian GP    — Interlagos
-    20: 1300,  # Las Vegas GP    — Las Vegas
-    21: 1301,  # Qatar GP        — Lusail
-    22: 1302,  # Abu Dhabi GP    — Yas Marina
+    r["round"]: r["meeting_key"] for r in RACE_CALENDAR_2026
 }
 MEMORY_FILE   = Path(__file__).parent / "f1_memory_2026.json"
 SESSIONS_FILE = Path(__file__).parent / "boxboxai_sessions.json"
@@ -333,32 +312,9 @@ def fetch_current_race() -> dict | None:
     """
     today = datetime.now().date()
 
-    # Hardcoded 2026 race dates — reliable fallback when APIs fail
-    RACE_CALENDAR_2026 = [
-        (1,  "Australian Grand Prix",     "2026-03-15"),
-        (2,  "Chinese Grand Prix",        "2026-03-22"),
-        (3,  "Japanese Grand Prix",       "2026-04-06"),
-        (4,  "Miami Grand Prix",          "2026-05-04"),
-        (5,  "Canadian Grand Prix",       "2026-05-24"),
-        (6,  "Monaco Grand Prix",         "2026-06-07"),
-        (7,  "Spanish Grand Prix",        "2026-06-14"),
-        (8,  "Austrian Grand Prix",       "2026-06-28"),
-        (9,  "British Grand Prix",        "2026-07-05"),
-        (10, "Belgian Grand Prix",        "2026-07-19"),
-        (11, "Hungarian Grand Prix",      "2026-07-26"),
-        (12, "Dutch Grand Prix",          "2026-08-23"),
-        (13, "Italian Grand Prix",        "2026-09-06"),
-        (14, "Singapore Grand Prix",      "2026-09-20"),
-        (15, "Azerbaijan Grand Prix",     "2026-09-27"),
-        (16, "United States Grand Prix",  "2026-10-18"),
-        (17, "Mexico City Grand Prix",    "2026-10-25"),
-        (18, "São Paulo Grand Prix",      "2026-11-08"),
-        (19, "Las Vegas Grand Prix",      "2026-11-21"),
-        (20, "Qatar Grand Prix",          "2026-11-29"),
-        (21, "Abu Dhabi Grand Prix",      "2026-12-06"),
-    ]
-
-    for rnd, name, date_str in RACE_CALENDAR_2026:
+    # Canonical 2026 race dates — derived from models.RACE_CALENDAR_2026
+    for r in RACE_CALENDAR_2026:
+        rnd, name, date_str = r["round"], r["name"], r["date"]
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             delta = (race_date - today).days
