@@ -2815,8 +2815,9 @@ def print_report(scored: pd.DataFrame, next_info: pd.Series,
 #  MEJORA 10 — ACTUALIZACIÓN BAYESIANA ENTRE FINES DE SEMANA
 # ─────────────────────────────────────────────────────────────
 import json
+import os
 
-PRIORS_FILE = "./f1_2026_bayesian_priors.json"
+PRIORS_FILE = os.environ.get("F1_PRIORS_FILE", "./f1_2026_bayesian_priors.json")
 
 
 def load_priors() -> dict:

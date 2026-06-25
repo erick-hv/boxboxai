@@ -308,7 +308,8 @@ def build_user_profile(user_data: dict) -> str:
         any(w in m.get("content","").lower()
             for w in ["qué", "cómo", "quién", "cuándo", "ganar", "carrera"])
     )
-    if spanish_count > len(history) * 0.3:
+    user_msg_count = len([m for m in history if m["role"] == "user"])
+    if spanish_count > user_msg_count * 0.3:
         parts.append("This user primarily communicates in Spanish.")
 
     if not parts:
@@ -1080,7 +1081,9 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     # Next/upcoming race context — also feeds weather fallback
     if _is_next_race_query(user_msg) or _is_weather_query(user_msg) \
             or any(w in user_msg.lower() for w in
-                   ["can ", "will ", "predict", "win the", "puede ganar", "va a ganar"]):
+                   ["can win", "can podium", "can race",
+                    "will start", "will race", "will win", "will drive", "will qualify",
+                    "predict", "win the", "puede ganar", "va a ganar"]):
         next_race_ctx = get_next_race_context()
 
     # ── Session data (OpenF1 direct — highest priority) ──────

@@ -93,3 +93,11 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Bayesian Priors (Railway persistence)
+
+`f1_2026_bayesian_priors.json` is committed to git and deployed from there.
+Updates the predictor writes during a Railway run are lost on next redeploy.
+After each race weekend: run `python3 f1_2026_predictor.py` locally to get updated priors,
+then `git add f1_2026_bayesian_priors.json && git commit -m "chore: update Bayesian priors RNN"`.
+To use a Railway persistent volume instead, set env var `F1_PRIORS_FILE=/data/f1_2026_bayesian_priors.json`.
