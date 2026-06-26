@@ -1,200 +1,222 @@
 {
   "ALB": {
-    "score_multiplier": 1.0068,
+    "score_multiplier": 1.0137,
     "last_error": -1.0,
     "avg_error": -1.0,
     "error_history": [
+      -1.0,
       -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "ALO": {
-    "score_multiplier": 1.0068,
+    "score_multiplier": 1.0137,
     "last_error": -1.0,
     "avg_error": -1.0,
     "error_history": [
+      -1.0,
       -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "ANT": {
-    "score_multiplier": 0.8977,
+    "score_multiplier": 0.8059,
     "last_error": 15.0,
     "avg_error": 15.0,
     "error_history": [
+      15.0,
       15.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "BEA": {
-    "score_multiplier": 0.9932,
+    "score_multiplier": 0.9864,
     "last_error": 1.0,
     "avg_error": 1.0,
     "error_history": [
+      1.0,
       1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "BOR": {
-    "score_multiplier": 1.0273,
+    "score_multiplier": 1.0553,
     "last_error": -4.0,
     "avg_error": -4.0,
     "error_history": [
+      -4.0,
       -4.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "BOT": {
     "score_multiplier": 1.0,
     "last_error": 0.0,
     "avg_error": 0.0,
     "error_history": [
+      0.0,
       0.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "COL": {
     "score_multiplier": 1.0,
     "last_error": 0.0,
     "avg_error": 0.0,
     "error_history": [
+      0.0,
       0.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "GAS": {
-    "score_multiplier": 0.9932,
+    "score_multiplier": 0.9864,
     "last_error": 1.0,
     "avg_error": 1.0,
     "error_history": [
+      1.0,
       1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "HAD": {
-    "score_multiplier": 1.0341,
+    "score_multiplier": 1.0694,
     "last_error": -5.0,
     "avg_error": -5.0,
     "error_history": [
+      -5.0,
       -5.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "HAM": {
-    "score_multiplier": 1.0068,
+    "score_multiplier": 1.0137,
     "last_error": -1.0,
     "avg_error": -1.0,
     "error_history": [
+      -1.0,
       -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "HUL": {
-    "score_multiplier": 0.9795,
+    "score_multiplier": 0.9595,
     "last_error": 3.0,
     "avg_error": 3.0,
     "error_history": [
+      3.0,
       3.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "LAW": {
-    "score_multiplier": 1.0068,
+    "score_multiplier": 1.0137,
     "last_error": -1.0,
     "avg_error": -1.0,
     "error_history": [
+      -1.0,
       -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "LEC": {
-    "score_multiplier": 0.925,
+    "score_multiplier": 0.8556,
     "last_error": 11.0,
     "avg_error": 11.0,
     "error_history": [
+      11.0,
       11.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "LIN": {
-    "score_multiplier": 1.0273,
-    "last_error": -4.0,
-    "avg_error": -4.0,
+    "score_multiplier": 1.0623,
+    "last_error": -5.0,
+    "avg_error": -4.5,
     "error_history": [
-      -4.0
+      -4.0,
+      -5.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "NOR": {
-    "score_multiplier": 1.0341,
+    "score_multiplier": 1.0694,
     "last_error": -5.0,
     "avg_error": -5.0,
     "error_history": [
+      -5.0,
       -5.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "OCO": {
-    "score_multiplier": 0.9932,
+    "score_multiplier": 0.9864,
     "last_error": 1.0,
     "avg_error": 1.0,
     "error_history": [
+      1.0,
       1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "PER": {
-    "score_multiplier": 1.0273,
+    "score_multiplier": 1.0553,
     "last_error": -4.0,
     "avg_error": -4.0,
     "error_history": [
+      -4.0,
       -4.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "PIA": {
-    "score_multiplier": 1.0136,
+    "score_multiplier": 1.0274,
     "last_error": -2.0,
     "avg_error": -2.0,
     "error_history": [
+      -2.0,
       -2.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "RUS": {
-    "score_multiplier": 1.0068,
+    "score_multiplier": 1.0137,
     "last_error": -1.0,
     "avg_error": -1.0,
     "error_history": [
+      -1.0,
       -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "SAI": {
-    "score_multiplier": 1.0136,
-    "last_error": -2.0,
-    "avg_error": -2.0,
+    "score_multiplier": 1.0205,
+    "last_error": -1.0,
+    "avg_error": -1.5,
     "error_history": [
-      -2.0
+      -2.0,
+      -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "STR": {
     "score_multiplier": 1.0,
     "last_error": 0.0,
     "avg_error": 0.0,
     "error_history": [
+      0.0,
       0.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   },
   "VER": {
-    "score_multiplier": 1.0068,
+    "score_multiplier": 1.0137,
     "last_error": -1.0,
     "avg_error": -1.0,
     "error_history": [
+      -1.0,
       -1.0
     ],
-    "races_tracked": 1
+    "races_tracked": 2
   }
 }
