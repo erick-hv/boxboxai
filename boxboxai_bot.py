@@ -2610,7 +2610,7 @@ def format_season(mem: dict) -> str:
              "━━━━━━━━━━━━━━━━━━━━━━"]
 
     for r in episodes:
-        flag = flags.get(r["track"], "🏁")
+        flag = flags.get(r.get("race_name", r.get("track", "")), "🏁")
         dnfs = r.get("dnfs", [])
         sc   = r.get("sc_count", 0)
         extras = []
@@ -2921,7 +2921,7 @@ async def cmd_season(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         rnd, name, date_str = r["round"], r["name"], r["date"]
         race_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         if race_date >= today and not any(
-                e.get("round") == rnd for e in episodes):
+                int(e.get("round", 0)) == rnd for e in episodes):
             upcoming.append(f"R{rnd} *{name}* — _{date_str}_ 🔜")
         if len(upcoming) >= 4:
             break
