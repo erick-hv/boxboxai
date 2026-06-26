@@ -751,7 +751,7 @@ async def send_weekly_digest(app, sessions: dict, mem: dict):
             f"Championship: {champ}\n\n"
             f"Now write the debrief in the exact format above."
         )
-        resp = get_client().messages.create(
+        resp = await get_client().messages.create(
             model=MODEL, max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -3325,7 +3325,7 @@ async def cmd_predict(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"Telegram formatting: *bold* only — NEVER use # or ## markdown headers."
                 )
 
-        reply = ask_claude(prompt, history, mem, user_data)
+        reply = await ask_claude(prompt, history, mem, user_data)
         update_user_history(sessions, user_id, "user",
                             f"Race prediction {race_name}")
         update_user_history(sessions, user_id, "assistant", reply)
@@ -3430,7 +3430,7 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"and name ONE driver who could realistically upset it. "
                 f"Use the exact {win_str} number. Be direct and confident."
             )
-            narrative = ask_claude(prompt, history, mem, user_data)
+            narrative = await ask_claude(prompt, history, mem, user_data)
             try:
                 save_prediction(race_name, r.get("code","?"))
             except Exception:
@@ -3439,7 +3439,7 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not narrative:
             actual_grid = get_actual_grid_for_prediction()
             if actual_grid:
-                narrative = ask_claude(
+                narrative = await ask_claude(
                     f"{actual_grid}\n\n"
                     f"Based on this ACTUAL qualifying grid for the {race_name}, "
                     f"who do you think wins? 2-3 sentences — winner from the grid, "
@@ -3447,7 +3447,7 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"Use ONLY drivers/positions listed above.",
                     history, mem, user_data)
             else:
-                narrative = ask_claude(
+                narrative = await ask_claude(
                     f"Qualifying for the {race_name} hasn't happened yet and "
                     f"I don't have predictor data. Give a brief 2-3 sentence "
                     f"pre-qualifying take: championship context and what to watch. "
@@ -3533,7 +3533,7 @@ async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Use real numbers from your memory. Be specific, not vague."
     )
 
-    reply = ask_claude(prompt, history, mem, user_data)
+    reply = await ask_claude(prompt, history, mem, user_data)
 
     update_user_history(sessions, user_id, "user", f"/compare {args}")
     update_user_history(sessions, user_id, "assistant", reply)
@@ -3569,7 +3569,7 @@ async def cmd_debate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         action=constants.ChatAction.TYPING)
 
-    reply = ask_claude(
+    reply = await ask_claude(
         f"Hot debate topic: {topic} Give your honest opinion — pick a side, "
         f"back it up with evidence from the 2026 season, and make it spicy.",
         history, mem
@@ -3595,7 +3595,7 @@ async def cmd_hottake(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         action=constants.ChatAction.TYPING)
 
-    reply = ask_claude(
+    reply = await ask_claude(
         "Give me one genuinely spicy F1 hot take based on the 2026 season so far. "
         "Something that would start arguments. Be bold, back it up with real data, "
         "and commit to the take. One paragraph max.",
@@ -3633,7 +3633,7 @@ async def cmd_wouldyourather(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         action=constants.ChatAction.TYPING)
 
-    reply = ask_claude(
+    reply = await ask_claude(
         f"F1 Would You Rather: {dilemma} Pick one, explain your reasoning using "
         f"real examples from the 2026 season or F1 history. Make it fun.",
         history, mem
@@ -3867,7 +3867,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"who impressed, one thing to watch next. "
                 f"Do NOT change any times or positions. Use *bold* for names."
             )
-            reply = ask_claude(prompt, history, mem, user_data)
+            reply = await ask_claude(prompt, history, mem, user_data)
             update_user_history(sessions, user_id, "user", text)
             update_user_history(sessions, user_id, "assistant", reply)
             save_sessions(sessions)
@@ -3912,7 +3912,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # ask_claude triggers _get_circuit_zone_data which fetches the PDF
         # and saves the circuit map image as a side effect.  The image check
         # must happen AFTER ask_claude so the file is on disk in time.
-        reply     = ask_claude(text, history, mem, user_data)
+        reply     = await ask_claude(text, history, mem, user_data)
 
         update_user_history(sessions, user_id, "user", text)
         update_user_history(sessions, user_id, "assistant", reply)

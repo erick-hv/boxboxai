@@ -875,7 +875,7 @@ client = None
 def get_client():
     global client
     if client is None:
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
     return client
 
 def _is_news_query(text: str) -> bool:
@@ -1312,8 +1312,8 @@ def _gather_context(user_msg: str, mem: dict, user_data: dict = None) -> dict:
     }
 
 
-def ask_claude(user_msg: str, history: list, mem: dict,
-               user_data: dict = None) -> str:
+async def ask_claude(user_msg: str, history: list, mem: dict,
+                     user_data: dict = None) -> str:
     """Calls Claude with all available context."""
     ctx = _gather_context(user_msg, mem, user_data)
     system = build_system_prompt(
@@ -1330,7 +1330,7 @@ def ask_claude(user_msg: str, history: list, mem: dict,
     messages = history + [{"role": "user", "content": user_msg}]
 
     try:
-        resp = get_client().messages.create(
+        resp = await get_client().messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=system,
