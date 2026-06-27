@@ -3443,6 +3443,12 @@ async def cmd_winner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"and name ONE driver who could realistically upset it. "
                 f"Use the exact {win_str} number. Be direct and confident."
             )
+            actual_grid = get_actual_grid_for_prediction()
+            if actual_grid:
+                prompt += (
+                    f"\n\nACTUAL QUALIFYING GRID (use this for grid positions — "
+                    f"overrides any CSV positions): {actual_grid}"
+                )
             narrative = await ask_claude(prompt, history, mem, user_data)
             try:
                 save_prediction(race_name, r.get("code","?"))
