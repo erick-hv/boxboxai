@@ -2303,19 +2303,32 @@ async def _check_and_run_predictor(app=None):
         if state.get(state_key):
             break
 
-        # Check if qualifying data is available from Jolpica
+        # Check if qualifying data is available — OpenF1 first (faster), Jolpica as fallback
         log.info(f"Auto-predictor: checking qualifying for R{rnd} {name}...")
         try:
-            data = safe_get(f"{JOLPICA}/{SEASON}/{rnd}/qualifying.json")
-            races = (data or {}).get("MRData", {}).get(
-                "RaceTable", {}).get("Races", [])
-            quali_results = races[0].get("QualifyingResults", []) if races else []
+            of1_grid = get_actual_grid_for_prediction(round_num=rnd)
+            # Grid is a single comma-separated line; "P10:" present = ≥10 classified
+            of1_has_quali = bool(of1_grid) and "P10:" in of1_grid
         except Exception:
-            quali_results = []
+            of1_grid = ""
+            of1_has_quali = False
 
-        if len(quali_results) < 10:
-            log.info(f"Auto-predictor: qualifying not available yet for R{rnd}")
-            break
+        if not of1_has_quali:
+            # Fallback: Jolpica (lags OpenF1 by several hours post-qualifying)
+            try:
+                data = safe_get(f"{JOLPICA}/{SEASON}/{rnd}/qualifying.json")
+                races = (data or {}).get("MRData", {}).get(
+                    "RaceTable", {}).get("Races", [])
+                quali_results = races[0].get("QualifyingResults", []) if races else []
+            except Exception:
+                quali_results = []
+
+            if len(quali_results) < 10:
+                log.info(
+                    f"Auto-predictor: qualifying not available yet for R{rnd} "
+                    f"(OpenF1: {'partial' if of1_grid else 'none'}, "
+                    f"Jolpica: {len(quali_results)} results)")
+                break
 
         # Qualifying is available — run the predictor
         log.info(f"Auto-predictor: qualifying detected for R{rnd} {name} — running predictor...")
