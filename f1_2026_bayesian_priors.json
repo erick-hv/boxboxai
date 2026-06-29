@@ -215,15 +215,15 @@
       "round": 1,
       "circuit": "Australian Grand Prix",
       "circuit_type": "high_speed",
-      "brier_score": 0.0456,
-      "predicted_winner": "HAM",
+      "brier_score": 0.0452,
+      "predicted_winner": "ANT",
       "actual_winner": "RUS"
     },
     {
       "round": 2,
       "circuit": "Chinese Grand Prix",
       "circuit_type": "technical",
-      "brier_score": 0.0359,
+      "brier_score": 0.0382,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -231,7 +231,7 @@
       "round": 3,
       "circuit": "Japanese Grand Prix",
       "circuit_type": "high_speed",
-      "brier_score": 0.038,
+      "brier_score": 0.0398,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -239,7 +239,7 @@
       "round": 4,
       "circuit": "Miami Grand Prix",
       "circuit_type": "mixed",
-      "brier_score": 0.0377,
+      "brier_score": 0.0379,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -247,7 +247,7 @@
       "round": 5,
       "circuit": "Canadian Grand Prix",
       "circuit_type": "street",
-      "brier_score": 0.041,
+      "brier_score": 0.0367,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -255,7 +255,7 @@
       "round": 6,
       "circuit": "Monaco Grand Prix",
       "circuit_type": "street",
-      "brier_score": 0.0499,
+      "brier_score": 0.0462,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -263,7 +263,7 @@
       "round": 7,
       "circuit": "Barcelona Grand Prix",
       "circuit_type": "mixed",
-      "brier_score": 0.0463,
+      "brier_score": 0.0497,
       "predicted_winner": "ANT",
       "actual_winner": "HAM"
     },
@@ -277,21 +277,6 @@
     }
   ],
   "feature_importance_history": [
-    {
-      "round": 8,
-      "importances": {
-        "predicted_quali_pos": 0.2687,
-        "momentum_pos": 0.1883,
-        "avg_finish": 0.0976,
-        "tyre_deg_slope": 0.0653,
-        "champ_pts": 0.0476,
-        "avg_pitstop": 0.0423,
-        "tyre_management_index": 0.0336,
-        "fp_avg_delta": 0.033,
-        "teammate_delta": 0.0318,
-        "lap_std": 0.0299
-      }
-    },
     {
       "round": 8,
       "importances": {
@@ -351,6 +336,21 @@
         "teammate_delta": 0.0273,
         "avg_sector_delta": 0.0271
       }
+    },
+    {
+      "round": 8,
+      "importances": {
+        "momentum_pos": 0.341,
+        "predicted_quali_pos": 0.1636,
+        "avg_finish": 0.1039,
+        "fp_avg_delta": 0.0582,
+        "tyre_deg_slope": 0.0378,
+        "sprint_pts": 0.0352,
+        "champ_pts": 0.0298,
+        "tyre_management_index": 0.0265,
+        "lap_std": 0.026,
+        "teammate_delta": 0.0253
+      }
     }
   ],
   "calibration": {
@@ -358,16 +358,16 @@
       "0-5%": {
         "lo": 0,
         "hi": 5,
-        "n_predictions": 158,
+        "n_predictions": 159,
         "n_wins": 2,
-        "actual_rate": 1.27,
+        "actual_rate": 1.26,
         "midpoint": 2.5
       },
       "5-10%": {
         "lo": 5,
         "hi": 10,
-        "n_predictions": 6,
-        "n_wins": 3,
+        "n_predictions": 4,
+        "n_wins": 2,
         "actual_rate": 50.0,
         "midpoint": 7.5
       },
@@ -375,8 +375,8 @@
         "lo": 10,
         "hi": 15,
         "n_predictions": 6,
-        "n_wins": 3,
-        "actual_rate": 50.0,
+        "n_wins": 4,
+        "actual_rate": 66.67,
         "midpoint": 12.5
       },
       "15-20%": {
@@ -390,13 +390,13 @@
       "20%+": {
         "lo": 20,
         "hi": 101,
-        "n_predictions": 4,
+        "n_predictions": 5,
         "n_wins": 0,
         "actual_rate": 0.0,
-        "midpoint": 29.2
+        "midpoint": 28.9
       }
     },
-    "calibration_score": 25.59,
+    "calibration_score": 28.86,
     "total_predictions": 176,
     "total_wins": 8,
     "n_races": 8
@@ -407,14 +407,14 @@
   },
   "stacking_meta": {
     "coef": [
-      1.463558612736924,
-      0.050144652950469645,
-      0.7630399187402042,
-      0.0033573529339133265,
-      1.7133916290109417,
-      0.028720191617611655,
-      1.2050529575411681,
-      0.12496780678531995
+      1.3948541258377578,
+      0.03481721834040347,
+      1.8112160884080224,
+      -0.050342377075703035,
+      1.320297111105506,
+      0.01459890585077956,
+      1.077205414814454,
+      0.12568830186252775
     ],
     "ctypes": [
       "high_speed",

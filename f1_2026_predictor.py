@@ -2712,6 +2712,182 @@ def fetch_driver_behavioral_profiles(current_drivers: list) -> dict:
 # ─────────────────────────────────────────────────────────────
 #  18. CONSTRUCCIÓN DE FEATURES
 # ─────────────────────────────────────────────────────────────
+def fetch_press_conference_sentiment(
+    next_round: int,
+    next_circuit: str,
+    schedule: pd.DataFrame,
+) -> dict:
+    """
+    Downloads the FIA/F1 Thursday or Friday press conference transcript for
+    *next_round* and uses claude-haiku-4-5-20251001 to extract a per-driver
+    confidence score in [-1.0, +1.0].
+
+    Returns {driver_code: float}. Caches by round in SENTIMENT_FILE.
+    Falls back to {} at every error point.
+    """
+    # ── 1. Cache check ────────────────────────────────────────────────────
+    _cache: dict = {}
+    if os.path.exists(SENTIMENT_FILE):
+        try:
+            with open(SENTIMENT_FILE) as _f:
+                _cache = json.load(_f)
+            if str(next_round) in _cache:
+                print(f"   📋  Sentimiento R{next_round}: cargado desde caché "
+                      f"({len(_cache[str(next_round)])} pilotos)")
+                return _cache[str(next_round)]
+        except Exception:
+            _cache = {}
+
+    # ── 2. Build candidate URLs ───────────────────────────────────────────
+    _row = schedule[schedule["round"] == next_round]
+    _race_name = (_row.iloc[0].get("name", next_circuit)
+                  if not _row.empty else next_circuit)
+    # "Austrian Grand Prix" → "austrian"
+    _slug_word = (_race_name.lower()
+                  .replace("grand prix", "").replace("gp", "")
+                  .strip().replace(" ", "-").rstrip("-"))
+    _year = SEASON  # module-level constant
+
+    _candidates = [
+        # formula1.com Thursday
+        f"https://www.formula1.com/en/latest/article/{_year}-{_slug_word}-grand-prix-thursday-press-conference",
+        # formula1.com Friday
+        f"https://www.formula1.com/en/latest/article/{_year}-{_slug_word}-grand-prix-friday-press-conference",
+        # FIA Thursday
+        f"https://www.fia.com/news/{_year}-{_slug_word}-grand-prix-thursday-press-conference",
+        # FIA Friday
+        f"https://www.fia.com/news/{_year}-{_slug_word}-grand-prix-friday-press-conference",
+    ]
+
+    _headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    # ── 3. Fetch transcript text ───────────────────────────────────────────
+    import re as _re
+    _transcript = ""
+
+    def _strip_html(html: str) -> str:
+        text = _re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=_re.S)
+        text = _re.sub(r"<style[^>]*>.*?</style>",  " ", text,  flags=_re.S)
+        text = _re.sub(r"<[^>]+>", " ", text)
+        text = _re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _looks_like_transcript(text: str) -> bool:
+        upper = text.upper()
+        return (
+            len(text) > 800
+            and sum(1 for code in
+                    ["VERSTAPPEN", "HAMILTON", "NORRIS", "RUSSELL", "LECLERC",
+                     "ANTONELLI", "PIASTRI", "HADJAR"]
+                    if code in upper) >= 2
+        )
+
+    for _url in _candidates:
+        try:
+            _resp = requests.get(_url, headers=_headers, timeout=8, allow_redirects=True)
+            if _resp.ok:
+                _text = _strip_html(_resp.text)
+                if _looks_like_transcript(_text):
+                    _transcript = _text[:9000]
+                    print(f"   🌐  Transcripción encontrada: {_url[:70]}...")
+                    break
+        except Exception:
+            continue
+
+    # ── 3b. DuckDuckGo fallback if no direct hit ──────────────────────────
+    if not _transcript:
+        try:
+            import urllib.parse as _urlp
+            _q = f"F1 2026 {_race_name} press conference transcript thursday site:formula1.com OR site:fia.com"
+            _ddg = f"https://html.duckduckgo.com/html/?q={_urlp.quote(_q)}"
+            _dresp = requests.get(_ddg, headers=_headers, timeout=8)
+            if _dresp.ok:
+                _links = _re.findall(
+                    r'https?://(?:www\.formula1\.com|www\.fia\.com)[^"&\s]+', _dresp.text
+                )
+                _links = [u for u in _links
+                          if "press" in u.lower() or "conference" in u.lower()]
+                for _link in _links[:3]:
+                    try:
+                        _p = requests.get(_link, headers=_headers, timeout=8,
+                                          allow_redirects=True)
+                        if _p.ok:
+                            _t = _strip_html(_p.text)
+                            if _looks_like_transcript(_t):
+                                _transcript = _t[:9000]
+                                print(f"   🌐  Transcripción (DDG): {_link[:70]}...")
+                                break
+                    except Exception:
+                        continue
+        except Exception as _e:
+            print(f"   ⚠  DDG fallback falló: {_e}")
+
+    if not _transcript:
+        print(f"   ℹ️   Sin transcripción para R{next_round} — sentimiento neutral")
+        return {}
+
+    # ── 4. claude-haiku sentiment analysis ───────────────────────────────
+    if not _ANTHROPIC_KEY:
+        print("   ⚠  ANTHROPIC_API_KEY no configurado — sin análisis de sentimiento")
+        return {}
+
+    try:
+        import anthropic as _ant
+        _client = _ant.Anthropic(api_key=_ANTHROPIC_KEY)
+
+        _prompt = (
+            "You are analyzing an F1 press conference transcript to score each "
+            "driver's confidence level.\n\n"
+            f"TRANSCRIPT:\n{_transcript}\n\n"
+            "TASK: For every driver who speaks or is quoted, assign a sentiment score:\n"
+            " +1.0 = very confident (\"found something special\", \"car was amazing\")\n"
+            "  0.0 = neutral / factual\n"
+            " -1.0 = very negative (\"difficult weekend\", \"lot of problems\")\n\n"
+            "Return ONLY a JSON object. Keys = standard 3-letter F1 codes "
+            "(VER, HAM, NOR, PIA, RUS, LEC, SAI, ANT, HAD, LAW, GAS, ALO, STR, "
+            "OCO, BEA, HUL, ALB, BOT, COL, LIN, BOR, PER). "
+            "Values = float in [-1.0, 1.0]. "
+            "Only include drivers with actual quotes. Example: "
+            "{\"HAM\": 0.7, \"VER\": -0.3}"
+        )
+
+        _msg = _client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{"role": "user", "content": _prompt}],
+        )
+        _raw = _msg.content[0].text.strip()
+
+        # Extract JSON (may be wrapped in markdown fences)
+        _m = _re.search(r"\{[^{}]+\}", _raw, _re.DOTALL)
+        if _m:
+            _scores: dict = json.loads(_m.group())
+            _scores = {
+                k: float(max(-1.0, min(1.0, v)))
+                for k, v in _scores.items()
+                if isinstance(v, (int, float))
+            }
+            if _scores:
+                _cache[str(next_round)] = _scores
+                with open(SENTIMENT_FILE, "w") as _f:
+                    json.dump(_cache, _f, indent=2)
+                print(f"   💾  Sentimiento R{next_round}: {len(_scores)} pilotos "
+                      f"→ {SENTIMENT_FILE}")
+                return _scores
+
+    except Exception as _e:
+        print(f"   ⚠  Análisis de sentimiento falló: {_e}")
+
+    return {}
+
+
 def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    sprint_df, sq_df, lap_std_df, fp_df, sector_df,
                    tyre_deg_df, lap1_df, dnf_df, teammate_df,
@@ -2722,6 +2898,7 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    next_quali_df=None, next_fp_df=None,
                    circuit_affinity_df=None,
                    behavioral_df=None,
+                   sentiment_df=None,
                    next_circuit_laps: int = 57,
                    next_circuit_type: str = "mixed") -> pd.DataFrame:
     compound_df          = compound_df          if compound_df          is not None else pd.DataFrame()
@@ -3097,6 +3274,15 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
         for col in _b_cols:
             feat[col] = np.nan
 
+    # ── Press conference sentiment (NLP via claude-haiku) ─────────────────
+    if sentiment_df is not None and not sentiment_df.empty and "press_sentiment" in sentiment_df.columns:
+        feat = feat.merge(sentiment_df[["code", "press_sentiment"]], on="code", how="left")
+        feat["press_sentiment"] = feat["press_sentiment"].fillna(0.0)
+        _n_sent = (feat["press_sentiment"] != 0.0).sum()
+        print(f"   🎙️  Sentimiento de prensa: {_n_sent}/{len(feat)} pilotos con datos")
+    else:
+        feat["press_sentiment"] = 0.0
+
     # ── Driver-circuit style compatibility (3D embedding cosine similarity) ──
     _emb_req = ["overtaking_ability", "quali_consistency",
                 "tyre_management_index", "historical_dnf_rate"]
@@ -3257,6 +3443,8 @@ def score_manual(feat: pd.DataFrame,
         "historical_dnf_rate"   : 0.01,
         "tyre_management_index" : 0.02,
         "compatibility_score"   : 0.04 if has_next_quali else 0.03,
+        # ── NLP sentiment — only active when press conf has happened (≈ post-quali) ──
+        "press_sentiment"       : 0.03 if has_next_quali else 0.00,
     }
 
     # When qualifying is available, rescale season-history features so raw dict sums to 1.0
@@ -3347,6 +3535,7 @@ def score_manual(feat: pd.DataFrame,
     s += apply("wet_weather_delta",     "asc")   # negative = better in wet vs dry avg
     s += apply("tyre_management_index", "desc")
     s += apply("compatibility_score",   "desc")  # driver-circuit style match
+    s += apply("press_sentiment",       "desc")  # pre-race confidence from press conf NLP
 
     s -= feat.get("dnf_rate",      pd.Series(0.0, index=feat.index)).fillna(0) * 0.10
     s -= feat.get("historical_dnf_rate",
@@ -4784,6 +4973,8 @@ import os
 
 PRIORS_FILE    = os.environ.get("F1_PRIORS_FILE",    "./f1_2026_bayesian_priors.json")
 PROFILES_FILE  = os.environ.get("F1_PROFILES_FILE", "./f1_2026_driver_profiles.json")
+SENTIMENT_FILE = os.environ.get("F1_SENTIMENT_FILE", "./f1_2026_sentiment_cache.json")
+_ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 def load_priors() -> dict:
@@ -5122,6 +5313,28 @@ def main():
             print(f"     {rank}. {code:<5}  {val:+.3f}")
     print()
 
+    # 8c. Press conference sentiment (NLP, cached by round)
+    print("\n🎙️  Analizando sentimiento de rueda de prensa...")
+    _sentiment_scores = fetch_press_conference_sentiment(next_round, next_circuit, schedule)
+    if _sentiment_scores:
+        _sent_sorted = sorted(_sentiment_scores.items(), key=lambda x: x[1], reverse=True)
+        print("   📊  TOP 5 MÁS CONFIADOS:")
+        for _sc, _sv in _sent_sorted[:5]:
+            _bar = "█" * max(0, round(abs(_sv) * 10))
+            _sign = "+" if _sv >= 0 else ""
+            print(f"     {_sc:<5}  {_sign}{_sv:.2f}  {_bar}")
+        print("   📊  BOTTOM 5 MENOS CONFIADOS:")
+        for _sc, _sv in _sent_sorted[-5:]:
+            _bar = "█" * max(0, round(abs(_sv) * 10))
+            _sign = "+" if _sv >= 0 else ""
+            print(f"     {_sc:<5}  {_sign}{_sv:.2f}  {_bar}")
+    sentiment_df = (
+        pd.DataFrame([{"code": c, "press_sentiment": v}
+                       for c, v in _sentiment_scores.items()])
+        if _sentiment_scores
+        else pd.DataFrame(columns=["code", "press_sentiment"])
+    )
+
     # 8. Build features
     print("\n🔨  Construyendo matriz de features...")
     feat = build_features(
@@ -5138,6 +5351,7 @@ def main():
         next_fp_df=next_fp_df,
         circuit_affinity_df=circuit_affinity_df,
         behavioral_df=behavioral_df,
+        sentiment_df=sentiment_df,
         next_circuit_laps=next_circuit_laps,
         next_circuit_type=next_circuit_type,
     )
@@ -5534,6 +5748,7 @@ def main():
         "overtaking_ability", "quali_consistency", "wet_weather_delta",
         "historical_dnf_rate", "tyre_management_index",
         "compatibility_score",
+        "press_sentiment",
     ] if c in scored.columns]
     scored[save_cols].to_csv(OUTPUT_CSV, index=False)
     print(f"💾  Resultados guardados en: {OUTPUT_CSV}\n")
