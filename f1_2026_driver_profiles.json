@@ -1,0 +1,478 @@
+{
+  "RUS": {
+    "overtaking_ability": 1.833,
+    "quali_consistency": 5.776,
+    "wet_weather_delta": -2.172,
+    "historical_dnf_rate": 0.133,
+    "mech_dnf_rate": 0.033,
+    "acc_dnf_rate": 0.1,
+    "tyre_management_index": -0.081,
+    "n_races": 60,
+    "n_wet": 4,
+    "n_quali": 61,
+    "n_overtaking": 18
+  },
+  "COL": {
+    "overtaking_ability": 0.333,
+    "quali_consistency": 4.653,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.619,
+    "mech_dnf_rate": 0.476,
+    "acc_dnf_rate": 0.143,
+    "tyre_management_index": 0.375,
+    "n_races": 21,
+    "n_wet": 1,
+    "n_quali": 21,
+    "n_overtaking": 3
+  },
+  "LEC": {
+    "overtaking_ability": 1.824,
+    "quali_consistency": 4.993,
+    "wet_weather_delta": -2.089,
+    "historical_dnf_rate": 0.167,
+    "mech_dnf_rate": 0.083,
+    "acc_dnf_rate": 0.083,
+    "tyre_management_index": 0.0,
+    "n_races": 60,
+    "n_wet": 5,
+    "n_quali": 61,
+    "n_overtaking": 17
+  },
+  "PER": {
+    "overtaking_ability": 4.579,
+    "quali_consistency": 6.419,
+    "wet_weather_delta": -2.15,
+    "historical_dnf_rate": 0.239,
+    "mech_dnf_rate": 0.087,
+    "acc_dnf_rate": 0.152,
+    "tyre_management_index": 0.154,
+    "n_races": 46,
+    "n_wet": 4,
+    "n_quali": 46,
+    "n_overtaking": 19
+  },
+  "HAM": {
+    "overtaking_ability": 2.621,
+    "quali_consistency": 5.726,
+    "wet_weather_delta": -3.251,
+    "historical_dnf_rate": 0.117,
+    "mech_dnf_rate": 0.033,
+    "acc_dnf_rate": 0.083,
+    "tyre_management_index": 0.118,
+    "n_races": 60,
+    "n_wet": 5,
+    "n_quali": 61,
+    "n_overtaking": 29
+  },
+  "SAI": {
+    "overtaking_ability": 1.619,
+    "quali_consistency": 5.768,
+    "wet_weather_delta": 0.609,
+    "historical_dnf_rate": 0.169,
+    "mech_dnf_rate": 0.068,
+    "acc_dnf_rate": 0.102,
+    "tyre_management_index": 0.0,
+    "n_races": 59,
+    "n_wet": 5,
+    "n_quali": 60,
+    "n_overtaking": 21
+  },
+  "GAS": {
+    "overtaking_ability": 1.296,
+    "quali_consistency": 5.306,
+    "wet_weather_delta": -2.885,
+    "historical_dnf_rate": 0.417,
+    "mech_dnf_rate": 0.3,
+    "acc_dnf_rate": 0.117,
+    "tyre_management_index": -0.194,
+    "n_races": 60,
+    "n_wet": 3,
+    "n_quali": 61,
+    "n_overtaking": 27
+  },
+  "MAG": {
+    "overtaking_ability": 0.182,
+    "quali_consistency": 5.397,
+    "wet_weather_delta": -2.545,
+    "historical_dnf_rate": 0.568,
+    "mech_dnf_rate": 0.409,
+    "acc_dnf_rate": 0.159,
+    "tyre_management_index": -0.136,
+    "n_races": 44,
+    "n_wet": 2,
+    "n_quali": 44,
+    "n_overtaking": 11
+  },
+  "STR": {
+    "overtaking_ability": 0.318,
+    "quali_consistency": 4.347,
+    "wet_weather_delta": -3.053,
+    "historical_dnf_rate": 0.45,
+    "mech_dnf_rate": 0.317,
+    "acc_dnf_rate": 0.133,
+    "tyre_management_index": 0.143,
+    "n_races": 60,
+    "n_wet": 5,
+    "n_quali": 61,
+    "n_overtaking": 22
+  },
+  "PIA": {
+    "overtaking_ability": -0.867,
+    "quali_consistency": 4.788,
+    "wet_weather_delta": -3.8,
+    "historical_dnf_rate": 0.15,
+    "mech_dnf_rate": 0.083,
+    "acc_dnf_rate": 0.067,
+    "tyre_management_index": -0.056,
+    "n_races": 60,
+    "n_wet": 6,
+    "n_quali": 61,
+    "n_overtaking": 15
+  },
+  "BOR": {
+    "overtaking_ability": -1.333,
+    "quali_consistency": 5.584,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.429,
+    "mech_dnf_rate": 0.286,
+    "acc_dnf_rate": 0.143,
+    "tyre_management_index": 0.0,
+    "n_races": 14,
+    "n_wet": 1,
+    "n_quali": 15,
+    "n_overtaking": 6
+  },
+  "ANT": {
+    "overtaking_ability": -1.4,
+    "quali_consistency": 4.564,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.214,
+    "mech_dnf_rate": 0.071,
+    "acc_dnf_rate": 0.143,
+    "tyre_management_index": 0.0,
+    "n_races": 14,
+    "n_wet": 1,
+    "n_quali": 15,
+    "n_overtaking": 5
+  },
+  "TSU": {
+    "overtaking_ability": 0.091,
+    "quali_consistency": 6.852,
+    "wet_weather_delta": -1.465,
+    "historical_dnf_rate": 0.45,
+    "mech_dnf_rate": 0.35,
+    "acc_dnf_rate": 0.1,
+    "tyre_management_index": -0.125,
+    "n_races": 60,
+    "n_wet": 4,
+    "n_quali": 61,
+    "n_overtaking": 22
+  },
+  "ALO": {
+    "overtaking_ability": 0.103,
+    "quali_consistency": 4.347,
+    "wet_weather_delta": -2.223,
+    "historical_dnf_rate": 0.267,
+    "mech_dnf_rate": 0.167,
+    "acc_dnf_rate": 0.1,
+    "tyre_management_index": -0.086,
+    "n_races": 60,
+    "n_wet": 6,
+    "n_quali": 61,
+    "n_overtaking": 29
+  },
+  "BOT": {
+    "overtaking_ability": -0.417,
+    "quali_consistency": 3.475,
+    "wet_weather_delta": -4.919,
+    "historical_dnf_rate": 0.63,
+    "mech_dnf_rate": 0.522,
+    "acc_dnf_rate": 0.109,
+    "tyre_management_index": -0.136,
+    "n_races": 46,
+    "n_wet": 3,
+    "n_quali": 46,
+    "n_overtaking": 12
+  },
+  "NOR": {
+    "overtaking_ability": 1.75,
+    "quali_consistency": 4.788,
+    "wet_weather_delta": -2.344,
+    "historical_dnf_rate": 0.1,
+    "mech_dnf_rate": 0.067,
+    "acc_dnf_rate": 0.033,
+    "tyre_management_index": 0.026,
+    "n_races": 60,
+    "n_wet": 6,
+    "n_quali": 61,
+    "n_overtaking": 12
+  },
+  "DEV": {
+    "overtaking_ability": null,
+    "quali_consistency": 3.606,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.7,
+    "mech_dnf_rate": 0.5,
+    "acc_dnf_rate": 0.2,
+    "tyre_management_index": 0.222,
+    "n_races": 10,
+    "n_wet": 1,
+    "n_quali": 10,
+    "n_overtaking": 1
+  },
+  "ALB": {
+    "overtaking_ability": 1.63,
+    "quali_consistency": 5.7,
+    "wet_weather_delta": -5.174,
+    "historical_dnf_rate": 0.467,
+    "mech_dnf_rate": 0.283,
+    "acc_dnf_rate": 0.183,
+    "tyre_management_index": -0.036,
+    "n_races": 60,
+    "n_wet": 5,
+    "n_quali": 60,
+    "n_overtaking": 27
+  },
+  "SAR": {
+    "overtaking_ability": -1.2,
+    "quali_consistency": 2.716,
+    "wet_weather_delta": -5.513,
+    "historical_dnf_rate": 0.667,
+    "mech_dnf_rate": 0.417,
+    "acc_dnf_rate": 0.25,
+    "tyre_management_index": 0.1,
+    "n_races": 36,
+    "n_wet": 3,
+    "n_quali": 36,
+    "n_overtaking": 5
+  },
+  "VER": {
+    "overtaking_ability": 5.111,
+    "quali_consistency": 6.342,
+    "wet_weather_delta": -0.698,
+    "historical_dnf_rate": 0.033,
+    "mech_dnf_rate": 0.0,
+    "acc_dnf_rate": 0.033,
+    "tyre_management_index": 0.14,
+    "n_races": 60,
+    "n_wet": 6,
+    "n_quali": 61,
+    "n_overtaking": 9
+  },
+  "OCO": {
+    "overtaking_ability": 0.684,
+    "quali_consistency": 5.061,
+    "wet_weather_delta": -4.498,
+    "historical_dnf_rate": 0.525,
+    "mech_dnf_rate": 0.356,
+    "acc_dnf_rate": 0.169,
+    "tyre_management_index": -0.032,
+    "n_races": 59,
+    "n_wet": 3,
+    "n_quali": 60,
+    "n_overtaking": 19
+  },
+  "DOO": {
+    "overtaking_ability": null,
+    "quali_consistency": null,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.667,
+    "mech_dnf_rate": 0.333,
+    "acc_dnf_rate": 0.333,
+    "tyre_management_index": null,
+    "n_races": 3,
+    "n_wet": 0,
+    "n_quali": 4,
+    "n_overtaking": 0
+  },
+  "ZHO": {
+    "overtaking_ability": 0.0,
+    "quali_consistency": 3.475,
+    "wet_weather_delta": -4.182,
+    "historical_dnf_rate": 0.609,
+    "mech_dnf_rate": 0.5,
+    "acc_dnf_rate": 0.109,
+    "tyre_management_index": 0.136,
+    "n_races": 46,
+    "n_wet": 2,
+    "n_quali": 46,
+    "n_overtaking": 6
+  },
+  "BEA": {
+    "overtaking_ability": 1.6,
+    "quali_consistency": 5.268,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.235,
+    "mech_dnf_rate": 0.118,
+    "acc_dnf_rate": 0.118,
+    "tyre_management_index": 0.0,
+    "n_races": 17,
+    "n_wet": 1,
+    "n_quali": 18,
+    "n_overtaking": 10
+  },
+  "LAW": {
+    "overtaking_ability": 0.111,
+    "quali_consistency": 4.594,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.36,
+    "mech_dnf_rate": 0.24,
+    "acc_dnf_rate": 0.12,
+    "tyre_management_index": 0.0,
+    "n_races": 25,
+    "n_wet": 1,
+    "n_quali": 26,
+    "n_overtaking": 9
+  },
+  "RIC": {
+    "overtaking_ability": 1.5,
+    "quali_consistency": 5.312,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.6,
+    "mech_dnf_rate": 0.52,
+    "acc_dnf_rate": 0.08,
+    "tyre_management_index": 0.0,
+    "n_races": 25,
+    "n_wet": 1,
+    "n_quali": 25,
+    "n_overtaking": 6
+  },
+  "HUL": {
+    "overtaking_ability": 0.0,
+    "quali_consistency": 5.723,
+    "wet_weather_delta": -3.315,
+    "historical_dnf_rate": 0.517,
+    "mech_dnf_rate": 0.417,
+    "acc_dnf_rate": 0.1,
+    "tyre_management_index": -0.097,
+    "n_races": 60,
+    "n_wet": 4,
+    "n_quali": 61,
+    "n_overtaking": 20
+  },
+  "HAD": {
+    "overtaking_ability": -1.5,
+    "quali_consistency": 3.991,
+    "wet_weather_delta": null,
+    "historical_dnf_rate": 0.5,
+    "mech_dnf_rate": 0.429,
+    "acc_dnf_rate": 0.071,
+    "tyre_management_index": 0.0,
+    "n_races": 14,
+    "n_wet": 0,
+    "n_quali": 15,
+    "n_overtaking": 4
+  },
+  "embeddings": {
+    "ANT": [
+      0.0151,
+      0.5532,
+      0.5348
+    ],
+    "RUS": [
+      0.5042,
+      0.2602,
+      0.5243
+    ],
+    "HAM": [
+      0.6234,
+      0.2722,
+      0.7112
+    ],
+    "PIA": [
+      0.0957,
+      0.499,
+      0.5336
+    ],
+    "NOR": [
+      0.4916,
+      0.499,
+      0.6431
+    ],
+    "LEC": [
+      0.5028,
+      0.4495,
+      0.57
+    ],
+    "VER": [
+      1.0,
+      0.1233,
+      0.7935
+    ],
+    "HAD": [
+      0.0,
+      0.6917,
+      0.3204
+    ],
+    "GAS": [
+      0.4229,
+      0.3738,
+      0.2121
+    ],
+    "LAW": [
+      0.2437,
+      0.5459,
+      0.4253
+    ],
+    "BEA": [
+      0.4689,
+      0.383,
+      0.5191
+    ],
+    "COL": [
+      0.2773,
+      0.5317,
+      0.5607
+    ],
+    "LIN": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "SAI": [
+      0.4718,
+      0.2621,
+      0.5685
+    ],
+    "ALB": [
+      0.4735,
+      0.2785,
+      0.3135
+    ],
+    "OCO": [
+      0.3304,
+      0.433,
+      0.2735
+    ],
+    "BOR": [
+      0.0253,
+      0.3066,
+      0.3736
+    ],
+    "ALO": [
+      0.2425,
+      0.6057,
+      0.4195
+    ],
+    "HUL": [
+      0.2269,
+      0.273,
+      0.2224
+    ],
+    "BOT": [
+      0.1638,
+      0.8165,
+      0.1034
+    ],
+    "PER": [
+      0.9195,
+      0.1047,
+      0.6514
+    ],
+    "STR": [
+      0.275,
+      0.6057,
+      0.4835
+    ]
+  }
+}

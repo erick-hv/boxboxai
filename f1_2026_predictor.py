@@ -17,6 +17,7 @@ Uso:
 """
 
 import warnings
+from datetime import datetime, timezone, timedelta
 warnings.filterwarnings("ignore")
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -35,7 +36,14 @@ import sys
 # ─────────────────────────────────────────────────────────────
 SEASON          = 2026
 CACHE_DIR       = "./f1_cache"
-OUTPUT_CSV      = "f1_2026_predicciones.csv"
+OUTPUT_CSV               = "f1_2026_predicciones.csv"
+XGB_MODEL_FILE           = "./f1_2026_xgb_race_model.json"
+LGBM_MODEL_FILE          = "./f1_2026_lgbm_race_model.txt"
+_INCREMENTAL_TREES       = 20
+_INCREMENTAL_WEIGHT_MULT = 3.0
+_META_CTYPES             = ["high_speed", "street", "technical", "mixed"]
+_META_MIN_ROUNDS         = 6     # minimum LOO rounds to trust stacking weights
+_GP_WEIGHT               = 0.20  # GP gets 20% of final blend; XGB+LGBM share remaining 80%
 JOLPICA_BASE    = "https://api.jolpi.ca/ergast/f1"
 OPENF1_BASE     = "https://api.openf1.org/v1"
 XGB_MIN_RACES   = 6          # Carreras mínimas para activar XGBoost
@@ -72,6 +80,19 @@ SESSION_NAME_MAP = {
 # Cache de sessions para evitar llamadas repetidas
 _OF1_SESSIONS_CACHE: dict = {}
 
+# meeting_key lookup — mirrors RACE_CALENDAR_2026 in models.py
+# Fixes OpenF1's 24-race calendar offset (Bahrain/Saudi not in Jolpica's 22 races)
+JOLPICA_ROUND_TO_MEETING_KEY: dict[int, int] = {
+     1: 1279,  2: 1280,  3: 1281,  4: 1284,  5: 1285,
+     6: 1286,  7: 1287,  8: 1288,  9: 1289, 10: 1290,
+    11: 1291, 12: 1292, 13: 1293, 14: 1294, 15: 1296,
+    16: 1295, 17: 1297, 18: 1298, 19: 1299, 20: 1300,
+    21: 1301, 22: 1302,
+}
+_MEETING_KEY_TO_JOLPICA_ROUND: dict[int, int] = {
+    v: k for k, v in JOLPICA_ROUND_TO_MEETING_KEY.items()
+}
+
 
 def of1_get_sessions(year: int = SEASON) -> pd.DataFrame:
     """
@@ -92,13 +113,9 @@ def of1_get_sessions(year: int = SEASON) -> pd.DataFrame:
     df["session_code"] = df["session_name"].map(SESSION_NAME_MAP)
     df["date_start"]   = pd.to_datetime(df["date_start"], errors="coerce")
 
-    # Asignar round_num: ordenar Race sessions por fecha y numerar desde 1
-    race_sessions = df[df["session_code"] == "R"].sort_values("date_start").reset_index(drop=True)
-    meeting_round_map = {
-        int(row["meeting_key"]): i + 1
-        for i, row in race_sessions.iterrows()
-    }
-    df["round_num"] = df["meeting_key"].map(meeting_round_map)
+    # Asignar round_num via meeting_key → Jolpica round (corrige offset Bahrain/Arabia en OpenF1)
+    # Sesiones de carreras no en Jolpica (Bahrain, Arabia) quedan como NaN — correcto
+    df["round_num"] = df["meeting_key"].map(_MEETING_KEY_TO_JOLPICA_ROUND)
 
     _OF1_SESSIONS_CACHE[year] = df
     return df
@@ -629,7 +646,7 @@ def of1_check_available(sessions_df: pd.DataFrame,
     return not laps.empty and "lap_duration" in laps.columns and len(laps) > 50
 
 
-SPRINT_ROUNDS   = {2, 6, 7, 10, 13, 18}   # Rondas con sprint en 2026
+SPRINT_ROUNDS   = {2, 4, 5, 9, 12, 16}    # China, Miami, Canada, British, Dutch, Singapore (Jolpica round #)
 REQ_TIMEOUT     = 15
 REQ_DELAY       = 0.4        # Segundos entre llamadas a la API
 
@@ -712,6 +729,7 @@ def fetch_schedule() -> pd.DataFrame:
             "locality": r.get("Circuit", {}).get("Location", {}).get("locality", ""),
             "country" : r.get("Circuit", {}).get("Location", {}).get("country", ""),
             "date"    : r.get("date", ""),
+            "time"    : r.get("time", ""),   # UTC race start, e.g. "13:00:00Z"
         })
     df = pd.DataFrame(rows).sort_values("round").reset_index(drop=True)
     print(f"   ✅  {len(df)} carreras encontradas en el calendario.")
@@ -992,15 +1010,31 @@ CIRCUIT_COORDS = {
 
 
 def fetch_weather_for_race(next_round: int, schedule: pd.DataFrame) -> dict:
-    """Obtiene clima del circuito usando Open-Meteo (gratuito, sin auth, sin SSL issues)."""
+    """Obtiene clima del circuito usando Open-Meteo (gratuito, sin auth, sin SSL issues).
+    Precipitation is narrowed to a 3-hour race window (1h before → 2h after start)
+    when the race start time is available; falls back to a 72-hour window otherwise.
+    """
     print("🌤   Consultando datos de clima (Open-Meteo)...")
     row = schedule[schedule["round"] == next_round]
     if row.empty:
         return {}
 
-    circuit  = row.iloc[0].get("circuit", "")
-    locality = row.iloc[0].get("locality", "")
-    country  = row.iloc[0].get("country", "")
+    circuit        = row.iloc[0].get("circuit", "")
+    locality       = row.iloc[0].get("locality", "")
+    country        = row.iloc[0].get("country", "")
+    race_date_str  = row.iloc[0].get("date", "")
+    race_time_str  = row.iloc[0].get("time", "")   # "HH:MM:SSZ" UTC or ""
+
+    # Parse race start time in UTC from Jolpica schedule
+    race_start_utc = None
+    if race_date_str and race_time_str:
+        try:
+            clean = race_time_str.rstrip("Z")
+            d_parts = list(map(int, race_date_str.split("-")))
+            t_parts = list(map(int, clean.split(":")))
+            race_start_utc = datetime(*d_parts, *t_parts, tzinfo=timezone.utc)
+        except Exception:
+            race_start_utc = None
 
     # Buscar coordenadas — primero por nombre de circuito exacto, luego parcial
     coords = CIRCUIT_COORDS.get(circuit)
@@ -1017,14 +1051,13 @@ def fetch_weather_for_race(next_round: int, schedule: pd.DataFrame) -> dict:
 
     lat, lon = coords
     try:
-        # Open-Meteo: pronóstico de 7 días, variables horarias de temperatura y lluvia
         url = "https://api.open-meteo.com/v1/forecast"
         params = {
-            "latitude"          : lat,
-            "longitude"         : lon,
-            "hourly"            : "temperature_2m,precipitation,relative_humidity_2m",
-            "forecast_days"     : 7,
-            "timezone"          : "auto",
+            "latitude"     : lat,
+            "longitude"    : lon,
+            "hourly"       : "temperature_2m,precipitation,relative_humidity_2m",
+            "forecast_days": 7,
+            "timezone"     : "auto",
         }
         r = requests.get(url, params=params, timeout=REQ_TIMEOUT)
         if r.status_code != 200:
@@ -1032,24 +1065,151 @@ def fetch_weather_for_race(next_round: int, schedule: pd.DataFrame) -> dict:
             return {}
         data    = r.json()
         hourly  = data.get("hourly", {})
-        temps   = [t for t in hourly.get("temperature_2m", []) if t is not None]
-        precips = [p for p in hourly.get("precipitation", [])  if p is not None]
-        humids  = [h for h in hourly.get("relative_humidity_2m", []) if h is not None]
+        temps   = [t for t in hourly.get("temperature_2m", [])        if t is not None]
+        precips = [p for p in hourly.get("precipitation", [])          if p is not None]
+        humids  = [h for h in hourly.get("relative_humidity_2m", [])  if h is not None]
 
-        avg_temp = np.mean(temps[:72])   if temps   else None   # próximos 3 días
-        avg_hum  = np.mean(humids[:72])  if humids  else None
-        rain_exp = any(p > 0.5 for p in precips[:72]) if precips else False
+        avg_temp = np.mean(temps[:72])  if temps  else None
+        avg_hum  = np.mean(humids[:72]) if humids else None
+
+        # ── Race-window precipitation ─────────────────────────────────────
+        # Default: 72-hour window (entire weekend)
+        window       = precips[:72]
+        utc_offset   = data.get("utc_offset_seconds", 0)
+        tz_name      = data.get("timezone", "local")
+        hourly_times = hourly.get("time", [])   # "YYYY-MM-DDTHH:MM" in local time
+
+        if race_start_utc is not None and hourly_times:
+            try:
+                race_local     = race_start_utc + timedelta(seconds=utc_offset)
+                local_hour_str = race_local.strftime("%Y-%m-%dT%H:00")
+                idx = hourly_times.index(local_hour_str)
+                # 3-hour window: 1h before start, start, +1h, +2h (covers ~race distance)
+                w_start = max(0, idx - 1)
+                w_end   = min(len(precips), idx + 3)
+                window  = precips[w_start:w_end]
+
+                t_from = (race_local - timedelta(hours=1)).strftime("%H:%M")
+                t_to   = (race_local + timedelta(hours=2)).strftime("%H:%M")
+                print(f"   🕐  Inicio de carrera: "
+                      f"{race_start_utc.strftime('%H:%M')} UTC  /  "
+                      f"{race_local.strftime('%H:%M')} local ({tz_name})")
+                print(f"   📡  Ventana de pronóstico: {t_from}–{t_to} local "
+                      f"(3h: 1h antes + 2h después de la salida)")
+            except (ValueError, IndexError):
+                print("   ⚠  Hora de carrera fuera del rango del pronóstico — usando ventana 72h")
+        else:
+            if not race_time_str:
+                print("   ⚠  Hora de carrera no disponible (API) — usando ventana 72h")
+            elif not hourly_times:
+                print("   ⚠  Open-Meteo no devolvió índice de horas — usando ventana 72h")
+
+        rain_prob = (sum(1 for p in window if p > 0.2) / max(len(window), 1)
+                     ) if window else 0.0
+
+        # ── Nowcast override ──────────────────────────────────────────────────
+        # Attempt minutely_15 precision if race is ≤6 h away.
+        # When available, its rain_prob supersedes the hourly reading.
+        nowcast_result = {"nowcast_available": False}
+        if race_start_utc is not None:
+            nowcast_result = fetch_weather_nowcast(lat, lon, race_start_utc, utc_offset)
+            if nowcast_result.get("nowcast_available"):
+                slots     = nowcast_result["nowcast_slots"]
+                rain_prob = nowcast_result["rain_prob"]
+                print(f"   🎯  Nowcast minutely_15 activo "
+                      f"({slots} intervalos ×15 min) — rain_prob={rain_prob:.0%}")
+            else:
+                hours_away = (
+                    (race_start_utc - datetime.now(timezone.utc)).total_seconds() / 3600
+                    if race_start_utc else 99
+                )
+                print(f"   📊  Pronóstico horario "
+                      f"(nowcast omitido: carrera en {hours_away:.0f}h > 6h)")
+        else:
+            print(f"   📊  Pronóstico horario (hora de carrera desconocida)")
 
         print(f"   ✅  Clima obtenido para {circuit} ({locality}, {country})")
         return {
-            "avg_track_temp": (avg_temp + 10) if avg_temp is not None else None,
-            "avg_humidity"  : avg_hum,
-            "rain_expected" : rain_exp,
-            "location"      : f"{locality}, {country}",
+            "avg_track_temp"   : (avg_temp + 10) if avg_temp is not None else None,
+            "avg_humidity"     : avg_hum,
+            "rain_prob"        : round(rain_prob, 3),
+            "location"         : f"{locality}, {country}",
+            "nowcast_available": nowcast_result.get("nowcast_available", False),
         }
     except Exception as e:
         print(f"   ⚠  Error obteniendo clima: {e}")
         return {}
+
+
+def fetch_weather_nowcast(
+    lat: float,
+    lon: float,
+    race_start_utc: datetime,
+    utc_offset: int = 0,
+) -> dict:
+    """
+    Fetches Open-Meteo minutely_15 precipitation for high-resolution nowcasting.
+
+    Only meaningful within 6 hours of race start — hourly forecasts are already
+    adequate beyond that window. Returns {"nowcast_available": False} when the
+    race is too far away or the endpoint returns no usable data.
+
+    Rain threshold: same 0.2 mm/15min as the hourly 0.2 mm/h gate, so
+    rain_prob values are directly comparable to the hourly reading.
+    """
+    _NO_CAST = {"nowcast_available": False}
+
+    now_utc       = datetime.now(timezone.utc)
+    hours_to_race = (race_start_utc - now_utc).total_seconds() / 3600
+    if hours_to_race > 6:
+        return _NO_CAST
+
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude"     : lat,
+                "longitude"    : lon,
+                "minutely_15"  : "precipitation",
+                "forecast_days": 3,
+                "timezone"     : "auto",
+            },
+            timeout=REQ_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return _NO_CAST
+
+        m15     = r.json().get("minutely_15", {})
+        times   = m15.get("time",          [])
+        precips = m15.get("precipitation", [])
+        if not times or not precips:
+            return _NO_CAST
+
+        # 3-hour race window: 1 h before start → 2 h after (= 12 × 15-min slots)
+        race_local = race_start_utc + timedelta(seconds=utc_offset)
+        win_start  = (race_local - timedelta(hours=1)).replace(tzinfo=None)
+        win_end    = (race_local + timedelta(hours=2)).replace(tzinfo=None)
+
+        window = []
+        for i, ts in enumerate(times):
+            try:
+                t = datetime.strptime(ts, "%Y-%m-%dT%H:%M")
+            except ValueError:
+                continue
+            if win_start <= t < win_end and i < len(precips) and precips[i] is not None:
+                window.append(float(precips[i]))
+
+        if not window:
+            return _NO_CAST
+
+        rain_prob = sum(1 for p in window if p > 0.2) / len(window)
+        return {
+            "rain_prob"        : round(rain_prob, 3),
+            "nowcast_available": True,
+            "nowcast_slots"    : len(window),
+        }
+    except Exception:
+        return _NO_CAST
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1557,12 +1717,12 @@ OVERTAKING_DIFFICULTY = {
     "Bahrain International Circuit"    : 0.35,
     "Jeddah Corniche Circuit"          : 0.60,
     "Miami International Autodrome"    : 0.50,
-    "Autodromo Enzo e Dino Ferrari"    : 0.45,
+    "Autodromo Enzo e Dino Ferrari"    : 0.70,  # Imola: very low overtaking, T1 chicane blocks passes
     "Circuit de Monaco"                : 0.95,  # casi imposible adelantar
     "Circuit de Barcelona-Catalunya"   : 0.65,
     "Circuit Gilles Villeneuve"        : 0.45,
-    "Red Bull Ring"                    : 0.40,
-    "Silverstone Circuit"              : 0.45,
+    "Red Bull Ring"                    : 0.65,
+    "Silverstone Circuit"              : 0.55,  # fast corners limit passing despite 2 DRS zones
     "Hungaroring"                      : 0.80,  # muy difícil
     "Circuit de Spa-Francorchamps"     : 0.35,
     "Circuit Park Zandvoort"           : 0.70,
@@ -1571,10 +1731,146 @@ OVERTAKING_DIFFICULTY = {
     "Marina Bay Street Circuit"        : 0.75,
     "Circuit of the Americas"          : 0.45,
     "Autodromo Hermanos Rodriguez"     : 0.50,
-    "Autodromo Jose Carlos Pace"       : 0.55,
+    "Autodromo Jose Carlos Pace"       : 0.45,  # Interlagos: 2 DRS zones, Senna-S creates overtaking
     "Las Vegas Strip Circuit"          : 0.40,
     "Losail International Circuit"     : 0.45,
     "Yas Marina Circuit"               : 0.40,
+}
+
+# Standard race distance in laps per circuit — used for endurance embedding dimension.
+# Source: official 2026 F1 race schedule (varies 44–78 laps).
+CIRCUIT_RACE_LAPS = {
+    "Albert Park Grand Prix Circuit"   : 58,
+    "Shanghai International Circuit"   : 56,
+    "Suzuka Circuit"                   : 53,
+    "Bahrain International Circuit"    : 57,
+    "Jeddah Corniche Circuit"          : 50,
+    "Miami International Autodrome"    : 57,
+    "Autodromo Enzo e Dino Ferrari"    : 63,
+    "Circuit de Monaco"                : 78,
+    "Circuit de Barcelona-Catalunya"   : 66,
+    "Circuit Gilles Villeneuve"        : 70,
+    "Red Bull Ring"                    : 71,
+    "Silverstone Circuit"              : 52,
+    "Hungaroring"                      : 70,
+    "Circuit de Spa-Francorchamps"     : 44,
+    "Circuit Park Zandvoort"           : 72,
+    "Autodromo Nazionale di Monza"     : 53,
+    "Baku City Circuit"                : 51,
+    "Marina Bay Street Circuit"        : 62,
+    "Circuit of the Americas"          : 56,
+    "Autodromo Hermanos Rodriguez"     : 71,
+    "Autodromo Jose Carlos Pace"       : 71,
+    "Las Vegas Strip Circuit"          : 50,
+    "Losail International Circuit"     : 57,
+    "Yas Marina Circuit"               : 58,
+}
+
+# Historical probability of at least one SC/VSC per race at each circuit.
+# Source: F1 race data 2018-2025.  Used to derive Poisson lambda for MC:
+#   lambda = -ln(1 - prob)  →  P(≥1 SC) = 1 - e^(-lambda) matches historical rate.
+SAFETY_CAR_PROB = {
+    "Circuit de Monaco"                : 0.85,   # most likely SC on calendar
+    "Baku City Circuit"                : 0.80,
+    "Marina Bay Street Circuit"        : 0.75,   # Singapore
+    "Albert Park Grand Prix Circuit"   : 0.70,   # Melbourne
+    "Jeddah Corniche Circuit"          : 0.65,
+    "Hungaroring"                      : 0.60,   # Hungary
+    "Circuit Park Zandvoort"           : 0.60,
+    "Autodromo Enzo e Dino Ferrari"    : 0.55,   # Imola
+    "Circuit Gilles Villeneuve"        : 0.55,   # Canada
+    "Autodromo Jose Carlos Pace"       : 0.55,   # Interlagos
+    "Circuit of the Americas"          : 0.50,   # COTA
+    "Silverstone Circuit"              : 0.50,
+    "Circuit de Spa-Francorchamps"     : 0.50,
+    "Las Vegas Strip Circuit"          : 0.50,
+    "Suzuka Circuit"                   : 0.45,
+    "Red Bull Ring"                    : 0.45,
+    "Miami International Autodrome"    : 0.45,
+    "Autodromo Hermanos Rodriguez"     : 0.45,   # Mexico
+    "Shanghai International Circuit"   : 0.45,
+    "Autodromo Nazionale di Monza"     : 0.40,
+    "Bahrain International Circuit"    : 0.40,
+    "Losail International Circuit"     : 0.40,   # Qatar
+    "Circuit de Barcelona-Catalunya"   : 0.40,   # Spain
+    "Yas Marina Circuit"               : 0.35,   # Abu Dhabi: fewest SC historically
+}
+
+# Historically optimal undercut lap window and probability per circuit.
+# "laps" = (earliest, latest) lap the undercut tends to fire; (0,0) = no undercut.
+UNDERCUT_WINDOW = {
+    "Bahrain International Circuit"    : {"laps": (14, 18), "prob": 0.45},
+    "Jeddah Corniche Circuit"          : {"laps": (15, 20), "prob": 0.35},
+    "Albert Park Grand Prix Circuit"   : {"laps": (18, 22), "prob": 0.40},
+    "Suzuka Circuit"                   : {"laps": (20, 25), "prob": 0.35},
+    "Shanghai International Circuit"   : {"laps": (16, 20), "prob": 0.45},
+    "Miami International Autodrome"    : {"laps": (16, 20), "prob": 0.40},
+    "Autodromo Enzo e Dino Ferrari"    : {"laps": (22, 27), "prob": 0.40},
+    "Circuit de Monaco"                : {"laps": ( 0,  0), "prob": 0.05},
+    "Circuit de Barcelona-Catalunya"   : {"laps": (18, 22), "prob": 0.40},
+    "Circuit Gilles Villeneuve"        : {"laps": (20, 25), "prob": 0.45},
+    "Red Bull Ring"                    : {"laps": (16, 20), "prob": 0.50},
+    "Silverstone Circuit"              : {"laps": (16, 20), "prob": 0.50},
+    "Hungaroring"                      : {"laps": (25, 30), "prob": 0.35},
+    "Circuit de Spa-Francorchamps"     : {"laps": (12, 16), "prob": 0.55},
+    "Circuit Park Zandvoort"           : {"laps": (20, 25), "prob": 0.30},
+    "Autodromo Nazionale di Monza"     : {"laps": (18, 23), "prob": 0.45},
+    "Baku City Circuit"                : {"laps": (15, 20), "prob": 0.50},
+    "Marina Bay Street Circuit"        : {"laps": (20, 25), "prob": 0.10},
+    "Circuit of the Americas"          : {"laps": (18, 22), "prob": 0.45},
+    "Autodromo Hermanos Rodriguez"     : {"laps": (20, 25), "prob": 0.40},
+    "Autodromo Jose Carlos Pace"       : {"laps": (18, 22), "prob": 0.45},
+    "Las Vegas Strip Circuit"          : {"laps": (16, 22), "prob": 0.40},
+    "Losail International Circuit"     : {"laps": (20, 25), "prob": 0.40},
+    "Yas Marina Circuit"               : {"laps": (22, 27), "prob": 0.35},
+}
+
+# Average stationary pit time by constructor (seconds).
+# Faster crews → smaller score penalty when selected as pit victim in MC.
+PIT_STOP_LOSS = {
+    "Mercedes"    : 2.3,
+    "McLaren"     : 2.3,
+    "Red Bull"    : 2.4,
+    "Ferrari"     : 2.5,
+    "Haas"        : 2.6,
+    "RB"          : 2.6,
+    "Racing Bulls": 2.6,
+    "Williams"    : 2.7,
+    "Aston Martin": 2.7,
+    "Alpine"      : 2.8,
+    "Cadillac"    : 2.8,
+    "Audi"        : 2.9,
+    "Sauber"      : 2.9,
+}
+_PIT_LOSS_DEFAULT = 2.6
+_PIT_LOSS_BEST    = min(PIT_STOP_LOSS.values())   # 2.3
+_PIT_LOSS_WORST   = max(PIT_STOP_LOSS.values())   # 2.9
+
+CIRCUIT_ID_MAP = {
+    "Albert Park Grand Prix Circuit"   : "albert_park",
+    "Shanghai International Circuit"   : "shanghai",
+    "Suzuka Circuit"                   : "suzuka",
+    "Bahrain International Circuit"    : "bahrain",
+    "Jeddah Corniche Circuit"          : "jeddah",
+    "Miami International Autodrome"    : "miami",
+    "Autodromo Enzo e Dino Ferrari"    : "imola",
+    "Circuit de Monaco"                : "monaco",
+    "Circuit de Barcelona-Catalunya"   : "catalunya",
+    "Circuit Gilles Villeneuve"        : "villeneuve",
+    "Red Bull Ring"                    : "red_bull_ring",
+    "Silverstone Circuit"              : "silverstone",
+    "Hungaroring"                      : "hungaroring",
+    "Circuit de Spa-Francorchamps"     : "spa",
+    "Circuit Park Zandvoort"           : "zandvoort",
+    "Autodromo Nazionale di Monza"     : "monza",
+    "Baku City Circuit"                : "baku",
+    "Marina Bay Street Circuit"        : "marina_bay",
+    "Circuit of the Americas"          : "americas",
+    "Autodromo Hermanos Rodriguez"     : "rodriguez",
+    "Autodromo Jose Carlos Pace"       : "interlagos",
+    "Las Vegas Strip Circuit"          : "vegas",
+    "Losail International Circuit"     : "losail",
+    "Yas Marina Circuit"               : "yas_marina",
 }
 
 
@@ -1866,17 +2162,26 @@ def of1_collect_next_race_fp(next_round: int,
     """
     Descarga ritmo de FP1/FP2/FP3 del PRÓXIMO GP si ya están disponibles.
     Normalizado vs mediana de sesión. FP2 long run tiene peso mayor.
+    Also extracts per-compound long-run pace (soft_pace_delta, medium_pace_delta,
+    hard_pace_delta) from FP2 long stints when compound data is available.
+    compound_preference = soft_pace_delta - medium_pace_delta
+      (negative → driver is relatively faster on softs, positive → better on mediums)
     """
-    SESSION_WEIGHTS = {"FP1": 0.20, "FP2": 0.50, "FP3": 0.30}
-    quick_records   = {}
-    longrun_records = {}
-    sessions_found  = []
+    SESSION_WEIGHTS   = {"FP1": 0.20, "FP2": 0.50, "FP3": 0.30}
+    quick_records     = {}
+    longrun_records   = {}
+    compound_longrun  = {}   # {code: {compound: [avg_pace_seconds]}}
+    deg_records       = {}   # {code: {compound: [(slope_s_per_lap, n_laps)]}}
+    speed_records     = {}   # {code: {"i1": [km/h, ...], "i2": [km/h, ...]}}
+    race_sim_records  = {}   # {code: [(pace_s, deg_slope, n_laps)]}
+    sessions_found    = []
 
     for sname in ["FP1", "FP2", "FP3"]:
         sk = of1_session_key(sessions_df, next_round, sname)
         if not sk:
             continue
-        laps = of1_get_laps(sk, enrich_with_stints=(sname == "FP2"))
+        # FP1 and FP2 get stint enrichment: FP1 for race sim detection, FP2 for compound/deg
+        laps = of1_get_laps(sk, enrich_with_stints=(sname in ("FP1", "FP2")))
         if laps.empty or "lap_duration" not in laps.columns:
             continue
         sessions_found.append(sname)
@@ -1893,37 +2198,516 @@ def of1_collect_next_race_fp(next_round: int,
             delta = (t - session_median) / session_median * 100
             quick_records.setdefault(code, []).append((delta, weight))
 
-        # FP2 long runs
+        # Speed trap readings (i1, i2) — already in /laps, no extra API call
+        # Collect across all FP sessions; st_speed is a straight trap, excluded
+        for trap_col, trap_key in (("i1_speed", "i1"), ("i2_speed", "i2")):
+            if trap_col not in valid.columns:
+                continue
+            trap_valid = valid[valid[trap_col].notna() & (valid[trap_col] > 80)]
+            for code, grp in trap_valid.groupby("code"):
+                speed_records.setdefault(code, {}).setdefault(trap_key, []).extend(
+                    grp[trap_col].tolist()
+                )
+
+        # FP1 race simulation detection
+        # A long stint (≥8 laps) whose mid-pace is >1.5% slower than the driver's
+        # fastest FP1 lap is classified as a race simulation (heavy fuel signature).
+        if sname == "FP1" and "stint_number" in valid.columns:
+            has_lapnum_fp1 = "lap_number" in valid.columns
+            fp1_best       = valid.groupby("code")["lap_duration"].min()
+            stint_len_fp1  = valid.groupby(["code", "stint_number"]).size()
+            long_fp1       = stint_len_fp1[stint_len_fp1 >= 8].index
+            for (code, stint) in long_fp1:
+                if code not in fp1_best:
+                    continue
+                mask = (valid["code"] == code) & (valid["stint_number"] == stint)
+                grp  = valid[mask].sort_values("lap_number") if has_lapnum_fp1 \
+                       else valid[mask]
+                sl   = grp["lap_duration"].reset_index(drop=True)
+                mid  = sl.iloc[len(sl)//4: len(sl)*3//4]
+                if len(mid) < 3:
+                    continue
+                pace     = mid.mean()
+                best_lap = fp1_best[code]
+                # Race sim signature: >1.5% slower than driver's best lap (heavy fuel)
+                if pace > best_lap * 1.015:
+                    slope = np.polyfit(np.arange(len(sl)), sl.values, 1)[0]
+                    race_sim_records.setdefault(code, []).append((pace, slope, len(sl)))
+
+        # FP2 long runs — extract compound pace + degradation slope
         if sname == "FP2" and "stint_number" in valid.columns:
-            lr_ref     = valid["lap_duration"].median()
-            stint_len  = valid.groupby(["code","stint_number"]).size()
+            has_cmp     = "compound" in valid.columns
+            has_lapnum  = "lap_number" in valid.columns
+            stint_len   = valid.groupby(["code","stint_number"]).size()
             long_stints = stint_len[stint_len >= 8].index
             for (code, stint) in long_stints:
-                sl = valid[(valid["code"]==code) &
-                            (valid["stint_number"]==stint)]["lap_duration"]
-                mid = sl.iloc[len(sl)//4: len(sl)*3//4]
+                mask = (valid["code"] == code) & (valid["stint_number"] == stint)
+                # Sort by lap number for correct slope direction
+                grp  = valid[mask].sort_values("lap_number") if has_lapnum \
+                       else valid[mask]
+                sl   = grp["lap_duration"].reset_index(drop=True)
+                mid  = sl.iloc[len(sl)//4: len(sl)*3//4]
                 if len(mid) >= 3:
-                    longrun_records.setdefault(code, []).append(mid.mean())
+                    pace = mid.mean()
+                    longrun_records.setdefault(code, []).append(pace)
+
+                    # Degradation rate: linear slope on full sorted stint
+                    # Units: seconds per lap (positive = getting slower)
+                    slope = np.polyfit(np.arange(len(sl)), sl.values, 1)[0]
+
+                    if has_cmp:
+                        cmp_vals = valid[mask]["compound"].dropna()
+                        if not cmp_vals.empty:
+                            cmp = cmp_vals.mode().iloc[0]
+                            if cmp in ("SOFT", "MEDIUM", "HARD"):
+                                compound_longrun.setdefault(code, {}) \
+                                                .setdefault(cmp, []).append(pace)
+                                deg_records.setdefault(code, {}) \
+                                           .setdefault(cmp, []).append((slope, len(sl)))
+                    else:
+                        # No compound info — track under a generic key
+                        deg_records.setdefault(code, {}) \
+                                   .setdefault("ALL", []).append((slope, len(sl)))
 
     if not sessions_found:
-        return pd.DataFrame(columns=["code","fp_next_delta","fp2_next_longrun"])
+        return pd.DataFrame(columns=["code", "fp_next_delta", "fp2_next_longrun",
+                                     "soft_pace_delta", "medium_pace_delta",
+                                     "hard_pace_delta", "compound_preference",
+                                     "tyre_deg_rate", "deg_rate_soft",
+                                     "deg_rate_medium", "deg_rate_hard",
+                                     "high_speed_delta", "medium_speed_delta",
+                                     "low_speed_delta", "corner_balance",
+                                     "race_sim_delta", "race_sim_deg"])
 
     print(f"   ✅  Prácticas del próximo GP disponibles: {', '.join(sessions_found)}")
-    rows = []
-    lr_ref = np.median([t for ts in longrun_records.values() for t in ts]) if longrun_records else None
+
+    # Per-compound field reference: median long-run pace on each compound
+    _cmp_ref = {}
+    for cmp in ("SOFT", "MEDIUM", "HARD"):
+        all_times = [t for cd in compound_longrun.values() for t in cd.get(cmp, [])]
+        if all_times:
+            _cmp_ref[cmp] = np.median(all_times)
+
+    # Per-driver degradation rates from FP2 long stints
+    # tyre_deg_rate = weighted-average slope across all compound-stint pairs
+    # Units: seconds/lap; positive = getting slower (more deg); lower = better tyre manager
+    _deg_summary = {}
+    for code, cmp_data in deg_records.items():
+        all_pairs = [(slope, n) for pairs in cmp_data.values() for slope, n in pairs]
+        if all_pairs:
+            slopes, ns        = zip(*all_pairs)
+            tyre_deg_rate     = float(np.average(slopes, weights=ns))
+        else:
+            tyre_deg_rate     = np.nan
+        dr_soft = dr_med = dr_hard = np.nan
+        for cmp, pairs in cmp_data.items():
+            slopes, ns = zip(*pairs)
+            val = float(np.average(slopes, weights=ns))
+            if cmp == "SOFT":     dr_soft = val
+            elif cmp == "MEDIUM": dr_med  = val
+            elif cmp == "HARD":   dr_hard = val
+        _deg_summary[code] = {
+            "tyre_deg_rate":   tyre_deg_rate,
+            "deg_rate_soft":   dr_soft,
+            "deg_rate_medium": dr_med,
+            "deg_rate_hard":   dr_hard,
+        }
+
+    # ── Corner speed profile from i1/i2 speed traps ──────────────────────
+    # Classify each trap by session-wide median: <160=low, 160-220=medium, >=220=high
+    # delta = (field_median - driver_avg) / field_median * 100 → negative = faster
+    def _speed_class(median_kmh: float) -> str:
+        if median_kmh < 160: return "low"
+        if median_kmh < 220: return "medium"
+        return "high"
+
+    _trap_classes = {}  # "i1" | "i2" → "low" | "medium" | "high"
+    _trap_field   = {}  # "i1" | "i2" → field median km/h
+    for trap_key in ("i1", "i2"):
+        all_spds = [s for recs in speed_records.values() for s in recs.get(trap_key, [])]
+        if all_spds:
+            fmed = float(np.median(all_spds))
+            _trap_field[trap_key]   = fmed
+            _trap_classes[trap_key] = _speed_class(fmed)
+
+    _drv_trap_avg = {}  # code → {trap_key: avg_speed}
+    for code, recs in speed_records.items():
+        _drv_trap_avg[code] = {
+            tk: float(np.mean(spds)) for tk, spds in recs.items() if spds
+        }
+
+    # Build per-driver speed class deltas
+    # Accumulate (delta, weight) per class; weight = count of readings in that class
+    _corner_deltas = {}  # code → {class: [deltas]}
+    for code, trap_avgs in _drv_trap_avg.items():
+        for tk, drv_avg in trap_avgs.items():
+            cls = _trap_classes.get(tk)
+            fmed = _trap_field.get(tk)
+            if cls is None or fmed is None or fmed == 0:
+                continue
+            delta = (fmed - drv_avg) / fmed * 100   # negative = driver faster
+            _corner_deltas.setdefault(code, {}).setdefault(cls, []).append(delta)
+
+    _corner_summary = {}  # code → {high_speed_delta, medium_speed_delta, low_speed_delta, corner_balance}
+    for code in _drv_trap_avg:
+        cls_data = _corner_deltas.get(code, {})
+        class_avgs = {cls: float(np.mean(vals)) for cls, vals in cls_data.items()}
+        high_d   = class_avgs.get("high",   np.nan)
+        medium_d = class_avgs.get("medium", np.nan)
+        low_d    = class_avgs.get("low",    np.nan)
+        avail    = [v for v in (high_d, medium_d, low_d) if not np.isnan(v)]
+        balance  = (max(avail) - min(avail)) if len(avail) >= 2 else np.nan
+        _corner_summary[code] = {
+            "high_speed_delta":   high_d,
+            "medium_speed_delta": medium_d,
+            "low_speed_delta":    low_d,
+            "corner_balance":     balance,
+        }
+
+    if _trap_classes:
+        print(f"   🔷  Speed trap classes: "
+              f"i1={_trap_classes.get('i1','?')} "
+              f"({_trap_field.get('i1',0):.0f} km/h), "
+              f"i2={_trap_classes.get('i2','?')} "
+              f"({_trap_field.get('i2',0):.0f} km/h)")
+
+    # ── FP1 race simulation summary ───────────────────────────────────────
+    # race_sim_delta = (driver_avg_pace - field_median) / field_median * 100
+    # Negative = driver's race sim is faster than field median → better race pace
+    _race_sim_summary = {}
+    if race_sim_records:
+        all_rs_paces = [p for recs in race_sim_records.values() for p, _, _ in recs]
+        rs_field     = float(np.median(all_rs_paces))
+        n_detected   = len(race_sim_records)
+        print(f"   🏁  Race sims FP1 detectados: {n_detected} pilotos "
+              f"(ref campo: {rs_field:.3f}s)")
+        for code, recs in race_sim_records.items():
+            paces  = [p for p, _, _ in recs]
+            slopes = [s for _, s, _ in recs]
+            ns_arr = [n for _, _, n in recs]
+            avg_pace  = float(np.average(paces,  weights=ns_arr))
+            avg_slope = float(np.average(slopes, weights=ns_arr))
+            _race_sim_summary[code] = {
+                "race_sim_delta": (avg_pace - rs_field) / rs_field * 100,
+                "race_sim_deg":   avg_slope,
+            }
+
+    rows     = []
+    lr_ref   = (np.median([t for ts in longrun_records.values() for t in ts])
+                if longrun_records else None)
     all_codes = set(quick_records) | set(longrun_records)
     for code in all_codes:
         fp_delta = np.nan
         if code in quick_records:
-            ds  = [d for d,_ in quick_records[code]]
-            ws  = [w for _,w in quick_records[code]]
+            ds, ws   = zip(*quick_records[code])
             fp_delta = np.average(ds, weights=ws)
         fp2_lr = np.nan
         if code in longrun_records and lr_ref:
             fp2_lr = (np.mean(longrun_records[code]) - lr_ref) / lr_ref * 100
+
+        # Compound-specific pace delta vs field median (negative = faster than field)
+        cdata  = compound_longrun.get(code, {})
+        soft_d = medium_d = hard_d = np.nan
+        for cmp, ref in _cmp_ref.items():
+            drv_avg = np.mean(cdata[cmp]) if cmp in cdata else np.nan
+            delta   = (drv_avg - ref) / ref * 100 if not np.isnan(drv_avg) else np.nan
+            if cmp == "SOFT":     soft_d   = delta
+            elif cmp == "MEDIUM": medium_d = delta
+            elif cmp == "HARD":   hard_d   = delta
+        comp_pref = (soft_d - medium_d) if not (np.isnan(soft_d) or np.isnan(medium_d)) \
+                    else np.nan
+
+        dr = _deg_summary.get(code, {})
+        cs = _corner_summary.get(code, {})
+        rs = _race_sim_summary.get(code, {})
         rows.append({"code": code, "fp_next_delta": fp_delta,
-                     "fp2_next_longrun": fp2_lr})
+                     "fp2_next_longrun":   fp2_lr,
+                     "soft_pace_delta":    soft_d,
+                     "medium_pace_delta":  medium_d,
+                     "hard_pace_delta":    hard_d,
+                     "compound_preference": comp_pref,
+                     "tyre_deg_rate":      dr.get("tyre_deg_rate",   np.nan),
+                     "deg_rate_soft":      dr.get("deg_rate_soft",   np.nan),
+                     "deg_rate_medium":    dr.get("deg_rate_medium", np.nan),
+                     "deg_rate_hard":      dr.get("deg_rate_hard",   np.nan),
+                     "high_speed_delta":   cs.get("high_speed_delta",   np.nan),
+                     "medium_speed_delta": cs.get("medium_speed_delta", np.nan),
+                     "low_speed_delta":    cs.get("low_speed_delta",    np.nan),
+                     "corner_balance":     cs.get("corner_balance",     np.nan),
+                     "race_sim_delta":     rs.get("race_sim_delta", np.nan),
+                     "race_sim_deg":       rs.get("race_sim_deg",   np.nan)})
     return pd.DataFrame(rows)
+
+def fetch_circuit_affinity(circuit_name: str) -> pd.DataFrame:
+    """
+    Fetch race results at circuit_name for the last 3 seasons from Jolpica.
+    Returns DataFrame[code, circuit_affinity] — mean finishing position over
+    all visits in those years. Drivers with < 2 visits get NaN so the caller
+    can substitute the field median (neutral, no bonus or penalty).
+    DNFs counted as P18 (light penalty, not catastrophic).
+    One request per year to avoid ergast's oldest-first default pagination.
+    """
+    circuit_id = CIRCUIT_ID_MAP.get(circuit_name)
+    if not circuit_id:
+        print(f"   ⚠  Circuit ID desconocido para '{circuit_name}' — sin affinity")
+        return pd.DataFrame(columns=["code", "circuit_affinity"])
+
+    print(f"📍  Descargando historial de {circuit_name} ({circuit_id}) — últimos 3 años...")
+    rows = []
+    for year in range(int(SEASON) - 3, int(SEASON)):   # 2023, 2024, 2025
+        url  = f"{JOLPICA_BASE}/{year}/circuits/{circuit_id}/results.json"
+        data = api_get(url)
+        if not data:
+            continue
+        races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        for race in races:
+            for res in race.get("Results", []):
+                drv    = res.get("Driver", {})
+                code   = drv.get("code", drv.get("driverId", "???").upper()[:3])
+                status = res.get("status", "")
+                try:
+                    pos = int(res.get("position", 18))
+                except (ValueError, TypeError):
+                    pos = 18
+                if status not in ("Finished", "+1 Lap", "+2 Laps", "+3 Laps"):
+                    pos = 18
+                rows.append({"code": code, "pos": pos, "year": year})
+
+    if not rows:
+        print(f"   ⚠  Sin historial disponible para {circuit_id} en los últimos 3 años")
+        return pd.DataFrame(columns=["code", "circuit_affinity"])
+
+    df  = pd.DataFrame(rows)
+    agg = df.groupby("code")["pos"].agg(mean="mean", count="count").reset_index()
+    agg.columns = ["code", "circuit_affinity", "_visits"]
+    agg.loc[agg["_visits"] < 2, "circuit_affinity"] = np.nan
+    good = agg["_visits"].ge(2).sum()
+    print(f"   ✅  {len(rows)} resultados en {df['year'].nunique()} temporadas — "
+          f"{good} pilotos con ≥2 visitas")
+    return agg[["code", "circuit_affinity"]]
+
+
+# ─────────────────────────────────────────────────────────────
+#  18a. PERFILES COMPORTAMENTALES HISTÓRICOS 2023-2025
+# ─────────────────────────────────────────────────────────────
+# Race names that were run in significantly wet conditions
+_WET_RACE_KEYWORDS = [
+    (2023, "British"), (2023, "Qatar"),
+    (2024, "British"), (2024, "Canada"), (2024, "Belgian"), (2024, "Japan"),
+    (2025, "British"), (2025, "Belgian"), (2025, "Japan"), (2025, "Australia"),
+    (2025, "Brazil"),
+]
+
+_PROFILES_CACHE_DAYS = 7
+
+
+def fetch_driver_behavioral_profiles(current_drivers: list) -> dict:
+    """
+    Fetch 2023-2025 Jolpica data and compute 5 regulation-independent
+    driver skill fingerprints.  Results are cached in PROFILES_FILE
+    and only refreshed when the file is > 7 days old.
+
+    Returned dict: {driver_code: {metric: value, ...}}
+    """
+    if os.path.exists(PROFILES_FILE):
+        age_days = (time.time() - os.path.getmtime(PROFILES_FILE)) / 86400
+        if age_days < _PROFILES_CACHE_DAYS:
+            with open(PROFILES_FILE) as f:
+                cached = json.load(f)
+            print(f"   📂  Perfiles cargados desde caché ({age_days:.1f}d antigüedad, "
+                  f"{len(cached)} pilotos)")
+            return cached
+
+    print("🧬  Construyendo perfiles comportamentales 2023–2025 (primera vez ~90s)...")
+    years = [2023, 2024, 2025]
+
+    overtaking_data = {}   # code → [positions_gained from midfield grid P6-P15]
+    quali_deltas    = {}   # code → [quali_pos - teammate_quali_pos per race]
+    wet_data        = {}   # code → [finish_pos - season_avg_finish  (neg = better)]
+    dnf_counts      = {}   # code → {mech, acc, total}
+    tyre_data       = {}   # code → [pos_at_80pct - final_pos  (pos = gained laps)]
+
+    for year in years:
+        sched_data = api_get(f"{JOLPICA_BASE}/{year}.json", params={"limit": 100})
+        if not sched_data:
+            continue
+        races_sched = sched_data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+        n_rounds = len(races_sched)
+
+        # Map round → wet flag from known-wet race names
+        wet_rounds: set = set()
+        for race in races_sched:
+            rnum  = int(race.get("round", 0))
+            rname = race.get("raceName", "")
+            for (wy, kw) in _WET_RACE_KEYWORDS:
+                if wy == year and kw.lower() in rname.lower():
+                    wet_rounds.add(rnum)
+
+        # ── Race results ──────────────────────────────────────────────────
+        print(f"   📥  {year}: resultados ({n_rounds} carreras)...")
+        year_results: dict = {}
+        driver_finishes: dict = {}
+
+        for rnd in range(1, n_rounds + 1):
+            data = api_get(f"{JOLPICA_BASE}/{year}/{rnd}/results.json")
+            time.sleep(REQ_DELAY)
+            if not data:
+                continue
+            r_races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+            if not r_races:
+                continue
+            results = r_races[0].get("Results", [])
+            year_results[rnd] = results
+
+            for res in results:
+                drv    = res.get("Driver", {})
+                code   = drv.get("code", drv.get("driverId", "???").upper()[:3])
+                status = res.get("status", "")
+                try:
+                    pos = int(res.get("position", 20))
+                except (ValueError, TypeError):
+                    pos = 20
+                if status not in ("Finished", "+1 Lap", "+2 Laps", "+3 Laps"):
+                    pos = 20   # DNF → P20 for season average
+                driver_finishes.setdefault(code, []).append(pos)
+
+        season_avg = {code: float(np.mean(ps)) for code, ps in driver_finishes.items()}
+
+        for rnd, results in year_results.items():
+            is_wet = rnd in wet_rounds
+            for res in results:
+                drv    = res.get("Driver", {})
+                code   = drv.get("code", drv.get("driverId", "???").upper()[:3])
+                status = res.get("status", "")
+                dnf    = status not in ("Finished", "+1 Lap", "+2 Laps", "+3 Laps")
+                try:
+                    grid = int(res.get("grid", 0))
+                    pos  = int(res.get("position", 20))
+                except (ValueError, TypeError):
+                    continue
+
+                # DNF classification
+                dc = dnf_counts.setdefault(code, {"mech": 0, "acc": 0, "total": 0})
+                dc["total"] += 1
+                if dnf:
+                    st_lo = status.lower()
+                    is_acc = any(kw in st_lo for kw in
+                                 ["accident", "collision", "spin", "damage", "retired",
+                                  "debris"])
+                    dc["acc" if is_acc else "mech"] += 1
+
+                if not dnf:
+                    if 6 <= grid <= 15:   # midfield start → overtaking ability
+                        overtaking_data.setdefault(code, []).append(float(grid - pos))
+                    if is_wet and code in season_avg:
+                        wet_data.setdefault(code, []).append(
+                            float(pos - season_avg[code]))
+
+        # ── Qualifying — teammate consistency ─────────────────────────────
+        print(f"   📥  {year}: clasificación (consistencia vs compañero)...")
+        for rnd in range(1, n_rounds + 1):
+            data = api_get(f"{JOLPICA_BASE}/{year}/{rnd}/qualifying.json")
+            time.sleep(REQ_DELAY)
+            if not data:
+                continue
+            q_races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+            if not q_races:
+                continue
+            by_team: dict = {}
+            for res in q_races[0].get("QualifyingResults", []):
+                drv  = res.get("Driver", {})
+                code = drv.get("code", drv.get("driverId", "???").upper()[:3])
+                team = res.get("Constructor", {}).get("constructorId", "?")
+                try:
+                    qpos = int(res.get("position", 20))
+                except (ValueError, TypeError):
+                    continue
+                by_team.setdefault(team, []).append((code, qpos))
+            for drivers in by_team.values():
+                if len(drivers) == 2:
+                    (c1, p1), (c2, p2) = drivers[0], drivers[1]
+                    quali_deltas.setdefault(c1, []).append(float(p1 - p2))
+                    quali_deltas.setdefault(c2, []).append(float(p2 - p1))
+
+        # ── Laps — tyre management (position at 80% vs final) ────────────
+        print(f"   📥  {year}: vueltas (tyre management)...")
+        for rnd, results in year_results.items():
+            # Build driverId → code map from race results
+            id_to_code = {
+                res.get("Driver", {}).get("driverId", ""): res.get("Driver", {}).get(
+                    "code", res.get("Driver", {}).get("driverId", "???").upper()[:3])
+                for res in results
+            }
+
+            data = api_get(f"{JOLPICA_BASE}/{year}/{rnd}/laps.json",
+                           params={"limit": 100})
+            time.sleep(REQ_DELAY)
+            if not data:
+                continue
+            l_races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+            if not l_races:
+                continue
+            laps_list = l_races[0].get("Laps", [])
+            if not laps_list:
+                continue
+
+            total_laps = max(int(l["number"]) for l in laps_list)
+            lap_80     = round(0.80 * total_laps)
+            pos_at_80: dict  = {}
+            pos_final: dict  = {}
+
+            for lap_entry in laps_list:
+                lap_num = int(lap_entry["number"])
+                for t in lap_entry.get("Timings", []):
+                    did = t.get("driverId", "")
+                    try:
+                        lp = int(t.get("position", 99))
+                    except (ValueError, TypeError):
+                        continue
+                    if lap_num == lap_80:
+                        pos_at_80[did] = lp
+                    if lap_num == total_laps:
+                        pos_final[did] = lp
+
+            for did, p80 in pos_at_80.items():
+                if did in pos_final and did in id_to_code:
+                    code = id_to_code[did]
+                    # positive = gained positions in final 20% of laps
+                    tyre_data.setdefault(code, []).append(float(p80 - pos_final[did]))
+
+    # ── Aggregate into per-driver profile ────────────────────────────────
+    profiles: dict = {}
+    all_codes = (set(overtaking_data) | set(quali_deltas) | set(wet_data)
+                 | set(dnf_counts) | set(tyre_data))
+
+    for code in all_codes:
+        ot = overtaking_data.get(code, [])
+        qd = quali_deltas.get(code, [])
+        ww = wet_data.get(code, [])
+        dc = dnf_counts.get(code, {"mech": 0, "acc": 0, "total": 0})
+        tm = tyre_data.get(code, [])
+        n_tot = dc.get("total", 0)
+
+        profiles[code] = {
+            "overtaking_ability"    : round(float(np.mean(ot)), 3) if len(ot) >= 3 else None,
+            "quali_consistency"     : round(float(np.std(qd)),  3) if len(qd) >= 5 else None,
+            "wet_weather_delta"     : round(float(np.mean(ww)), 3) if len(ww) >= 2 else None,
+            "historical_dnf_rate"   : round((dc["mech"] + dc["acc"]) / n_tot, 3)
+                                       if n_tot > 0 else None,
+            "mech_dnf_rate"         : round(dc["mech"] / n_tot, 3) if n_tot > 0 else None,
+            "acc_dnf_rate"          : round(dc["acc"]  / n_tot, 3) if n_tot > 0 else None,
+            "tyre_management_index" : round(float(np.mean(tm)), 3) if len(tm) >= 5 else None,
+            "n_races"               : n_tot,
+            "n_wet"                 : len(ww),
+            "n_quali"               : len(qd),
+            "n_overtaking"          : len(ot),
+        }
+
+    with open(PROFILES_FILE, "w") as f:
+        json.dump(profiles, f, indent=2)
+    print(f"   💾  {len(profiles)} perfiles guardados → {PROFILES_FILE}")
+    return profiles
+
 
 # ─────────────────────────────────────────────────────────────
 #  18. CONSTRUCCIÓN DE FEATURES
@@ -1935,13 +2719,18 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    compound_df=None, circuit_df=None,
                    circuit_type_df=None, quali_gap_df=None,
                    overtaking_difficulty=0.55,
-                   next_quali_df=None, next_fp_df=None) -> pd.DataFrame:
-    compound_df      = compound_df      if compound_df      is not None else pd.DataFrame()
-    circuit_df       = circuit_df       if circuit_df       is not None else pd.DataFrame()
-    circuit_type_df  = circuit_type_df  if circuit_type_df  is not None else pd.DataFrame()
-    quali_gap_df     = quali_gap_df     if quali_gap_df     is not None else pd.DataFrame()
-    next_quali_df    = next_quali_df    if next_quali_df    is not None else pd.DataFrame()
-    next_fp_df       = next_fp_df       if next_fp_df       is not None else pd.DataFrame()
+                   next_quali_df=None, next_fp_df=None,
+                   circuit_affinity_df=None,
+                   behavioral_df=None,
+                   next_circuit_laps: int = 57,
+                   next_circuit_type: str = "mixed") -> pd.DataFrame:
+    compound_df          = compound_df          if compound_df          is not None else pd.DataFrame()
+    circuit_df           = circuit_df           if circuit_df           is not None else pd.DataFrame()
+    circuit_type_df      = circuit_type_df      if circuit_type_df      is not None else pd.DataFrame()
+    quali_gap_df         = quali_gap_df         if quali_gap_df         is not None else pd.DataFrame()
+    next_quali_df        = next_quali_df        if next_quali_df        is not None else pd.DataFrame()
+    next_fp_df           = next_fp_df           if next_fp_df           is not None else pd.DataFrame()
+    circuit_affinity_df  = circuit_affinity_df  if circuit_affinity_df  is not None else pd.DataFrame()
     """Combina todas las fuentes en un DataFrame de features por piloto."""
 
     feat = driver_standings[["code", "FullName", "TeamName", "champ_pts"]].copy()
@@ -1950,10 +2739,19 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
     # ── Resultados de carrera ──────────────────────────────────────────
     if not race_df.empty:
         agg = race_df.groupby("code").agg(
-            avg_finish=("pos",  "mean"),
             avg_grid  =("grid", "mean"),
             fl_rate   =("fastest_lap", "mean"),
         ).reset_index()
+        # EWM finish: cap DNF positions at P12 (mechanical retirement ≠ genuine P16+)
+        # then use span=5 so one bad race doesn't dominate (vs span=3 which weights last race ~50%)
+        _ewm_pos = race_df.copy()
+        _ewm_pos.loc[_ewm_pos["dnf"] == 1, "pos"] = \
+            _ewm_pos.loc[_ewm_pos["dnf"] == 1, "pos"].clip(upper=12)
+        ewm_finish = (_ewm_pos.sort_values("round")
+                      .groupby("code")["pos"]
+                      .apply(lambda s: s.ewm(span=5).mean().iloc[-1])
+                      .reset_index(name="avg_finish"))
+        agg = agg.merge(ewm_finish, on="code", how="left")
         feat = feat.merge(agg, on="code", how="left")
         # ── MEJORA 11: Momentum con decaimiento exponencial ──────────────
         # Pesos: última carrera 50%, penúltima 30%, antepenúltima 20%
@@ -1963,7 +2761,7 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
         momentum_rows = []
         for code in race_df["code"].unique():
             drv_results = race_df[race_df["code"] == code].sort_values("round")
-            recent      = drv_results.tail(3).reset_index(drop=True)
+            recent      = drv_results.tail(4).reset_index(drop=True)
             n_races     = len(recent)
             if n_races == 0:
                 continue
@@ -1971,9 +2769,11 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
             if n_races == 1:
                 w_map = {0: 1.0}
             elif n_races == 2:
-                w_map = {0: 0.40, 1: 0.60}   # más peso a la más reciente
-            else:
+                w_map = {0: 0.40, 1: 0.60}
+            elif n_races == 3:
                 w_map = {0: 0.20, 1: 0.30, 2: 0.50}
+            else:  # 4+ races: last=50%, -2=30%, -3=15%, -4=5%
+                w_map = {0: 0.05, 1: 0.15, 2: 0.30, 3: 0.50}
             weighted_pts = sum(
                 recent.iloc[i]["pts"] * w_map.get(i, 0)
                 for i in range(n_races)
@@ -1999,9 +2799,73 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
             feat["momentum_pos"] = np.nan
             feat["last_race_pts"]= np.nan
             feat["last_race_pos"]= np.nan
+        # ── Constructor momentum: rolling 3-race win rate per team ──────────
+        _team_map    = dict(zip(driver_standings["code"], driver_standings["TeamName"]))
+        _last3_set   = set(sorted(race_df["round"].unique())[-3:])
+        _wins_r      = race_df[race_df["pos"] == 1].copy()
+        _wins_r["team"] = _wins_r["code"].map(_team_map)
+        _wins_last3  = _wins_r[_wins_r["round"].isin(_last3_set)].groupby("team").size()
+        cm_rows = [{"code": c,
+                    "constructor_momentum": _wins_last3.get(_team_map.get(c, ""), 0) / 3.0}
+                   for c in feat["code"]]
+        feat = feat.merge(pd.DataFrame(cm_rows), on="code", how="left")
+        feat["constructor_momentum"] = feat["constructor_momentum"].fillna(0.0)
+        # ── Podium streak score ────────────────────────────────────────
+        streak_rows = []
+        for code in feat["code"]:
+            drv = race_df[race_df["code"] == code].sort_values("round", ascending=False)
+            streak = 0
+            for _, row in drv.iterrows():
+                if row.get("dnf", 0) == 1 or row.get("pos", 99) > 3:
+                    break
+                streak += 1
+            streak_rows.append({"code": code, "streak_score": min(streak * 0.15, 1.0)})
+        feat = feat.merge(pd.DataFrame(streak_rows), on="code", how="left")
+        feat["streak_score"] = feat["streak_score"].fillna(0.0)
+        _active_streaks = feat[feat["streak_score"] > 0][["code", "streak_score"]].sort_values(
+            "streak_score", ascending=False)
+        if not _active_streaks.empty:
+            print("   🔥  Rachas de podio activas:")
+            for _, r in _active_streaks.iterrows():
+                n_consec = round(r["streak_score"] / 0.15)
+                print(f"      {r['code']:<5}  {n_consec} carreras top-3 consecutivas (score={r['streak_score']:.2f})")
+        # ── Post-DNF bounce indicator ──────────────────────────────────
+        _last_round_all = race_df["round"].max()
+        _last_race_df   = race_df[race_df["round"] == _last_round_all]
+        _dnf_codes      = set(_last_race_df[_last_race_df["dnf"] == 1]["code"].tolist())
+        feat["post_dnf_bounce"] = feat["code"].apply(lambda c: 1.0 if c in _dnf_codes else 0.0)
+        if _dnf_codes:
+            print(f"   💥  Post-DNF bounce (última carrera): {', '.join(sorted(_dnf_codes))}")
+        # ── Championship pressure coefficient ─────────────────────────
+        _n_completed     = race_df["round"].nunique()
+        _n_remaining     = max(22 - _n_completed, 0)
+        _total_avail_pts = max(_n_remaining * 26, 1)
+        _leader_pts      = feat["champ_pts"].max()
+        feat["championship_pressure"] = feat["champ_pts"].apply(
+            lambda pts: max(0.0, 1.0 - max(0.0, _leader_pts - pts) / _total_avail_pts) * 0.5
+        )
+        # ── Circuit affinity: avg finish at next circuit over last 3 seasons ──
+        if not circuit_affinity_df.empty and "circuit_affinity" in circuit_affinity_df.columns:
+            feat = feat.merge(circuit_affinity_df, on="code", how="left")
+            field_med = feat["circuit_affinity"].median()
+            feat["circuit_affinity"] = feat["circuit_affinity"].fillna(
+                field_med if not np.isnan(field_med) else 11.0)
+            top5 = feat[["code", "circuit_affinity"]].sort_values("circuit_affinity").head(5)
+            print("   🏎  Affinity top 5 (menor pos. media = más afinidad al circuito):")
+            for _, r in top5.iterrows():
+                print(f"      {r['code']:<5}  {r['circuit_affinity']:.2f}")
+        else:
+            feat["circuit_affinity"] = 11.0  # neutral midfield fallback
     else:
-        for col in ["avg_finish", "avg_grid", "fl_rate", "recent_form"]:
+        for col in ["avg_finish", "avg_grid", "fl_rate", "recent_form", "constructor_momentum",
+                    "circuit_affinity"]:
             feat[col] = np.nan
+        feat["streak_score"]    = 0.0
+        feat["post_dnf_bounce"] = 0.0
+        _leader_pts_e = feat["champ_pts"].max()
+        feat["championship_pressure"] = feat["champ_pts"].apply(
+            lambda pts: max(0.0, 1.0 - max(0.0, _leader_pts_e - pts) / (22 * 26)) * 0.5
+        )
 
     # ── Clasificación ─────────────────────────────────────────────────
     if not quali_df.empty:
@@ -2089,10 +2953,123 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    quali_pos_next=np.nan, quali_time_next=np.nan,
                    s1_next=np.nan, s2_next=np.nan, s3_next=np.nan)
 
+    # ── Sector balance: σ of S1/S2/S3 deltas vs field best in next quali ──
+    _s_cols = ["s1_next", "s2_next", "s3_next"]
+    if all(c in feat.columns for c in _s_cols) and feat[_s_cols].notna().any().any():
+        _s1b = feat["s1_next"].min()
+        _s2b = feat["s2_next"].min()
+        _s3b = feat["s3_next"].min()
+        _d1  = feat["s1_next"] - _s1b
+        _d2  = feat["s2_next"] - _s2b
+        _d3  = feat["s3_next"] - _s3b
+        feat["sector_balance"] = pd.concat(
+            [_d1.rename("d1"), _d2.rename("d2"), _d3.rename("d3")], axis=1
+        ).std(axis=1)
+        _sb = (pd.DataFrame({
+                   "code": feat["code"].values,
+                   "sector_balance": feat["sector_balance"].values,
+                   "ΔS1": _d1.values, "ΔS2": _d2.values, "ΔS3": _d3.values,
+               })
+               .dropna(subset=["sector_balance"])
+               .sort_values("sector_balance"))
+        if not _sb.empty:
+            print("   ⚡  Top 5 sector balance (σ deltas S1/S2/S3 — menor = más consistente):")
+            for _, r in _sb.head(5).iterrows():
+                print(f"      {r['code']:<5}  σ={r['sector_balance']:.3f}s  "
+                      f"ΔS1:{r['ΔS1']:+.3f}  ΔS2:{r['ΔS2']:+.3f}  ΔS3:{r['ΔS3']:+.3f}")
+    else:
+        feat["sector_balance"] = np.nan
+        print("   ⚠  Sin datos de sector del próximo GP — sector_balance neutral")
+
     # ── Prácticas del próximo GP (si disponible) ──────────────────────
+    _FP_FALLBACK = dict(fp_next_delta=np.nan, fp2_next_longrun=np.nan,
+                        soft_pace_delta=np.nan, medium_pace_delta=np.nan,
+                        hard_pace_delta=np.nan, compound_preference=np.nan,
+                        tyre_deg_rate=np.nan, deg_rate_soft=np.nan,
+                        deg_rate_medium=np.nan, deg_rate_hard=np.nan,
+                        high_speed_delta=np.nan, medium_speed_delta=np.nan,
+                        low_speed_delta=np.nan, corner_balance=np.nan,
+                        race_sim_delta=np.nan, race_sim_deg=np.nan)
     feat = feat.merge(next_fp_df, on="code", how="left") \
-               if not next_fp_df.empty else feat.assign(
-                   fp_next_delta=np.nan, fp2_next_longrun=np.nan)
+               if not next_fp_df.empty else feat.assign(**_FP_FALLBACK)
+    # Ensure all FP columns exist even when next_fp_df was fetched before FP2
+    for _col, _val in _FP_FALLBACK.items():
+        if _col not in feat.columns:
+            feat[_col] = _val
+
+    # Fill NaN compound deltas with field median (neutral — no compound advantage)
+    for _cname in ("soft_pace_delta", "medium_pace_delta", "hard_pace_delta"):
+        if feat[_cname].notna().any():
+            feat[_cname] = feat[_cname].fillna(feat[_cname].median())
+
+    # Fill NaN tyre_deg_rate with field median (neutral — no deg advantage)
+    if feat["tyre_deg_rate"].notna().any():
+        feat["tyre_deg_rate"] = feat["tyre_deg_rate"].fillna(
+            feat["tyre_deg_rate"].median())
+
+    # Corner profile score — combine speed class deltas with circuit-type weighting
+    # Weights per class for each circuit type (must sum to 1.0 across available classes)
+    _SPEED_WEIGHTS = {
+        "high_speed": {"high": 0.60, "medium": 0.40, "low": 0.00},
+        "street":     {"high": 0.10, "medium": 0.50, "low": 0.40},
+        "technical":  {"high": 0.20, "medium": 0.50, "low": 0.30},
+        "mixed":      {"high": 0.40, "medium": 0.40, "low": 0.20},
+    }
+    _sw = _SPEED_WEIGHTS.get(next_circuit_type, _SPEED_WEIGHTS["mixed"])
+    _col_map = {"high": "high_speed_delta", "medium": "medium_speed_delta", "low": "low_speed_delta"}
+
+    def _corner_score(row):
+        avail_w = {cls: w for cls, w in _sw.items()
+                   if w > 0 and not np.isnan(row.get(_col_map[cls], np.nan))}
+        if not avail_w:
+            return np.nan
+        total_w = sum(avail_w.values())
+        return sum(row[_col_map[cls]] * (w / total_w) for cls, w in avail_w.items())
+
+    feat["corner_profile_score"] = feat.apply(
+        lambda r: _corner_score(r.to_dict()), axis=1)
+    # Neutral fill for drivers with no speed trap data
+    if feat["corner_profile_score"].notna().any():
+        feat["corner_profile_score"] = feat["corner_profile_score"].fillna(
+            feat["corner_profile_score"].median())
+
+    # Print top-5 when compound data is available
+    for _cname, _label in [("soft_pace_delta", "SOFT"), ("medium_pace_delta", "MEDIUM")]:
+        if feat[_cname].notna().any() and feat[_cname].nunique() > 1:
+            _top5 = (feat[["code", _cname]].dropna()
+                       .sort_values(_cname).head(5))
+            print(f"   🔴  Top 5 ritmo {_label} vs campo (negativo = más rápido):")
+            for _, r in _top5.iterrows():
+                print(f"      {r['code']:<5}  {r[_cname]:+.3f}%")
+
+    # Print top-5 tyre deg rates when FP2 long-run data is available
+    if feat["tyre_deg_rate"].notna().any() and feat["tyre_deg_rate"].nunique() > 1:
+        _top5_deg = (feat[["code", "tyre_deg_rate"]].dropna()
+                       .sort_values("tyre_deg_rate").head(5))
+        print("   🏎  Top 5 gestión de neumáticos FP2 (s/vuelta, menor = mejor):")
+        for _, r in _top5_deg.iterrows():
+            print(f"      {r['code']:<5}  {r['tyre_deg_rate']:+.4f} s/lap")
+
+    # Print top-5 corner profile scores when speed trap data is available
+    if feat["corner_profile_score"].notna().any() and feat["corner_profile_score"].nunique() > 1:
+        _top5_cps = (feat[["code", "corner_profile_score"]].dropna()
+                       .sort_values("corner_profile_score").head(5))
+        print(f"   🔷  Top 5 perfil de curvas ({next_circuit_type}, negativo = más rápido):")
+        for _, r in _top5_cps.iterrows():
+            print(f"      {r['code']:<5}  {r['corner_profile_score']:+.3f}%")
+
+    # Fill NaN race_sim_delta with field median (neutral when no FP1 race sim detected)
+    if feat["race_sim_delta"].notna().any():
+        feat["race_sim_delta"] = feat["race_sim_delta"].fillna(
+            feat["race_sim_delta"].median())
+
+    # Print top-5 race sim delta when FP1 data is available
+    if feat["race_sim_delta"].notna().any() and feat["race_sim_delta"].nunique() > 1:
+        _top5_rs = (feat[["code", "race_sim_delta"]].dropna()
+                      .sort_values("race_sim_delta").head(5))
+        print("   🏁  Top 5 ritmo carrera FP1 (negativo = más rápido vs campo):")
+        for _, r in _top5_rs.iterrows():
+            print(f"      {r['code']:<5}  {r['race_sim_delta']:+.3f}%")
 
     # ── Circuit type score (head-to-head por tipo de circuito) ────────
     feat = feat.merge(circuit_type_df, on="code", how="left") \
@@ -2105,6 +3082,76 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
     # ── fp2_longrun_delta (si fp_df lo tiene) ────────────────────────
     if "fp2_longrun_delta" not in feat.columns:
         feat["fp2_longrun_delta"] = np.nan
+
+    # ── Perfiles comportamentales históricos (2023-2025) ──────────────
+    _b_cols = ["overtaking_ability", "quali_consistency", "wet_weather_delta",
+               "historical_dnf_rate", "tyre_management_index"]
+    if behavioral_df is not None and not behavioral_df.empty:
+        _avail = [c for c in _b_cols if c in behavioral_df.columns]
+        if _avail:
+            feat = feat.merge(behavioral_df[["code"] + _avail], on="code", how="left")
+            _n_matched = feat[_avail[0]].notna().sum()
+            print(f"   🧬  Perfiles comportamentales: {_n_matched}/{len(feat)} pilotos "
+                  f"con datos 2023-2025")
+    else:
+        for col in _b_cols:
+            feat[col] = np.nan
+
+    # ── Driver-circuit style compatibility (3D embedding cosine similarity) ──
+    _emb_req = ["overtaking_ability", "quali_consistency",
+                "tyre_management_index", "historical_dnf_rate"]
+    if (behavioral_df is not None and not behavioral_df.empty and
+            all(c in behavioral_df.columns for c in _emb_req)):
+        # Normalization ranges from full behavioral pool (all historical drivers)
+        _oa_pool = behavioral_df["overtaking_ability"].dropna()
+        _qc_pool = behavioral_df["quali_consistency"].dropna()
+        _tm_pool = behavioral_df["tyre_management_index"].dropna()
+        _dr_pool = behavioral_df["historical_dnf_rate"].dropna()
+
+        def _n01s(s, pool):
+            lo, hi = pool.min(), pool.max()
+            if hi <= lo:
+                return pd.Series(0.5, index=s.index)
+            return ((s - lo) / (hi - lo)).clip(0, 1).fillna(0.5)
+
+        # 3D driver embeddings per driver
+        _agg  = _n01s(feat["overtaking_ability"],    _oa_pool)          # aggression
+        _con  = 1.0 - _n01s(feat["quali_consistency"], _qc_pool)        # consistency (inverted)
+        _tm_n = _n01s(feat["tyre_management_index"], _tm_pool)
+        _dr_n = 1.0 - _n01s(feat["historical_dnf_rate"], _dr_pool)
+        _end  = (_tm_n + _dr_n) / 2.0                                   # endurance
+
+        # 3D circuit embedding
+        _ctype_enc = {"street": 1.0, "technical": 0.8, "mixed": 0.5, "high_speed": 0.2}
+        _lap_lo    = min(CIRCUIT_RACE_LAPS.values())
+        _lap_hi    = max(CIRCUIT_RACE_LAPS.values())
+        _circ_end  = float(np.clip((next_circuit_laps - _lap_lo) / max(_lap_hi - _lap_lo, 1), 0, 1))
+        _circ_vec  = np.array([
+            1.0 - overtaking_difficulty,
+            _ctype_enc.get(next_circuit_type, 0.5),
+            _circ_end,
+        ])
+
+        # Vectorised cosine similarity: (n_drivers,3) @ (3,) / (|d| * |c|)
+        _D       = np.column_stack([_agg.values, _con.values, _end.values])
+        _d_norms = np.linalg.norm(_D, axis=1)
+        _c_norm  = float(np.linalg.norm(_circ_vec))
+        _dots    = _D @ _circ_vec
+        _denom   = _d_norms * _c_norm
+        _compat  = np.where(_denom > 1e-9, _dots / _denom, 0.0)
+
+        feat["compatibility_score"] = np.round(_compat, 4)
+
+        # Store embeddings so main() can print/save them
+        feat.attrs["driver_embeddings"] = {
+            code: [round(float(_agg.iloc[i]), 4),
+                   round(float(_con.iloc[i]), 4),
+                   round(float(_end.iloc[i]), 4)]
+            for i, code in enumerate(feat["code"].values)
+        }
+        feat.attrs["circuit_embedding"] = [round(float(x), 4) for x in _circ_vec]
+    else:
+        feat["compatibility_score"] = 0.0
 
     # ── Overtaking difficulty — guardada como atributo del DataFrame ──
     feat.attrs["overtaking_difficulty"] = overtaking_difficulty
@@ -2158,23 +3205,31 @@ def score_manual(feat: pd.DataFrame,
     # Si sí → es el predictor más valioso con diferencia
     has_next_quali = (
         "quali_pos_next" in feat.columns and
-        feat["quali_pos_next"].notna().sum() >= 10  # al menos 10 pilotos con dato
+        feat["quali_pos_next"].notna().sum() >= 10 and
+        feat["quali_pos_next"].nunique() >= 5        # reject corrupt fallback (e.g. all 22.0)
     )
     if has_next_quali:
-        print("   ⭐  Clasificación del próximo GP disponible → peso dominante 45%")
+        print("   ⭐  Clasificación del próximo GP disponible → peso dominante 55%")
 
     w = {
         # ── DATOS DEL PRÓXIMO GP (los más relevantes) ──────────────────
-        "quali_pos_next"   : 0.45 if has_next_quali else 0.00,
+        "quali_pos_next"   : 0.55 if has_next_quali else 0.00,
         "fp_next_delta"    : 0.08 if has_next_quali else 0.00,
-        "fp2_next_longrun" : 0.05 if has_next_quali else 0.00,
+        "fp2_next_longrun"  : 0.05 if has_next_quali else 0.00,
+        "sector_balance"    : 0.03 if has_next_quali else 0.00,
+        "soft_pace_delta"      : 0.02 if has_next_quali else 0.00,
+        "medium_pace_delta"    : 0.02 if has_next_quali else 0.00,
+        "tyre_deg_rate"        : 0.03 if has_next_quali else 0.00,
+        "corner_profile_score" : 0.02 if has_next_quali else 0.00,
+        "race_sim_delta"       : 0.03 if has_next_quali else 0.00,
         # ── HISTORIAL DE TEMPORADA ──────────────────────────────────────
         "quali_pos"        : 0.05 if has_next_quali else quali_w_dynamic,
         "quali_gap_teammate": 0.04 if has_next_quali else 0.06,
         "avg_grid"         : 0.03 if has_next_quali else 0.06,
-        "champ_pts"        : 0.06 if has_next_quali else 0.11,
+        "champ_pts"        : 0.10 if has_next_quali else 0.11,
         "avg_finish"       : 0.04 if has_next_quali else finish_w,
-        "constructor_pts"  : 0.05 if has_next_quali else 0.08,
+        "constructor_pts"      : 0.05 if has_next_quali else 0.08,
+        "constructor_momentum" : 0.05 if has_next_quali else 0.05,
         "recent_form"      : 0.05 if has_next_quali else recent_w,
         "momentum_pos"     : 0.02 if has_next_quali else 0.03,
         "fl_rate"          : 0.02 if has_next_quali else 0.04,
@@ -2186,26 +3241,64 @@ def score_manual(feat: pd.DataFrame,
         "compound_score"   : 0.01 if has_next_quali else 0.03,
         "circuit_score"    : 0.02 if has_next_quali else 0.03,
         "circuit_type_score": 0.01 if has_next_quali else 0.03,
+        "circuit_affinity"  : 0.04 if has_next_quali else 0.06,
         "lap1_gain"        : 0.01 if has_next_quali else 0.02,
         "teammate_delta"   : 0.01,
         "avg_pitstop"      : 0.01 if has_next_quali else 0.02,
         "sc_gain_avg"      : 0.01,
         "avg_sector_delta" : 0.01 if has_next_quali else 0.02,
+        "streak_score"          : 0.03,
+        "post_dnf_bounce"       : 0.02,
+        "championship_pressure" : 0.02,
+        # ── Perfiles históricos 2023-2025 ───────────────────────────────
+        "overtaking_ability"    : 0.03,
+        "quali_consistency"     : 0.02,
+        "wet_weather_delta"     : round(0.05 * feat.attrs.get("rain_prob", 0.0), 4),
+        "historical_dnf_rate"   : 0.01,
+        "tyre_management_index" : 0.02,
+        "compatibility_score"   : 0.04 if has_next_quali else 0.03,
     }
+
+    # When qualifying is available, rescale season-history features so raw dict sums to 1.0
+    # This makes quali_pos_next effective weight exactly 55% (auto-norm below becomes a no-op)
+    if has_next_quali:
+        _next_keys = {"quali_pos_next", "fp_next_delta", "fp2_next_longrun",
+                      "sector_balance", "soft_pace_delta", "medium_pace_delta",
+                      "tyre_deg_rate", "corner_profile_score", "race_sim_delta"}
+        season_sum = sum(v for k, v in w.items() if k not in _next_keys)
+        season_target = 1.0 - sum(w[k] for k in _next_keys if k in w)
+        if season_sum > 0:
+            _sf = season_target / season_sum
+            for k in list(w.keys()):
+                if k not in _next_keys:
+                    w[k] *= _sf
 
     # Auto-normalizar para que sumen exactamente 1.0
     total_w = sum(w.values())
     w = {k: v / total_w for k, v in w.items()}
 
     # Feedback loop: blend XGBoost importancias con pesos manuales
+    # _next features are excluded: XGBoost never trained on them, so it has no valid opinion
+    _NEXT_RACE_WEIGHTS = {"quali_pos_next", "fp_next_delta", "fp2_next_longrun",
+                          "sector_balance", "soft_pace_delta", "medium_pace_delta",
+                          "tyre_deg_rate", "corner_profile_score", "race_sim_delta"}
     if xgb_weights:
         print("   🔄  Aplicando feedback XGBoost a pesos manuales...")
         total_xgb = sum(xgb_weights.values()) or 1
         for k in list(w.keys()):
-            if k in xgb_weights:
+            if k in xgb_weights and k not in _NEXT_RACE_WEIGHTS:
                 w[k] = 0.6 * (xgb_weights[k] / total_xgb) + 0.4 * w[k]
-        total_w = sum(w.values())
-        w = {k: v / total_w for k, v in w.items()}
+        # Preserve next-race feature weights (qualifying, FP) — XGB inflates season weights
+        # so a full re-normalization would dilute the 55% qualifying weight to ~39%.
+        # Instead, rescale only season features so next-race weights stay at their intended sum.
+        _next_total  = sum(w[k] for k in _NEXT_RACE_WEIGHTS if k in w)
+        _season_sum  = sum(v for k, v in w.items() if k not in _NEXT_RACE_WEIGHTS)
+        _season_tgt  = 1.0 - _next_total
+        if _season_sum > 0 and _season_tgt > 0:
+            _sf = _season_tgt / _season_sum
+            for k in list(w.keys()):
+                if k not in _NEXT_RACE_WEIGHTS:
+                    w[k] *= _sf
 
     def apply(col, direction):
         if col in feat.columns and feat[col].notna().any():
@@ -2216,12 +3309,19 @@ def score_manual(feat: pd.DataFrame,
     s += apply("quali_pos_next",      "asc")   # ★★ clasificación del próximo GP
     s += apply("fp_next_delta",       "asc")   # ★★ ritmo FP del próximo GP
     s += apply("fp2_next_longrun",    "asc")   # ★★ long run FP2 próximo GP
+    s += apply("sector_balance",      "asc")   # ★  consistencia S1/S2/S3 (menor σ = mejor)
+    s += apply("soft_pace_delta",     "asc")   # ★  ritmo SOFT vs campo en long run FP2
+    s += apply("medium_pace_delta",   "asc")   # ★  ritmo MEDIUM vs campo en long run FP2
+    s += apply("tyre_deg_rate",       "asc")   # ★  degradación neumático FP2 (s/vuelta, menor = mejor)
+    s += apply("corner_profile_score","asc")   # ★  perfil de curva: negativo = más rápido en clase dominante del circuito
+    s += apply("race_sim_delta",      "asc")   # ★  ritmo simulación carrera FP1 (negativo = más rápido)
     s += apply("quali_pos",           "asc")
     s += apply("quali_gap_teammate",  "desc")  # mayor gap = más dominante que compañero
     s += apply("avg_grid",            "asc")
     s += apply("champ_pts",           "desc")
     s += apply("avg_finish",          "asc")
-    s += apply("constructor_pts",     "desc")
+    s += apply("constructor_pts",          "desc")
+    s += apply("constructor_momentum",     "desc")  # wins in last 3 races (per team)
     s += apply("recent_form",         "desc")
     s += apply("momentum_pos",        "asc")   # posición ponderada exp. (menor=mejor)
     s += apply("fl_rate",             "desc")
@@ -2233,26 +3333,121 @@ def score_manual(feat: pd.DataFrame,
     s += apply("compound_score",      "desc")
     s += apply("circuit_score",       "desc")
     s += apply("circuit_type_score",  "desc")
+    s += apply("circuit_affinity",    "asc")   # lower avg finish = stronger affinity
     s += apply("lap1_gain",           "desc")
     s += apply("teammate_delta",      "desc")
     s += apply("avg_pitstop",         "asc")
     s += apply("sc_gain_avg",         "desc")
     s += apply("avg_sector_delta",    "asc")
+    s += apply("streak_score",          "desc")
+    s += apply("post_dnf_bounce",       "desc")
+    s += apply("championship_pressure", "desc")
+    s += apply("overtaking_ability",    "desc")
+    s += apply("quali_consistency",     "asc")   # lower std = more consistent
+    s += apply("wet_weather_delta",     "asc")   # negative = better in wet vs dry avg
+    s += apply("tyre_management_index", "desc")
+    s += apply("compatibility_score",   "desc")  # driver-circuit style match
 
     s -= feat.get("dnf_rate",      pd.Series(0.0, index=feat.index)).fillna(0) * 0.10
+    s -= feat.get("historical_dnf_rate",
+                  pd.Series(0.0, index=feat.index)).fillna(0) * 0.03
     s -= (feat.get("penalty_count", pd.Series(0.0, index=feat.index)).fillna(0)
           / (feat.get("penalty_count", pd.Series(1.0, index=feat.index)).max() + 1)) * 0.05
     return s
 
 
 # ─────────────────────────────────────────────────────────────
-#  20. MODELO XGBOOST
+#  20. MODELOS XGBoost / LightGBM — arquitectura Quali + Race
 # ─────────────────────────────────────────────────────────────
-def score_xgboost(feat: pd.DataFrame, race_df: pd.DataFrame) -> pd.Series | None:
-    """Entrena XGBoost con los datos disponibles usando Leave-One-Out CV."""
+
+# Qualifying model inputs — features correlated with grid position
+_QUALI_FEAT_COLS = [
+    "champ_pts", "avg_grid", "constructor_pts", "recent_form",
+    "fp_avg_delta", "teammate_delta",
+]
+
+# Race model inputs — all season features + predicted qualifying position
+_RACE_FEAT_COLS = [
+    "champ_pts", "avg_finish", "avg_grid", "fl_rate", "lap_std",
+    "constructor_pts", "recent_form", "momentum_pos", "sprint_pts",
+    "fp_avg_delta",
+    "avg_sector_delta", "tyre_deg_slope", "lap1_gain", "teammate_delta",
+    "avg_pitstop", "sc_gain_avg", "dnf_rate", "penalty_count",
+    "overtaking_ability", "quali_consistency", "tyre_management_index",
+]
+
+
+def _round_weights(race_df: pd.DataFrame):
+    """(sorted_rounds, {round: recency_rank}) for exponential sample weighting."""
+    rnds = sorted(race_df["round"].unique())
+    return rnds, {rnd: i for i, rnd in enumerate(rnds)}
+
+
+def _build_quali_Xyw(feat, quali_df, feat_cols, round_rank):
+    """Build (X, y, w) for qualifying-position prediction. Returns None if < 10 rows."""
+    rows_X, rows_y, rows_w = [], [], []
+    for rnd in sorted(quali_df["round"].unique()):
+        q_rnd = quali_df[quali_df["round"] == rnd][["code", "quali_pos"]].dropna()
+        rnd_w = 1.5 ** round_rank.get(int(rnd), 0)
+        for _, r in q_rnd.iterrows():
+            drv = feat[feat["code"] == r["code"]][feat_cols]
+            if not drv.empty:
+                rows_X.append(drv.iloc[0].values)
+                rows_y.append(float(r["quali_pos"]))
+                rows_w.append(rnd_w)
+    if len(rows_X) < 10:
+        return None
+    return np.array(rows_X), np.array(rows_y), np.array(rows_w)
+
+
+def _build_race_Xyw(feat, race_df, quali_df, feat_cols, round_rank):
+    """
+    Build (X, y, w, col_names) for race-position prediction.
+    Appends the ACTUAL qualifying position for each (round, driver) pair as an
+    extra column when quali_df is available, so the race model learns how much
+    grid position matters.  Returns None if < 10 rows.
+    """
+    use_q = (quali_df is not None and not quali_df.empty
+             and "round" in quali_df.columns)
+    q_lookup = {}
+    if use_q:
+        for _, r in quali_df.iterrows():
+            q_lookup[(int(r["round"]), r["code"])] = float(r["quali_pos"])
+
+    field_qpos = 11.5   # midfield fallback for missing qualifying data
+    rows_X, rows_y, rows_w = [], [], []
+    for rnd in sorted(race_df["round"].unique()):
+        rnd_res = race_df[race_df["round"] == rnd][["code", "pos"]].dropna()
+        rnd_w   = 1.5 ** round_rank[rnd]
+        for _, r in rnd_res.iterrows():
+            drv = feat[feat["code"] == r["code"]][feat_cols]
+            if not drv.empty:
+                row = drv.iloc[0].values.tolist()
+                if use_q:
+                    row.append(q_lookup.get((int(rnd), r["code"]), field_qpos))
+                rows_X.append(row)
+                rows_y.append(float(r["pos"]))
+                rows_w.append(rnd_w)
+
+    if len(rows_X) < 10:
+        return None
+    all_cols = feat_cols + (["predicted_quali_pos"] if use_q else [])
+    return np.array(rows_X), np.array(rows_y), np.array(rows_w), all_cols
+
+
+def score_xgboost(feat: pd.DataFrame, race_df: pd.DataFrame,
+                  quali_df: pd.DataFrame = None,
+                  warm_start_file: str = None,
+                  warm_race_df: pd.DataFrame = None):
+    """
+    Two-stage XGBoost pipeline:
+      Stage 1 — Qualifying model: predicts qualifying grid position from season features.
+      Stage 2 — Race model: predicts finishing position using season features +
+                            predicted_quali_pos from stage 1.
+    Returns (score, importances) or None.
+    """
     try:
         from xgboost import XGBRegressor
-        from sklearn.model_selection import cross_val_score
     except ImportError:
         print("   ⚠  xgboost no instalado — usando modelo de pesos.")
         return None
@@ -2260,68 +3455,292 @@ def score_xgboost(feat: pd.DataFrame, race_df: pd.DataFrame) -> pd.Series | None
     if race_df.empty:
         return None
 
-    feature_cols = [c for c in [
-        "champ_pts", "avg_finish", "avg_grid", "fl_rate", "lap_std",
-        "constructor_pts", "recent_form", "momentum_pos", "sprint_pts",
-        "quali_pos_next", "fp_next_delta", "fp2_next_longrun", "fp_avg_delta",
-        "avg_sector_delta", "tyre_deg_slope", "lap1_gain", "teammate_delta",
-        "avg_pitstop", "sc_gain_avg", "dnf_rate", "penalty_count",
-    ] if c in feat.columns]
+    n = len(feat)
+    _, round_rank  = _round_weights(race_df)
+    q_feat_cols    = [c for c in _QUALI_FEAT_COLS if c in feat.columns]
+    r_feat_cols    = [c for c in _RACE_FEAT_COLS  if c in feat.columns]
 
-    # Construir dataset de entrenamiento por carrera
-    X_rows, y_rows = [], []
-    for rnd in race_df["round"].unique():
-        rnd_res = race_df[race_df["round"] == rnd][["code", "pos"]].dropna()
-        for _, r in rnd_res.iterrows():
-            driver_feat = feat[feat["code"] == r["code"]][feature_cols]
-            if not driver_feat.empty:
-                X_rows.append(driver_feat.iloc[0].values)
-                y_rows.append(r["pos"])
+    def _xgb():
+        return XGBRegressor(n_estimators=100, max_depth=3, learning_rate=0.1,
+                             subsample=0.8, random_state=42, verbosity=0)
 
-    if len(X_rows) < 10:
+    # ── Stage 1: Qualifying model ────────────────────────────────────────
+    predicted_quali_pos = None
+    use_quali = (quali_df is not None and not quali_df.empty
+                 and "round" in quali_df.columns and len(q_feat_cols) >= 2)
+    if use_quali:
+        qdata = _build_quali_Xyw(feat, quali_df, q_feat_cols, round_rank)
+        if qdata is not None:
+            Xq, yq, wq = qdata
+            qm = _xgb()
+            qm.fit(Xq, yq, sample_weight=wq)
+            pq = np.clip(qm.predict(feat[q_feat_cols].values), 1, n)
+            predicted_quali_pos = pq
+            pole_code = feat.iloc[int(np.argmin(pq))]["code"]
+            print(f"   🏎  XGB quali model → pole predicted: {pole_code} "
+                  f"(P{pq.min():.1f})")
+
+    # ── Stage 2: Race model ──────────────────────────────────────────────
+    rdata = _build_race_Xyw(feat, race_df, quali_df, r_feat_cols, round_rank)
+    if rdata is None:
         return None
+    X, y, w_arr, all_race_cols = rdata
 
-    X = np.array(X_rows)
-    y = np.array(y_rows)
+    # ── Training mode: full retrain vs incremental warm start ────────────
+    _do_warm = (warm_race_df is not None
+                and warm_start_file is not None
+                and os.path.exists(warm_start_file))
+    if _do_warm:
+        inc_rdata = _build_race_Xyw(feat, warm_race_df, quali_df,
+                                    r_feat_cols, round_rank)
+        if inc_rdata is None:
+            _do_warm = False  # too few rows — fall back to full retrain
 
-    model = XGBRegressor(n_estimators=100, max_depth=3,
-                         learning_rate=0.1, subsample=0.8,
-                         random_state=42, verbosity=0)
-    try:
-        from sklearn.model_selection import LeaveOneOut
-        loo = LeaveOneOut()
-        errors = []
-        for train_idx, test_idx in loo.split(X):
-            model.fit(X[train_idx], y[train_idx])
-            pred = model.predict(X[test_idx])
-            errors.append(abs(pred[0] - y[test_idx][0]))
-        mae = np.mean(errors)
-        print(f"   ✅  XGBoost MAE (LOO): {mae:.2f} posiciones")
-    except Exception:
-        pass
+    if _do_warm:
+        Xi, yi, wi, _ = inc_rdata
+        wi = wi * _INCREMENTAL_WEIGHT_MULT
+        try:
+            from xgboost import Booster as _XGBBooster
+            _saved = _XGBBooster(); _saved.load_model(warm_start_file)
+            if _saved.num_features() != Xi.shape[1]:
+                raise ValueError(f"feature count mismatch: saved={_saved.num_features()} vs new={Xi.shape[1]}")
+            model = XGBRegressor(n_estimators=_INCREMENTAL_TREES, max_depth=3,
+                                 learning_rate=0.1, subsample=0.8,
+                                 random_state=42, verbosity=0)
+            model.fit(Xi, yi, sample_weight=wi, xgb_model=warm_start_file)
+            model.save_model(warm_start_file)
+            print(f"   🔄  XGBoost: warm start (+{_INCREMENTAL_TREES} árboles, "
+                  f"×{_INCREMENTAL_WEIGHT_MULT} peso, {len(Xi)} muestras nuevas)")
+        except Exception as _e:
+            print(f"   ⚠  XGBoost warm start falló ({_e}) — retrain completo")
+            _do_warm = False
+    if not _do_warm:
+        model = _xgb()
+        try:
+            from sklearn.model_selection import LeaveOneOut
+            loo, errors = LeaveOneOut(), []
+            for tr, te in loo.split(X):
+                model.fit(X[tr], y[tr], sample_weight=w_arr[tr])
+                errors.append(abs(model.predict(X[te])[0] - y[te][0]))
+            print(f"   ✅  XGBoost Race MAE (LOO): {np.mean(errors):.2f} posiciones")
+        except Exception:
+            pass
+        model.fit(X, y, sample_weight=w_arr)
+        if warm_start_file:
+            model.save_model(warm_start_file)
+        print(f"   ✅  XGBoost: entrenamiento completo ({len(X)} muestras)")
 
-    # Entrenamiento final con todos los datos
-    model.fit(X, y)
-    pred_pos = model.predict(feat[feature_cols].values)
+    # Inference: build feature matrix that matches training column order
+    X_pred = feat[r_feat_cols].values
+    if "predicted_quali_pos" in all_race_cols:
+        if predicted_quali_pos is not None:
+            X_pred = np.hstack([X_pred, predicted_quali_pos.reshape(-1, 1)])
+        else:
+            fallback = (feat["avg_grid"].values.reshape(-1, 1)
+                        if "avg_grid" in feat.columns else np.full((n, 1), 11.5))
+            X_pred = np.hstack([X_pred, fallback])
+
+    pred_pos = model.predict(X_pred)
     score    = pd.Series(1 / (pred_pos + 0.1), index=feat.index)
 
-    # ── FEEDBACK LOOP: exportar importancias para reponderar modelo manual ──
-    try:
-        importances = dict(zip(feature_cols, model.feature_importances_))
-        # Mostrar top-5 features más importantes aprendidas
-        top5 = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:5]
-        print("   📊  Top features aprendidos por XGBoost:")
-        for fname, fimp in top5:
-            bar = "█" * int(fimp * 100)
-            print(f"      {fname:<22} {fimp:.3f}  {bar}")
-        return score, importances
-    except Exception:
-        return score, {}
+    importances = dict(zip(all_race_cols, model.feature_importances_))
+    top5 = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:5]
+    print("   📊  Top features XGBoost (race model):")
+    for fname, fimp in top5:
+        print(f"      {fname:<22} {fimp:.3f}  {'█' * int(fimp * 100)}")
+    return score, importances
 
+
+def score_lightgbm(feat: pd.DataFrame, race_df: pd.DataFrame,
+                   quali_df: pd.DataFrame = None,
+                   warm_start_file: str = None,
+                   warm_race_df: pd.DataFrame = None):
+    """
+    Two-stage LightGBM pipeline mirroring score_xgboost().
+    Returns (score, importances) or None.
+    Importances are normalised to sum=1 so they blend directly with XGB importances.
+    """
+    try:
+        import lightgbm as lgb
+    except ImportError:
+        print("   ⚠  lightgbm no instalado — omitiendo LGBM")
+        return None
+
+    if race_df.empty:
+        return None
+
+    n = len(feat)
+    _, round_rank = _round_weights(race_df)
+    q_feat_cols   = [c for c in _QUALI_FEAT_COLS if c in feat.columns]
+    r_feat_cols   = [c for c in _RACE_FEAT_COLS  if c in feat.columns]
+
+    def _lgbm():
+        return lgb.LGBMRegressor(n_estimators=100, max_depth=3, num_leaves=8,
+                                  learning_rate=0.1, subsample=0.8,
+                                  random_state=42, verbose=-1)
+
+    # ── Stage 1: Qualifying model ────────────────────────────────────────
+    predicted_quali_pos = None
+    use_quali = (quali_df is not None and not quali_df.empty
+                 and "round" in quali_df.columns and len(q_feat_cols) >= 2)
+    if use_quali:
+        qdata = _build_quali_Xyw(feat, quali_df, q_feat_cols, round_rank)
+        if qdata is not None:
+            Xq, yq, wq = qdata
+            qm = _lgbm()
+            qm.fit(Xq, yq, sample_weight=wq)
+            predicted_quali_pos = np.clip(
+                qm.predict(feat[q_feat_cols].values), 1, n)
+
+    # ── Stage 2: Race model ──────────────────────────────────────────────
+    rdata = _build_race_Xyw(feat, race_df, quali_df, r_feat_cols, round_rank)
+    if rdata is None:
+        return None
+    X, y, w_arr, all_race_cols = rdata
+
+    try:
+        # ── Training mode: full retrain vs incremental warm start ────────
+        _do_warm_lgb = (warm_race_df is not None
+                        and warm_start_file is not None
+                        and os.path.exists(warm_start_file))
+        if _do_warm_lgb:
+            inc_rdata_lgb = _build_race_Xyw(feat, warm_race_df, quali_df,
+                                            r_feat_cols, round_rank)
+            if inc_rdata_lgb is None:
+                _do_warm_lgb = False
+
+        if _do_warm_lgb:
+            Xi, yi, wi, _ = inc_rdata_lgb
+            wi = wi * _INCREMENTAL_WEIGHT_MULT
+            try:
+                _saved_lgb = lgb.Booster(model_file=warm_start_file)
+                if _saved_lgb.num_feature() != Xi.shape[1]:
+                    raise ValueError(f"feature count mismatch: saved={_saved_lgb.num_feature()} vs new={Xi.shape[1]}")
+                model = lgb.LGBMRegressor(n_estimators=_INCREMENTAL_TREES,
+                                          max_depth=3, num_leaves=8,
+                                          learning_rate=0.1, subsample=0.8,
+                                          random_state=42, verbose=-1)
+                model.fit(Xi, yi, sample_weight=wi, init_model=warm_start_file)
+                model.booster_.save_model(warm_start_file)
+                print(f"   🔄  LightGBM: warm start (+{_INCREMENTAL_TREES} árboles, "
+                      f"×{_INCREMENTAL_WEIGHT_MULT} peso, {len(Xi)} muestras nuevas)")
+            except Exception as _e:
+                print(f"   ⚠  LightGBM warm start falló ({_e}) — retrain completo")
+                _do_warm_lgb = False
+        if not _do_warm_lgb:
+            model = _lgbm()
+            model.fit(X, y, sample_weight=w_arr)
+            if warm_start_file:
+                model.booster_.save_model(warm_start_file)
+            print(f"   ✅  LightGBM: entrenamiento completo ({len(X)} muestras)")
+
+        X_pred = feat[r_feat_cols].values
+        if "predicted_quali_pos" in all_race_cols:
+            if predicted_quali_pos is not None:
+                X_pred = np.hstack([X_pred, predicted_quali_pos.reshape(-1, 1)])
+            else:
+                fallback = (feat["avg_grid"].values.reshape(-1, 1)
+                            if "avg_grid" in feat.columns else np.full((n, 1), 11.5))
+                X_pred = np.hstack([X_pred, fallback])
+
+        pred_pos = model.predict(X_pred)
+        score    = pd.Series(1 / (pred_pos + 0.1), index=feat.index)
+
+        raw_imp   = model.feature_importances_.astype(float)
+        total_imp = raw_imp.sum() or 1.0
+        importances = dict(zip(all_race_cols, raw_imp / total_imp))
+        return score, importances
+    except Exception as e:
+        print(f"   ⚠  LightGBM error: {e}")
+        return None
 
 
 # ─────────────────────────────────────────────────────────────
-#  21b. MODELO DE FIABILIDAD
+#  21b. GAUSSIAN PROCESS REGRESSION — incertidumbre explícita
+# ─────────────────────────────────────────────────────────────
+def score_gaussian_process(feat: pd.DataFrame, race_df: pd.DataFrame,
+                            quali_df: pd.DataFrame = None):
+    """
+    Single-stage Gaussian Process Regression race model.
+
+    Unlike tree ensembles, GP explicitly quantifies uncertainty: feature-space
+    regions with sparse training data receive wider prediction intervals.  This
+    makes it especially valuable at the start of a season (6-12 completed races)
+    where some regions of the feature space are poorly covered.
+
+    Kernel: RBF (smooth covariance structure) + WhiteKernel (observation noise).
+    Features are StandardScaled before fitting — mandatory for distance-based kernels.
+    GPR doesn't support sample_weight, so recency-weighting is omitted here; the
+    RBF kernel naturally clusters structurally-similar rounds anyway.
+
+    Returns (score, gp_std) or None.
+      score   — pd.Series of 1/(pred_pos + 0.1), same convention as XGB/LGBM
+      gp_std  — pd.Series of prediction σ per driver (higher = model more uncertain)
+    """
+    try:
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        print("   ⚠  sklearn GP no disponible — omitiendo GP")
+        return None
+
+    if race_df.empty:
+        return None
+
+    _, round_rank = _round_weights(race_df)
+    r_feat_cols   = [c for c in _RACE_FEAT_COLS if c in feat.columns]
+    if len(r_feat_cols) < 3:
+        return None
+
+    # Training data — no qualifying stage (keeps GP focused on race-pace space)
+    rdata = _build_race_Xyw(feat, race_df, None, r_feat_cols, round_rank)
+    if rdata is None:
+        return None
+    X, y, _, _ = rdata   # sample_weight unused: GPR doesn't support it
+
+    # Scale — RBF kernel computes L2 distances, so scale matters
+    scaler   = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    kernel = (RBF(length_scale=1.0, length_scale_bounds=(0.1, 10.0)) +
+              WhiteKernel(noise_level=0.5, noise_level_bounds=(0.1, 5.0)))
+    gpr = GaussianProcessRegressor(
+        kernel=kernel,
+        n_restarts_optimizer=2,
+        normalize_y=True,   # normalize target to zero-mean: important for GP
+        random_state=42,
+    )
+    try:
+        gpr.fit(X_scaled, y)
+    except Exception as e:
+        print(f"   ⚠  GP entrenamiento falló: {e}")
+        return None
+
+    X_pred = scaler.transform(feat[r_feat_cols].fillna(0).values)
+    pred_pos, pred_std = gpr.predict(X_pred, return_std=True)
+    pred_pos = np.clip(pred_pos, 0.5, None)
+
+    score  = pd.Series(1.0 / (pred_pos + 0.1), index=feat.index)
+    gp_std = pd.Series(pred_std, index=feat.index)
+
+    # Print top-5 with uncertainty bars
+    _gp_df = feat[["code"]].copy()
+    _gp_df["pos"] = np.clip(pred_pos, 1.0, 22.0).round(1)
+    _gp_df["std"] = gp_std.values.round(2)
+    _top5 = _gp_df.nsmallest(5, "pos")
+    print(f"   🌊  GP top-5 predicciones (σ = incertidumbre por datos escasos):")
+    for _, r in _top5.iterrows():
+        bar = "▪" * min(int(r["std"] * 8), 20)
+        print(f"      {r['code']:<5} P{r['pos']:4.1f}  σ={r['std']:.2f}  {bar}")
+    print(f"   🔧  Kernel optimizado: {gpr.kernel_}")
+    print(f"   ✅  GP: {len(X)} muestras, {len(r_feat_cols)} features")
+
+    return score, gp_std
+
+
+# ─────────────────────────────────────────────────────────────
+#  21c. MODELO DE FIABILIDAD
 # ─────────────────────────────────────────────────────────────
 # Clasificación de causas de DNF por componente
 # Usamos palabras clave del campo "status" de la API de Jolpica
@@ -2486,20 +3905,24 @@ def build_reliability(feat: pd.DataFrame, race_df: pd.DataFrame,
 #  21c. SIMULACIÓN MONTE CARLO
 # ─────────────────────────────────────────────────────────────
 def monte_carlo_simulation(
-        feat        : pd.DataFrame,
-        base_scores : pd.Series,
-        reliability : pd.DataFrame,
-        weather     : dict,
-        n_sims      : int = 10_000,
+        feat         : pd.DataFrame,
+        base_scores  : pd.Series,
+        reliability  : pd.DataFrame,
+        weather      : dict,
+        n_sims       : int = 10_000,
+        circuit_name : str = "",
 ) -> pd.DataFrame:
     """
     Corre N simulaciones de la carrera inyectando variaciones aleatorias en:
       1. Ritmo base del piloto          (ruido gaussiano ±15%)
       2. Fiabilidad / DNF               (Bernoulli por piloto)
-      3. Safety Car                     (Poisson, ~1.2 SC por carrera en 2026)
-      4. Pit stop variance              (ruido uniforme ±2s por parada)
+      3. Safety Car                     (Poisson, lambda derivado de SAFETY_CAR_PROB)
+      4. Pit stop time loss             (team-specific stationary time via PIT_STOP_LOSS)
       5. Clima / lluvia                 (si se espera lluvia, mezcla ranking)
       6. Vuelta 1 incidente             (prob 18% de que alguien pierda 2-4 pos)
+      7. Tyre strategy / undercut       (circuit-specific prob from UNDERCUT_WINDOW, P3-P10)
+         Traffic model: 30% of undercuts exit into traffic → partial gain recovery
+      8. Final stint boost              (2-stop: +0.02 pace over last 20 laps)
 
     Retorna un DataFrame con:
       - win_mc_pct    : % de simulaciones en que el piloto ganó
@@ -2508,12 +3931,50 @@ def monte_carlo_simulation(
       - avg_mc_pos    : posición promedio en las simulaciones
       - p10_pos / p90_pos : percentiles 10 y 90 de posición (intervalo de confianza)
     """
+    # Circuit-specific SC/VSC probability → Poisson lambda
+    # lambda = -ln(1 - p)  so that P(≥1 SC) = 1 - e^(-lambda) = p
+    _DEFAULT_SC_PROB = 0.50
+    sc_prob   = SAFETY_CAR_PROB.get(circuit_name, _DEFAULT_SC_PROB)
+    sc_lambda = -np.log(1.0 - sc_prob) if sc_prob < 1.0 else 3.0
+    _uw          = UNDERCUT_WINDOW.get(circuit_name, {"laps": (16, 20), "prob": 0.40})
+    undercut_prob = float(_uw["prob"])
+    _uw_laps      = _uw["laps"]
     print(f"🎲  Corriendo {n_sims:,} simulaciones Monte Carlo...")
+    print(f"   🚦  SC/VSC prob: {sc_prob:.0%}  "
+          f"(λ={sc_lambda:.2f}, ~{sc_lambda:.1f} SC esperados por carrera)")
+    if _uw_laps[0] > 0:
+        print(f"   🔁  Undercut prob: {undercut_prob:.0%}  "
+              f"(ventana óptima laps {_uw_laps[0]}–{_uw_laps[1]})")
+    else:
+        print(f"   🔁  Undercut prob: {undercut_prob:.0%}  (circuito urbano — sin ventana)")
 
     rng      = np.random.default_rng(42)
     n        = len(feat)
     codes    = feat["code"].tolist()
     scores_v = base_scores.values.copy().astype(float)
+
+    # Rank-based pace mapping — decouples pace spread from raw_score magnitude
+    # Rank 1 (best model score) → 1.030, Rank 22 → 0.970, log curve between
+    # Prevents outlier raw_scores from monopolising the pace ceiling
+    ranks = pd.Series(scores_v).rank(ascending=False, method='min').values
+    scores_v = 1.03 - 0.06 * np.log(ranks) / np.log(len(ranks))
+
+    # Grid starting advantage — drivers hold qualifying position for the first
+    # GRID_LAPS laps before pace takes over (5/57 ≈ 8.8% of a typical F1 race).
+    # Falls back to season avg_grid ranking when next-race quali isn't loaded.
+    _qp = feat["quali_pos_next"].copy()
+    if (_qp == _qp.max()).all():   # all set to same NaN-sentinel → no quali data
+        _qp = pd.Series(feat["avg_grid"].values).rank(method="first", ascending=True)
+    _qp = _qp.clip(lower=1).fillna(float(n)).values.astype(float)
+    grid_scores_v = 1.03 - 0.06 * np.log(np.maximum(_qp, 1)) / np.log(max(n, 2))
+    GRID_LAPS   = 5
+    RACE_LAPS   = 57          # representative F1 race length (laps vary 52–78)
+    grid_weight = GRID_LAPS / RACE_LAPS   # ≈ 0.0877
+
+    # Tyre strategy per constructor (2026 known team preferences)
+    _STRAT_1STOP = {"Mercedes", "Ferrari", "Red Bull", "Aston Martin"}
+    is_1stop = np.array([feat.iloc[i]["TeamName"] in _STRAT_1STOP for i in range(n)])
+    is_2stop = ~is_1stop
 
     # Mapa de fiabilidad por código
     rel_map      = dict(zip(reliability["code"], reliability["finish_prob"]))
@@ -2522,7 +3983,17 @@ def monte_carlo_simulation(
                              pd.Series(0.06, index=reliability.index))))
 
     # ¿Lluvia esperada?
-    rain_expected = weather.get("rain_expected", False)
+    rain_prob = float(weather.get("rain_prob", 0.0))
+
+    # Per-driver pit penalty: map team stationary time → score multiplier loss.
+    # Scale: best crew (2.3s) → 0.010, worst (2.9s) → 0.025.
+    _pit_range = _PIT_LOSS_WORST - _PIT_LOSS_BEST  # 0.6
+    _pit_penalty = np.array([
+        0.010 + 0.015 * (
+            PIT_STOP_LOSS.get(feat.iloc[i]["TeamName"], _PIT_LOSS_DEFAULT) - _PIT_LOSS_BEST
+        ) / _pit_range
+        for i in range(n)
+    ])
 
     # Acumuladores
     wins    = np.zeros(n, dtype=int)
@@ -2531,31 +4002,57 @@ def monte_carlo_simulation(
     pos_all = np.zeros((n, n_sims), dtype=np.float32)
 
     for sim in range(n_sims):
-        # 1. Ruido de ritmo base (±15% gaussiano)
-        noise_scale = 0.22 if rain_expected else 0.15   # más caos con lluvia
+        # 1. Ruido de ritmo base (±5% gaussiano — calibrado para rango de pace 6%)
+        noise_scale = 0.05 + 0.03 * rain_prob   # 0.05 dry → 0.08 fully wet
         sim_scores  = scores_v * (1 + rng.normal(0, noise_scale, n))
 
-        # 2. Safety Car — redistribuye ligeramente el campo
-        #    Poisson(1.2): en promedio 1-2 SC por carrera
-        n_sc = rng.poisson(1.2)
-        if n_sc > 0:
+        # 1b. Starting grid anchor: blend qualifying grid position into pace scores
+        #     Grid is deterministic (no noise); pace noise already applied above.
+        sim_scores = (1.0 - grid_weight) * sim_scores + grid_weight * grid_scores_v
+
+        # 2. Safety Car — each SC event compresses the field (applied once per event)
+        #    Lambda derived from per-circuit historical SC probability
+        n_sc = rng.poisson(sc_lambda)
+        for _ in range(n_sc):
             # SC comprime el pelotón → añade ruido extra al 50% trasero
             bottom_half = np.argsort(sim_scores)[:n//2]
-            sim_scores[bottom_half] *= (1 + rng.uniform(0, 0.08, len(bottom_half)))
+            sim_scores[bottom_half] *= (1 + rng.uniform(0, 0.03, len(bottom_half)))
 
-        # 3. Lluvia — mezcla aleatoria extra si hay lluvia
-        if rain_expected and rng.random() < 0.6:
-            shuffle_idx = rng.choice(n, size=n//3, replace=False)
+        # 3. Lluvia — shuffle proporcional a rain_prob
+        #    At rain_prob=0.3: 18% chance, ~2 drivers shuffled
+        #    At rain_prob=1.0: 60% chance, ~7 drivers shuffled
+        if rng.random() < rain_prob * 0.6:
+            shuffle_size = max(1, round(n * rain_prob / 3))
+            shuffle_idx  = rng.choice(n, size=shuffle_size, replace=False)
             sim_scores[shuffle_idx] = rng.permutation(sim_scores[shuffle_idx])
 
-        # 4. Pit stop variance — penaliza aleatoriamente a algún piloto
+        # 4. Pit stop time loss — team-specific stationary time penalty.
+        # Faster crews (Mercedes/McLaren 2.3s) incur smaller score hit than
+        # slower ones (Audi 2.9s). Penalty scales linearly across the 0.6s range.
         pit_victim = rng.integers(0, n)
-        sim_scores[pit_victim] *= (1 - rng.uniform(0.02, 0.08))
+        sim_scores[pit_victim] *= (1.0 - _pit_penalty[pit_victim] * rng.uniform(0.8, 1.2))
 
         # 5. Vuelta 1 incidente (prob 18%)
         if rng.random() < 0.18:
             victim = rng.integers(0, min(8, n))   # más probable en top-8
-            sim_scores[victim] *= (1 - rng.uniform(0.05, 0.15))
+            sim_scores[victim] *= (1 - rng.uniform(0.02, 0.05))
+
+        # 5b. Tyre strategy events
+        # Undercut: circuit-specific probability from UNDERCUT_WINDOW.
+        # One 1-stop driver running P3-P10 pits 3-5 laps early and jumps a rival.
+        # Traffic model: 30% of undercuts exit behind slow traffic and lose
+        # 1-2 positions temporarily; pace advantage recovers them over ~5 laps.
+        _sorted = np.argsort(-sim_scores)
+        _uc = [i for i in _sorted[2:10] if is_1stop[i]]
+        if _uc and rng.random() < undercut_prob:
+            winner_idx = rng.choice(_uc)
+            gain = rng.uniform(0.002, 0.004)
+            if rng.random() < 0.30:  # traffic on pit exit
+                # net loss after 5-lap recovery = traffic_loss × (5/RACE_LAPS)
+                gain -= rng.uniform(0.001, 0.002) * (5.0 / RACE_LAPS)
+            sim_scores[winner_idx] += max(0.0, gain)
+        # 2-stop fresh tyre pace boost in final 20 laps (≈ +0.007 net per sim)
+        sim_scores[is_2stop] *= (1.0 + 0.02 * (20.0 / RACE_LAPS))
 
         # 6. DNF por fiabilidad — separado mecánico (se repite) vs accidente
         dnf_mask = np.array([
@@ -2589,6 +4086,20 @@ def monte_carlo_simulation(
             podiums[idx] += 1
         finishes += (~dnf_mask).astype(int)
 
+    # Win% confidence intervals via 100 non-overlapping batches of 100 sims
+    # P10/P90 of batch-level win% gives a meaningful uncertainty range:
+    #   a driver at 19.7% overall will span roughly ±5pp across batches.
+    _BATCH_N    = 100
+    _BATCH_SIZE = n_sims // _BATCH_N          # = 100 with default n_sims=10000
+    _win_mat    = (pos_all == 1.0).astype(np.float32)   # (n, n_sims)
+    _win_batch  = (
+        _win_mat[:, : _BATCH_N * _BATCH_SIZE]
+        .reshape(n, _BATCH_N, _BATCH_SIZE)
+        .mean(axis=2) * 100
+    )                                          # shape (n, _BATCH_N)
+    p10_win_v = np.percentile(_win_batch, 10, axis=1)   # (n,)
+    p90_win_v = np.percentile(_win_batch, 90, axis=1)   # (n,)
+
     # Calcular estadísticas finales
     n_drivers = len(codes)
     rows = []
@@ -2617,6 +4128,8 @@ def monte_carlo_simulation(
             "avg_mc_pos"    : round(avg, 2),
             "p10_pos"       : round(p10, 1),
             "p90_pos"       : round(p90, 1),
+            "p10_win_pct"   : round(float(p10_win_v[i]), 2),
+            "p90_win_pct"   : round(float(p90_win_v[i]), 2),
         })
 
     mc_df = pd.DataFrame(rows).sort_values("win_mc_pct", ascending=False
@@ -2625,14 +4138,32 @@ def monte_carlo_simulation(
     return mc_df
 
 # ─────────────────────────────────────────────────────────────
-#  21. NORMALIZAR A PROBABILIDAD
+#  21. BRIER SCORE — calibración de predicción post-carrera
 # ─────────────────────────────────────────────────────────────
-def scores_to_probability(scores: pd.Series) -> pd.Series:
-    s = scores - scores.min()
-    total = s.sum()
-    if total == 0:
+def brier_score(pred_df: pd.DataFrame, winner_code: str) -> float:
+    """
+    Brier score for a single race: mean((p_win - outcome)^2) across all drivers.
+      pred_df:      DataFrame with 'code' and 'win_mc_pct' (0-100 scale)
+      winner_code:  driver code of actual race winner
+    Lower = better; 0.0 = perfect; ~0.045 = random uniform baseline for 22 drivers.
+    """
+    if pred_df.empty or "win_mc_pct" not in pred_df.columns:
+        return float("nan")
+    total = sum(
+        ((row["win_mc_pct"] / 100.0) - (1.0 if row["code"] == winner_code else 0.0)) ** 2
+        for _, row in pred_df.iterrows()
+    )
+    return round(total / len(pred_df), 4)
+
+# ─────────────────────────────────────────────────────────────
+#  22. NORMALIZAR A PROBABILIDAD
+# ─────────────────────────────────────────────────────────────
+def scores_to_probability(scores: pd.Series, temperature: float = 3.0) -> pd.Series:
+    scaled = scores * temperature
+    exp_scores = np.exp(scaled - scaled.max())  # subtract max for numerical stability
+    if exp_scores.sum() == 0:
         return pd.Series(1 / len(scores), index=scores.index)
-    return s / total * 100
+    return exp_scores / exp_scores.sum() * 100
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2655,7 +4186,8 @@ def print_report(scored: pd.DataFrame, next_info: pd.Series,
     if mc_df is not None and not mc_df.empty:
         df = df.merge(mc_df[["code","win_mc_pct","podium_mc_pct",
                               "finish_mc_pct","avg_mc_pos",
-                              "p10_pos","p90_pos"]],
+                              "p10_pos","p90_pos",
+                              "p10_win_pct","p90_win_pct"]],
                       on="code", how="left")
     if reliability is not None and not reliability.empty:
         df = df.merge(reliability[["code","finish_prob","real_dnfs","real_races"]],
@@ -2667,11 +4199,19 @@ def print_report(scored: pd.DataFrame, next_info: pd.Series,
     if weather:
         temp = weather.get("avg_track_temp")
         hum  = weather.get("avg_humidity")
-        rain = weather.get("rain_expected", False)
+        rain = weather.get("rain_prob", 0.0)
+        if rain < 0.10:
+            rain_lbl = "☀  Seco esperado"
+        elif rain < 0.50:
+            rain_lbl = f"⛅  Lluvia posible {rain:.0%}"
+        else:
+            rain_lbl = f"🌧  Lluvia probable {rain:.0%}"
+        _src      = "[nowcast]" if weather.get("nowcast_available") else "[horario]"
         clima_str = (
-            f"{'🌧  Lluvia posible' if rain else '☀  Seco esperado'}"
+            rain_lbl
             + (f"  |  Pista ~{temp:.0f}°C" if temp else "")
             + (f"  |  Humedad {hum:.0f}%"  if hum  else "")
+            + f"  {_src}"
         )
     else:
         clima_str = "N/D"
@@ -2746,6 +4286,54 @@ def print_report(scored: pd.DataFrame, next_info: pd.Series,
     print(tabulate(t1_rows, headers=t1_headers,
                    tablefmt="rounded_outline", colalign=("center",)))
 
+    # ── Compact win / podium summary with CI — todos los pilotos ──────
+    if use_mc:
+        print(f"\n  📈  PROBABILIDADES — Ganar & Podio  (todos los pilotos)\n")
+        _epi_max_code, _epi_max_val = None, 0.0
+
+        for _, r in df.iterrows():
+            code    = r["code"]
+            win_mc  = r.get("win_mc_pct",    0)
+            pod_mc  = r.get("podium_mc_pct", 0)
+            p10w    = r.get("p10_win_pct",   0)
+            p90w    = r.get("p90_win_pct",   0)
+            epi_unc = float(r.get("epistemic_unc", 0.0))
+
+            if epi_unc > _epi_max_val:
+                _epi_max_val, _epi_max_code = epi_unc, code
+
+            disagree  = epi_unc > 0.15
+            prefix    = "⚠ " if disagree else "  "
+            dis_tag   = "  [models disagree]" if disagree else ""
+
+            if win_mc >= 3.0:
+                print(f"  {prefix}{code:<5}  {win_mc:>5.1f}% win  "
+                      f"(P10: {p10w:.1f}% — P90: {p90w:.1f}%)  │  {pod_mc:>5.1f}% podio"
+                      f"{dis_tag}")
+            else:
+                print(f"  {prefix}{code:<5}  {win_mc:>5.1f}% win  │  {pod_mc:>5.1f}% podio"
+                      f"{dis_tag}")
+
+        print()
+
+        # Uncertainty summary lines
+        if _epi_max_code:
+            print(f"  ⚠  Mayor desacuerdo de modelos   : {_epi_max_code} ({_epi_max_val:.2f})")
+
+        _has_epi = "epistemic_unc" in df.columns
+        _has_ale = "aleatoric_unc" in df.columns
+        if _has_epi and _has_ale:
+            _unc = df[["code", "epistemic_unc", "aleatoric_unc"]].copy().fillna(0.0)
+            _epi_top = _unc["epistemic_unc"].max() or 1.0
+            _ale_top = _unc["aleatoric_unc"].max() or 1.0
+            _unc["_combined"] = (_unc["epistemic_unc"] / _epi_top +
+                                  _unc["aleatoric_unc"] / _ale_top)
+            _mu = _unc.loc[_unc["_combined"].idxmax()]
+            print(f"  🔮  Predicción más incierta       : {_mu['code']} "
+                  f"(epistémica: {_mu['epistemic_unc']:.2f}, "
+                  f"aleatoria: {_mu['aleatoric_unc']:.1f})")
+        print()
+
     # ══════════════════════════════════════════════════════════
     #  TABLA 2 — DETALLE TÉCNICO (solo top 10)
     # ══════════════════════════════════════════════════════════
@@ -2810,6 +4398,383 @@ def print_report(scored: pd.DataFrame, next_info: pd.Series,
     print(f"      Estrategia, clima y mecánica pueden cambiar cualquier predicción.\n")
 
 
+# ─────────────────────────────────────────────────────────────
+#  22b. STACKING META-MODEL — per-circuit-type XGB/LGBM weights
+# ─────────────────────────────────────────────────────────────
+def fit_stacking_meta_model(loo_driver_preds: list) -> "dict | None":
+    """
+    Train a logistic regression meta-model on LOO per-driver predictions.
+
+    Feature matrix: interaction columns [xgb_p × ctype_i, lgbm_p × ctype_i]
+    for each of the 4 circuit types.  fit_intercept=False so that the learned
+    coefficients directly represent the relative trust in each base model at
+    each circuit type.
+
+    Requires loo_driver_preds to contain 'xgb_win_prob', 'lgbm_win_prob', and
+    'circuit_type' fields (added by the updated cross_validate_season()).
+    Returns a JSON-serialisable dict of coefficients, or None.
+    """
+    rows = [r for r in loo_driver_preds
+            if "xgb_win_prob" in r and "lgbm_win_prob" in r]
+    n_rounds = len({r["round"] for r in rows})
+
+    if n_rounds < _META_MIN_ROUNDS:
+        print(f"   ℹ️   Stacking meta-modelo: {n_rounds}/{_META_MIN_ROUNDS} rondas "
+              f"— blend 50/50 por ahora")
+        return None
+
+    try:
+        from sklearn.linear_model import LogisticRegression
+    except ImportError:
+        return None
+
+    n_ctypes = len(_META_CTYPES)
+    X_meta, y_meta = [], []
+    for r in rows:
+        xgb_p  = r["xgb_win_prob"]  / 100.0
+        lgbm_p = r["lgbm_win_prob"] / 100.0
+        ctype  = r.get("circuit_type", "mixed")
+        ci     = _META_CTYPES.index(ctype) if ctype in _META_CTYPES else n_ctypes - 1
+        feats  = [0.0] * (n_ctypes * 2)
+        feats[ci * 2]     = xgb_p
+        feats[ci * 2 + 1] = lgbm_p
+        X_meta.append(feats)
+        y_meta.append(int(r["won"]))
+
+    X_meta = np.array(X_meta, dtype=np.float32)
+    y_meta = np.array(y_meta, dtype=np.int32)
+
+    if y_meta.sum() < 1 or y_meta.sum() == len(y_meta):
+        return None
+
+    # fit_intercept=True lets the model learn the ~4.5% base win rate via intercept,
+    # freeing coefficients to be positive (higher prob → more likely to win).
+    clf = LogisticRegression(
+        fit_intercept=True, C=10.0, max_iter=1000, random_state=42)
+    clf.fit(X_meta, y_meta)
+    coef = clf.coef_[0].tolist()
+
+    def _softmax_weights(a: float, b: float) -> tuple:
+        """Convert two raw logit coefs to (w_a, w_b) via softmax."""
+        ea, eb = np.exp(a - max(a, b)), np.exp(b - max(a, b))  # numerically stable
+        s = ea + eb
+        return ea / s, eb / s
+
+    print("\n   🔬  Stacking meta-modelo — pesos aprendidos por tipo de circuito:")
+    for i, ctype in enumerate(_META_CTYPES):
+        w_xgb_raw  = coef[i * 2]
+        w_lgbm_raw = coef[i * 2 + 1]
+        n_ct = len({r["round"] for r in rows if r.get("circuit_type") == ctype})
+        if n_ct > 0:
+            frac_xgb, frac_lgbm = _softmax_weights(w_xgb_raw, w_lgbm_raw)
+            print(f"      {ctype:<12}: XGB {frac_xgb:.2f}  LGBM {frac_lgbm:.2f}"
+                  f"  ({n_ct} rondas)")
+        else:
+            print(f"      {ctype:<12}: sin datos LOO — usará 50/50")
+
+    return {
+        "coef"         : coef,
+        "ctypes"       : _META_CTYPES,
+        "n_rounds"     : n_rounds,
+        "trained_round": max(r["round"] for r in rows),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+#  23. LOO CROSS-VALIDATION — calibración histórica completa
+# ─────────────────────────────────────────────────────────────
+def cross_validate_season(
+    feat      : pd.DataFrame,
+    race_df   : pd.DataFrame,
+    quali_df  : pd.DataFrame,
+    schedule  : pd.DataFrame,
+) -> tuple:
+    """
+    Leave-one-race-out cross-validation across the completed season.
+
+    For each round N:
+      - Trains XGBoost on all rounds EXCEPT N  (excluding N prevents data leakage
+        in the training labels, though season-average features in feat are built
+        from all rounds — a deliberate trade-off to avoid re-fetching all API data)
+      - Predicts finishing position for every driver
+      - Converts predicted positions to win probabilities via softmax
+      - Computes Brier score against the actual round-N winner
+
+    Returns (round_results, driver_preds) where:
+      round_results : list of {round, circuit, brier_score, predicted_winner, actual_winner}
+      driver_preds  : list of {round, code, win_mc_pct, won} — one entry per driver per race
+    Requires len(completed_rounds) >= 4 for meaningful estimates.
+    """
+    try:
+        from xgboost import XGBRegressor
+    except ImportError:
+        print("   ⚠  xgboost no instalado — LOO omitido")
+        return [], []
+
+    completed_rounds = sorted(race_df["round"].unique())
+    if len(completed_rounds) < 4:
+        return [], []
+
+    r_feat_cols = [c for c in _RACE_FEAT_COLS if c in feat.columns]
+    if not r_feat_cols:
+        return [], []
+
+    has_quali = (quali_df is not None and not quali_df.empty
+                 and "round" in quali_df.columns)
+
+    # Circuit name + type from schedule
+    circuit_map      = {}
+    circuit_type_map = {}
+    if not schedule.empty:
+        for _, row in schedule.iterrows():
+            rnd = int(row["round"])
+            circuit_map[rnd]      = row.get("name", f"Ronda {rnd}")
+            circuit_type_map[rnd] = CIRCUIT_TYPE.get(row.get("circuit", ""), "mixed")
+
+    _has_lgbm_loo = False
+    try:
+        import lightgbm as _lgb_loo
+        _has_lgbm_loo = True
+    except ImportError:
+        pass
+
+    # avg_grid fallback for inference-phase predicted_quali_pos
+    avg_grid_arr = (feat["avg_grid"].fillna(11.5).values.reshape(-1, 1)
+                    if "avg_grid" in feat.columns else np.full((len(feat), 1), 11.5))
+
+    results      = []
+    driver_preds = []   # per-driver data for calibration curve
+    for test_rnd in completed_rounds:
+        train_race  = race_df[race_df["round"] != test_rnd]
+        train_quali = (quali_df[quali_df["round"] != test_rnd]
+                       if has_quali else None)
+
+        if len(train_race["round"].unique()) < 2:
+            continue   # need at least 2 training rounds
+
+        _, train_round_rank = _round_weights(train_race)
+        rdata = _build_race_Xyw(feat, train_race, train_quali,
+                                r_feat_cols, train_round_rank)
+        if rdata is None:
+            continue
+        X, y, w_arr, all_race_cols = rdata
+
+        xgb_model = XGBRegressor(n_estimators=100, max_depth=3, learning_rate=0.1,
+                                 subsample=0.8, random_state=42, verbosity=0)
+        xgb_model.fit(X, y, sample_weight=w_arr)
+
+        # Inference on season feature matrix
+        X_pred = feat[r_feat_cols].fillna(0).values
+        if "predicted_quali_pos" in all_race_cols:
+            X_pred = np.hstack([X_pred, avg_grid_arr])
+
+        xgb_pred_pos  = np.clip(xgb_model.predict(X_pred), 0.5, None)
+        xgb_inv_pos   = pd.Series(1.0 / (xgb_pred_pos + 0.1), index=feat.index)
+        xgb_win_probs = scores_to_probability(xgb_inv_pos)   # 0-100 scale
+
+        # Also run LightGBM in this LOO fold for stacking signal
+        if _has_lgbm_loo:
+            try:
+                lgbm_loo = _lgb_loo.LGBMRegressor(
+                    n_estimators=100, max_depth=3, num_leaves=8,
+                    learning_rate=0.1, subsample=0.8, random_state=42, verbose=-1)
+                lgbm_loo.fit(X, y, sample_weight=w_arr)
+                lgbm_pred_pos  = np.clip(lgbm_loo.predict(X_pred), 0.5, None)
+                lgbm_inv_pos   = pd.Series(1.0 / (lgbm_pred_pos + 0.1), index=feat.index)
+                lgbm_win_probs = scores_to_probability(lgbm_inv_pos)
+            except Exception:
+                lgbm_win_probs = xgb_win_probs
+        else:
+            lgbm_win_probs = xgb_win_probs
+
+        # Blended win probs (50/50 for LOO Brier/calibration consistency)
+        win_probs = 0.5 * xgb_win_probs + 0.5 * lgbm_win_probs
+        pred_df   = pd.DataFrame({
+            "code"      : feat["code"].values,
+            "win_mc_pct": win_probs.values,
+        })
+
+        # Actual winner for the left-out round
+        test_res = race_df[race_df["round"] == test_rnd]
+        winners  = test_res[test_res["pos"] == 1]["code"].values
+        if len(winners) == 0:
+            continue
+        actual_winner    = str(winners[0])
+        predicted_winner = str(pred_df.loc[pred_df["win_mc_pct"].idxmax(), "code"])
+        bs               = brier_score(pred_df, actual_winner)
+
+        _ctype_rnd = circuit_type_map.get(int(test_rnd), "mixed")
+        results.append({
+            "round"            : int(test_rnd),
+            "circuit"          : circuit_map.get(int(test_rnd), f"Ronda {test_rnd}"),
+            "circuit_type"     : _ctype_rnd,
+            "brier_score"      : bs,
+            "predicted_winner" : predicted_winner,
+            "actual_winner"    : actual_winner,
+        })
+
+        # Accumulate per-driver rows for calibration + stacking meta-model
+        _xgb_map  = dict(zip(feat["code"].values, xgb_win_probs.values))
+        _lgbm_map = dict(zip(feat["code"].values, lgbm_win_probs.values))
+        for _, row in pred_df.iterrows():
+            driver_preds.append({
+                "round"        : int(test_rnd),
+                "code"         : row["code"],
+                "win_mc_pct"   : float(row["win_mc_pct"]),
+                "xgb_win_prob" : float(_xgb_map.get(row["code"], row["win_mc_pct"])),
+                "lgbm_win_prob": float(_lgbm_map.get(row["code"], row["win_mc_pct"])),
+                "circuit_type" : _ctype_rnd,
+                "won"          : 1 if row["code"] == actual_winner else 0,
+            })
+
+    return results, driver_preds
+
+
+def print_loo_validation(loo_results: list) -> None:
+    """Print formatted LOO table with rolling average and trend indicator."""
+    if not loo_results:
+        return
+
+    scores = [r["brier_score"] for r in loo_results]
+    avg_bs = np.mean(scores)
+
+    print("\n📐  VALIDACIÓN LOO — Historial de temporada (Leave-One-Race-Out)")
+    header = f"  {'Rd':<4} {'Carrera':<34} {'Brier':<8} {'Pred':<6} {'Real':<6} {'Roll-3'}"
+    print(header)
+    print("  " + "─" * 68)
+
+    rolling3 = []
+    for i, r in enumerate(loo_results):
+        roll = float(np.mean(scores[max(0, i - 2): i + 1]))
+        rolling3.append(roll)
+        hit  = "✓" if r["predicted_winner"] == r["actual_winner"] else " "
+        print(f"  R{r['round']:<3} {r['circuit'][:33]:<34} "
+              f"{r['brier_score']:.4f}  "
+              f"{r['predicted_winner']:<6} {r['actual_winner']:<6}{hit} "
+              f"[{roll:.4f}]")
+
+    print("  " + "─" * 68)
+    hits = sum(1 for r in loo_results if r["predicted_winner"] == r["actual_winner"])
+    print(f"  {'Media LOO':<39} {avg_bs:.4f}   ({hits}/{len(loo_results)} ganadores correctos)")
+
+    # Trend: last 3 vs first 3 (need ≥ 6 rounds)
+    if len(scores) >= 6:
+        first3 = float(np.mean(scores[:3]))
+        last3  = float(np.mean(scores[-3:]))
+        delta  = last3 - first3
+        if delta < -0.002:
+            arrow = "↑ mejorando"
+        elif delta > 0.002:
+            arrow = "↓ empeorando"
+        else:
+            arrow = "→ estable"
+        print(f"  Tendencia (ú3 vs p3): {first3:.4f} → {last3:.4f}  [{arrow}]")
+
+
+# ─────────────────────────────────────────────────────────────
+#  24. CALIBRACIÓN — curva probabilidad predicha vs real
+# ─────────────────────────────────────────────────────────────
+_CAL_BUCKETS = [
+    ( 0,  5, "0-5%",   2.5),
+    ( 5, 10, "5-10%",  7.5),
+    (10, 15, "10-15%", 12.5),
+    (15, 20, "15-20%", 17.5),
+    (20, 101,"20%+",   None),  # midpoint = mean of actual predictions in bucket
+]
+
+
+def calibration_analysis(driver_preds: list) -> dict:
+    """
+    Build calibration curve from per-driver LOO predictions.
+
+    Each entry in driver_preds: {round, code, win_mc_pct, won}.
+    Groups into 5 probability buckets and measures whether predicted
+    win rates match actual win rates. Returns a serialisable dict
+    suitable for storing in the priors JSON.
+    """
+    buckets = {}
+    for lo, hi, label, midpoint in _CAL_BUCKETS:
+        subset   = [p for p in driver_preds if lo <= p["win_mc_pct"] < hi]
+        n        = len(subset)
+        n_wins   = sum(p["won"] for p in subset)
+        act_rate = (n_wins / n * 100) if n > 0 else None
+        avg_pred = (sum(p["win_mc_pct"] for p in subset) / n) if n > 0 else None
+        mid      = avg_pred if midpoint is None else midpoint   # actual avg for unbounded bucket
+        buckets[label] = {
+            "lo": lo, "hi": hi,
+            "n_predictions": n,
+            "n_wins"       : n_wins,
+            "actual_rate"  : round(act_rate, 2) if act_rate is not None else None,
+            "midpoint"     : round(mid,      1) if mid      is not None else None,
+        }
+
+    # Calibration score: MAE (in percentage points) over non-empty buckets
+    errors = [
+        abs(bd["midpoint"] - bd["actual_rate"])
+        for bd in buckets.values()
+        if bd["n_predictions"] > 0
+           and bd["actual_rate"] is not None
+           and bd["midpoint"]   is not None
+    ]
+    cal_score = round(float(np.mean(errors)), 2) if errors else None
+
+    n_races = len({p["round"] for p in driver_preds})
+    return {
+        "buckets"          : buckets,
+        "calibration_score": cal_score,
+        "total_predictions": len(driver_preds),
+        "total_wins"       : sum(p["won"] for p in driver_preds),
+        "n_races"          : n_races,
+    }
+
+
+def print_calibration(cal: dict) -> None:
+    """Print calibration table with bucket stats and overall score."""
+    n_races = cal.get("n_races", 0)
+    buckets = cal.get("buckets", {})
+
+    print(f"\n📏  CALIBRACIÓN DEL MODELO ({n_races} carreras LOO)")
+    if n_races < 5:
+        print(f"   ⚠  Solo {n_races} carreras disponibles — resultados ruidosos (recomendado ≥5)")
+
+    print(f"  {'Bucket':<8} {'Predicciones':>13} {'Ganadas':>8} {'Tasa real':>10}  Estado")
+    print("  " + "─" * 60)
+
+    for label, bd in buckets.items():
+        n   = bd["n_predictions"]
+        mid = bd["midpoint"]
+        act = bd["actual_rate"]
+
+        if n == 0:
+            print(f"  {label:<8} {'—':>13} {'—':>8} {'—':>10}  —")
+            continue
+
+        act_str = f"{act:.1f}%" if act is not None else "—"
+
+        if act is None or mid is None:
+            status = "—"
+        else:
+            diff = mid - act   # positive = overconfident (predicted too high)
+            if abs(diff) <= 5:
+                status = "✓ calibrado"
+            elif 5 < diff <= 15:
+                status = "~ sobreestimado"
+            elif diff > 15:
+                status = "↑ muy sobreestimado"
+            elif -15 <= diff < -5:
+                status = "~ subestimado"
+            else:
+                status = "↑ muy subestimado"
+
+        print(f"  {label:<8} {n:>13} {bd['n_wins']:>8} {act_str:>10}  {status}")
+
+    print("  " + "─" * 60)
+    cs = cal.get("calibration_score")
+    if cs is not None:
+        quality = "excelente" if cs < 3 else "bueno" if cs < 6 else "mejorable"
+        print(f"  Calibration score (MAE): {cs:.2f}pp  [{quality}]  "
+              f"(0 = perfecto, <5pp = bueno)")
+
 
 # ─────────────────────────────────────────────────────────────
 #  MEJORA 10 — ACTUALIZACIÓN BAYESIANA ENTRE FINES DE SEMANA
@@ -2817,7 +4782,8 @@ def print_report(scored: pd.DataFrame, next_info: pd.Series,
 import json
 import os
 
-PRIORS_FILE = os.environ.get("F1_PRIORS_FILE", "./f1_2026_bayesian_priors.json")
+PRIORS_FILE    = os.environ.get("F1_PRIORS_FILE",    "./f1_2026_bayesian_priors.json")
+PROFILES_FILE  = os.environ.get("F1_PROFILES_FILE", "./f1_2026_driver_profiles.json")
 
 
 def load_priors() -> dict:
@@ -3059,7 +5025,9 @@ def main():
     # 6b. Sector / circuito / compuesto
     next_circuit      = schedule[schedule["round"] == next_round].iloc[0].get("circuit", "")
     next_circuit_type = CIRCUIT_TYPE.get(next_circuit, "mixed")
-    ot_difficulty     = OVERTAKING_DIFFICULTY.get(next_circuit, 0.55)
+    ot_difficulty        = OVERTAKING_DIFFICULTY.get(next_circuit, 0.55)
+    next_circuit_laps    = CIRCUIT_RACE_LAPS.get(next_circuit, 57)
+    circuit_affinity_df  = fetch_circuit_affinity(next_circuit)
 
     if of1_available:
         sector_and_circuit = of1_collect_sector_times(completed, of1_sessions, next_circuit)
@@ -3108,11 +5076,51 @@ def main():
             print("   ⏳  Prácticas del próximo GP aún no disponibles")
     else:
         next_quali_df = pd.DataFrame(columns=["code","quali_pos_next","quali_time_next"])
-        next_fp_df    = pd.DataFrame(columns=["code","fp_next_delta","fp2_next_longrun"])
+        next_fp_df    = pd.DataFrame(columns=["code", "fp_next_delta", "fp2_next_longrun",
+                                              "soft_pace_delta", "medium_pace_delta",
+                                              "hard_pace_delta", "compound_preference",
+                                              "tyre_deg_rate", "deg_rate_soft",
+                                              "deg_rate_medium", "deg_rate_hard",
+                                              "high_speed_delta", "medium_speed_delta",
+                                              "low_speed_delta", "corner_balance",
+                                              "race_sim_delta", "race_sim_deg"])
 
     # 7. Clima y penalizaciones para próxima carrera
     weather  = fetch_weather_for_race(next_round, schedule)
     grid_pen = fetch_grid_penalties(next_round, schedule)
+
+    # 8b. Perfiles comportamentales históricos (2023-2025, caché 7 días)
+    print("\n🧬  Cargando perfiles comportamentales...")
+    _raw_profiles = fetch_driver_behavioral_profiles(
+        driver_standings["code"].tolist()
+    )
+    _prof_metric_cols = ["overtaking_ability", "quali_consistency",
+                         "wet_weather_delta", "historical_dnf_rate",
+                         "tyre_management_index"]
+    behavioral_df = pd.DataFrame([
+        {"code": code, **{k: v for k, v in metrics.items()
+                          if k in _prof_metric_cols}}
+        for code, metrics in _raw_profiles.items()
+    ])
+    # Print top-5 per behavioral metric
+    _metric_display = [
+        ("overtaking_ability",    "desc", "Adelantadores netos desde P6-P15"),
+        ("quali_consistency",     "asc",  "Consistencia en clasificación (σ vs compañero)"),
+        ("wet_weather_delta",     "asc",  "Especialistas en lluvia (neg = mejor en mojado)"),
+        ("historical_dnf_rate",   "asc",  "Fiabilidad histórica 2023-2025 (menor DNF%)"),
+        ("tyre_management_index", "desc", "Gestión de neumáticos (ganancia últimas 20% vueltas)"),
+    ]
+    print("\n   📊  TOP 5 POR MÉTRICA COMPORTAMENTAL 2023-2025:")
+    for metric, direction, label in _metric_display:
+        vals = [(c, d[metric]) for c, d in _raw_profiles.items()
+                if d.get(metric) is not None]
+        if not vals:
+            continue
+        top5 = sorted(vals, key=lambda x: x[1], reverse=(direction == "desc"))[:5]
+        print(f"   {label}:")
+        for rank, (code, val) in enumerate(top5, 1):
+            print(f"     {rank}. {code:<5}  {val:+.3f}")
+    print()
 
     # 8. Build features
     print("\n🔨  Construyendo matriz de features...")
@@ -3128,7 +5136,40 @@ def main():
         overtaking_difficulty=ot_difficulty,
         next_quali_df=next_quali_df,
         next_fp_df=next_fp_df,
+        circuit_affinity_df=circuit_affinity_df,
+        behavioral_df=behavioral_df,
+        next_circuit_laps=next_circuit_laps,
+        next_circuit_type=next_circuit_type,
     )
+    # Rain probability available after weather fetch — store for score_manual()
+    feat.attrs["rain_prob"] = float(weather.get("rain_prob", 0.0))
+
+    # 8c. Driver-circuit compatibility — top-5 print + save embeddings to profile file
+    if "compatibility_score" in feat.columns and feat["compatibility_score"].abs().sum() > 0:
+        _circ_emb = feat.attrs.get("circuit_embedding", [])
+        if _circ_emb:
+            print(f"\n   🎯  Compatibilidad piloto-circuito ({next_circuit}):")
+            print(f"      Circuit embedding → Speed={_circ_emb[0]:.2f}, "
+                  f"Technical={_circ_emb[1]:.2f}, Endurance={_circ_emb[2]:.2f}")
+        _c_top5 = (feat[["code", "compatibility_score"]]
+                   .sort_values("compatibility_score", ascending=False)
+                   .head(5))
+        for _, _r in _c_top5.iterrows():
+            _bar = "█" * max(0, int(float(_r["compatibility_score"]) * 20))
+            print(f"      {_r['code']:<5}  {float(_r['compatibility_score']):+.3f}  {_bar}")
+        # Save driver embeddings under "embeddings" key in profiles file
+        _driver_embs = feat.attrs.get("driver_embeddings", {})
+        if _driver_embs:
+            try:
+                import json as _json
+                with open(PROFILES_FILE) as _pf:
+                    _profiles_data = _json.load(_pf)
+                _profiles_data["embeddings"] = _driver_embs
+                with open(PROFILES_FILE, "w") as _pf:
+                    _json.dump(_profiles_data, _pf, indent=2)
+                print(f"      💾  Embeddings guardados → {PROFILES_FILE}")
+            except Exception as _e:
+                print(f"      ⚠  No se pudieron guardar embeddings: {_e}")
 
     # 9. Cargar priors bayesianos de ejecuciones anteriores
     print("\n🧠  Cargando priors bayesianos...")
@@ -3143,33 +5184,176 @@ def main():
     xgb_weights = {}   # importancias aprendidas por XGBoost (feedback loop)
     use_xgb     = len(completed) >= XGB_MIN_RACES
 
+    # Determine online-learning mode for this run
+    _model_meta     = priors.get("_model_meta", {})
+    _model_last_rnd = _model_meta.get("last_trained_round", -1)
+    _last_comp_rnd  = max(completed) if completed else 0
+    # Warm start when the saved model already reflects this same round (re-run)
+    _warm_race_df = (race_df[race_df["round"] == _last_comp_rnd].copy()
+                     if (completed
+                         and _model_last_rnd == _last_comp_rnd
+                         and os.path.exists(XGB_MODEL_FILE))
+                     else None)
+    _train_label = "warm start" if _warm_race_df is not None else "full retrain"
+    print(f"\n💾  Modo modelo: {_train_label} "
+          f"(guardado R{_model_last_rnd} → actual R{_last_comp_rnd})")
+
+    # Raw per-model score series — captured for epistemic uncertainty computation
+    _xgb_score_raw  = None
+    _lgbm_score_raw = None
+    gp_result       = None
+    gp_std          = None
+
     if use_xgb:
-        print(f"\n🤖  Activando XGBoost ({len(completed)} carreras ≥ {XGB_MIN_RACES})...")
-        result = score_xgboost(feat, race_df)
-        if result is not None:
-            xgb_score, xgb_weights = result
+        print(f"\n🤖  Activando XGBoost + LightGBM + GP — Quali+Race ({len(completed)} carreras ≥ {XGB_MIN_RACES})...")
+        xgb_result  = score_xgboost(feat, race_df, quali_df,
+                                    warm_start_file=XGB_MODEL_FILE,
+                                    warm_race_df=_warm_race_df)
+        lgbm_result = score_lightgbm(feat, race_df, quali_df,
+                                     warm_start_file=LGBM_MODEL_FILE,
+                                     warm_race_df=_warm_race_df)
+        gp_result   = score_gaussian_process(feat, race_df, quali_df)
+
+        if xgb_result is not None and lgbm_result is not None:
+            xgb_score,  xgb_imp  = xgb_result
+            lgbm_score, lgbm_imp = lgbm_result
+            _xgb_score_raw  = xgb_score   # capture before blending
+            _lgbm_score_raw = lgbm_score
+            # ── Stacking meta-model weights (XGB vs LGBM ratio) ──────────────
+            _meta    = priors.get("stacking_meta") if priors else None
+            _w_xgb, _w_lgbm = 0.5, 0.5
+            _meta_label = ""
+            if _meta and _meta.get("n_rounds", 0) >= _META_MIN_ROUNDS:
+                _mc  = _meta["coef"]
+                _mct = _meta.get("ctypes", _META_CTYPES)
+                _ci  = (_mct.index(next_circuit_type)
+                        if next_circuit_type in _mct else len(_mct) - 1)
+                _raw_x, _raw_l = _mc[_ci * 2], _mc[_ci * 2 + 1]
+                _ea = np.exp(_raw_x - max(_raw_x, _raw_l))
+                _eb = np.exp(_raw_l - max(_raw_x, _raw_l))
+                _w_xgb  = float(_ea / (_ea + _eb))
+                _w_lgbm = 1.0 - _w_xgb
+                _meta_label = f"@ {next_circuit_type}"
+                print(f"   🔬  Meta-modelo: XGB peso {_w_xgb:.2f}, LGBM peso {_w_lgbm:.2f}"
+                      f" {_meta_label}")
+            # ── 3-way blend when GP is available; else 2-way stacking ────────
+            if gp_result is not None:
+                gp_score, gp_std = gp_result
+                _base    = 1.0 - _GP_WEIGHT
+                _wf_xgb  = round(_base * _w_xgb,  3)
+                _wf_lgbm = round(_base * _w_lgbm, 3)
+                feat["xgb_pos"] = (_wf_xgb  * xgb_score
+                                 + _wf_lgbm * lgbm_score
+                                 + _GP_WEIGHT * gp_score)
+                print(f"   🌊  3-way blend: XGB {_wf_xgb:.2f}, LGBM {_wf_lgbm:.2f}, "
+                      f"GP {_GP_WEIGHT:.2f}")
+                model_used = (f"3-Way XGB({_wf_xgb:.2f})/LGBM({_wf_lgbm:.2f})"
+                              f"/GP({_GP_WEIGHT:.2f}) {_meta_label}").strip()
+            else:
+                feat["xgb_pos"] = _w_xgb * xgb_score + _w_lgbm * lgbm_score
+                model_used = (
+                    f"Stacking Meta-Modelo XGB({_w_xgb:.2f})/LGBM({_w_lgbm:.2f}) {_meta_label}".strip()
+                    if _meta_label else "Quali Model + Race Model Ensemble (XGBoost/LightGBM)")
+            all_keys    = set(xgb_imp) | set(lgbm_imp)
+            xgb_weights = {k: _w_xgb  * xgb_imp.get(k, 0)
+                              + _w_lgbm * lgbm_imp.get(k, 0)
+                           for k in all_keys}
+            scores     = score_manual(feat, xgb_weights=xgb_weights)
+        elif xgb_result is not None:
+            xgb_score, xgb_weights = xgb_result
             feat["xgb_pos"] = xgb_score
-            scores     = xgb_score
-            model_used = "XGBoost + Feedback Loop"
+            scores     = score_manual(feat, xgb_weights=xgb_weights)
+            model_used = "XGBoost Quali+Race + Feedback Loop"
+        elif lgbm_result is not None:
+            lgbm_score, lgbm_imp = lgbm_result
+            lgbm_total  = sum(lgbm_imp.values()) or 1
+            xgb_weights = {k: v / lgbm_total for k, v in lgbm_imp.items()}
+            feat["xgb_pos"] = lgbm_score
+            scores     = score_manual(feat, xgb_weights=xgb_weights)
+            model_used = "LightGBM Quali+Race + Feedback Loop"
         else:
             scores     = score_manual(feat)
-            model_used = "Pesos manuales (XGBoost falló)"
+            model_used = "Pesos manuales (modelos fallaron)"
     else:
         remaining = XGB_MIN_RACES - len(completed)
-        print(f"\n⚖   Usando modelo de pesos ({len(completed)}/{XGB_MIN_RACES} para XGBoost)...")
-        # Aunque no hay XGBoost aún, intentar pre-entrenar para extraer importancias
-        result = score_xgboost(feat, race_df)
-        if result is not None:
-            _, xgb_weights = result
+        print(f"\n⚖   Usando modelo de pesos ({len(completed)}/{XGB_MIN_RACES} para ensemble)...")
+        # Pre-train both models to extract importances for the feedback loop
+        xgb_result  = score_xgboost(feat, race_df, quali_df)
+        lgbm_result = score_lightgbm(feat, race_df, quali_df)
+        if xgb_result is not None and lgbm_result is not None:
+            _, xgb_imp  = xgb_result
+            _, lgbm_imp = lgbm_result
+            all_keys    = set(xgb_imp) | set(lgbm_imp)
+            xgb_weights = {k: 0.5 * xgb_imp.get(k, 0) + 0.5 * lgbm_imp.get(k, 0)
+                           for k in all_keys}
+            print(f"   💡  Importancias ensemble extraídas ({len(xgb_weights)} features)")
+        elif xgb_result is not None:
+            _, xgb_weights = xgb_result
             print(f"   💡  Importancias XGBoost extraídas ({len(xgb_weights)} features)")
         scores     = score_manual(feat, xgb_weights=xgb_weights if xgb_weights else None)
-        model_used = f"Pesos manuales{' + Feedback XGB' if xgb_weights else ''} (faltan {remaining} carreras para XGBoost)"
+        model_used = f"Pesos manuales{' + Feedback Ensemble' if xgb_weights else ''} (faltan {remaining} carreras)"
+
+    # Persist model-round metadata so subsequent runs know whether to warm-start
+    if completed and use_xgb and (xgb_result is not None or lgbm_result is not None):
+        priors["_model_meta"] = {
+            "last_trained_round": max(completed),
+            "mode": _train_label,
+        }
+        save_priors(priors)
+
+    # Epistemic uncertainty — model disagreement (XGB vs LGBM normalized scores)
+    if _xgb_score_raw is not None and _lgbm_score_raw is not None:
+        _xs_min, _xs_rng = _xgb_score_raw.min(),  (_xgb_score_raw.max()  - _xgb_score_raw.min())
+        _ls_min, _ls_rng = _lgbm_score_raw.min(), (_lgbm_score_raw.max() - _lgbm_score_raw.min())
+        _xs_norm = (_xgb_score_raw  - _xs_min) / max(_xs_rng, 1e-9)
+        _ls_norm = (_lgbm_score_raw - _ls_min) / max(_ls_rng, 1e-9)
+        feat["epistemic_unc"] = (_xs_norm - _ls_norm).abs().reindex(feat.index).fillna(0.0)
+    else:
+        feat["epistemic_unc"] = 0.0
+
+    # GP uncertainty — sparse-data uncertainty from Gaussian Process prediction std
+    feat["gp_uncertainty"] = (gp_std.reindex(feat.index).fillna(0.0)
+                               if gp_std is not None else 0.0)
+
+    # 9c. Feature importance tracking and comparison
+    if xgb_weights:
+        _total_w  = sum(xgb_weights.values()) or 1
+        _norm_imp = {k: round(v / _total_w, 4) for k, v in xgb_weights.items()}
+        _top10    = dict(sorted(_norm_imp.items(), key=lambda x: x[1], reverse=True)[:10])
+        _imp_round = max(completed) if completed else 0
+
+        _imp_hist = priors.get("feature_importance_history", [])
+        _prev_imp = _imp_hist[-1]["importances"] if _imp_hist else {}
+
+        print("\n   📊  Importancias blend (XGB+LGBM):")
+        for fname, fval in _top10.items():
+            prev = _prev_imp.get(fname)
+            if prev is not None:
+                delta = fval - prev
+                if delta > 0.001:
+                    arrow = f"(↑ from {prev:.3f})"
+                elif delta < -0.001:
+                    arrow = f"(↓ from {prev:.3f})"
+                else:
+                    arrow = "(→ stable)"
+            else:
+                arrow = "(primera vez)" if _prev_imp else ""
+            print(f"      {fname:<26} {fval:.3f}  {arrow}")
+
+        top_feat, top_val = next(iter(_top10.items()))
+        print(f"   🏆  Top feature esta carrera: {top_feat} ({top_val:.3f})")
+
+        # Append to history, keep last 5 rounds, save immediately
+        _imp_hist.append({"round": _imp_round, "importances": _top10})
+        priors["feature_importance_history"] = _imp_hist[-5:]
+        save_priors(priors)
 
     # 10. Aplicar priors bayesianos al score
     if priors and completed:
         scores = apply_bayesian_priors(scores, feat, priors)
 
     # 10b. Convertir a probabilidad
+    feat["raw_score"] = scores.values                           # pre-softmax for calibration
     feat["win_pct"] = scores_to_probability(scores).values
 
     # 11. Ordenar
@@ -3190,29 +5374,130 @@ def main():
 
     # 13. Simulación Monte Carlo
     mc_df = monte_carlo_simulation(
-        feat        = scored,
-        base_scores = scores.reindex(scored.index),
-        reliability = reliability,
-        weather     = weather,
-        n_sims      = 10_000,
+        feat         = scored,
+        base_scores  = scored["raw_score"],
+        reliability  = reliability,
+        weather      = weather,
+        n_sims       = 10_000,
+        circuit_name = next_circuit,
     )
 
+    # Aleatoric uncertainty — inherent randomness from MC spread relative to win%
+    if mc_df is not None and not mc_df.empty:
+        _ale = mc_df[["code", "win_mc_pct", "p10_win_pct", "p90_win_pct"]].copy()
+        _ale["aleatoric_unc"] = (
+            (_ale["p90_win_pct"] - _ale["p10_win_pct"]) /
+            _ale["win_mc_pct"].clip(lower=0.1)
+        ).round(3)
+        scored = scored.merge(_ale[["code", "aleatoric_unc"]], on="code", how="left")
+        scored["aleatoric_unc"] = scored["aleatoric_unc"].fillna(0.0)
+    else:
+        scored["aleatoric_unc"] = 0.0
+
     # 14. Actualizar priors bayesianos con última carrera completada
+    # Guard: only update once per race — prevent repeated dev-run compounding
     if completed:
-        last_rnd = max(completed)
-        print(f"\n🧠  Actualizando priors bayesianos con carrera {last_rnd}...")
-        priors = update_bayesian_priors(priors, scored, race_df, last_rnd)
-        save_priors(priors)
+        last_rnd     = max(completed)
+        already_done = priors.get("_meta", {}).get("last_updated_round", -1)
+        if already_done != last_rnd:
+            print(f"\n🧠  Actualizando priors bayesianos con carrera {last_rnd}...")
+            priors = update_bayesian_priors(priors, scored, race_df, last_rnd)
+            priors["_meta"] = {"last_updated_round": last_rnd}
+            save_priors(priors)
+        else:
+            print(f"\n🧠  Priors ya actualizados para carrera {last_rnd} — sin cambios")
         print(f"   💾  Priors guardados en: {PRIORS_FILE}")
         # Mostrar pilotos con mayor ajuste
         adjustments = [(c, d["score_multiplier"]) for c, d in priors.items()
-                       if d.get("races_tracked", 0) >= 1]
+                       if isinstance(d, dict) and d.get("races_tracked", 0) >= 1]
         adjustments.sort(key=lambda x: abs(x[1] - 1.0), reverse=True)
         if adjustments[:3]:
             print("   📊  Mayores ajustes acumulados:")
             for code, mult in adjustments[:3]:
                 direction = "⬆ subestimado" if mult > 1.0 else "⬇ sobreestimado"
                 print(f"      {code}: ×{mult:.3f} ({direction})")
+
+    # 14b. Brier score calibration tracking
+    # The CSV on disk still holds predictions for last_rnd at this point —
+    # read it NOW before step "13 Guardar CSV" overwrites it with next-race predictions.
+    if completed:
+        _last = max(completed)
+        _brier_done = any(h.get("round") == _last for h in priors.get("brier_history", []))
+        if not _brier_done and os.path.exists(OUTPUT_CSV):
+            try:
+                _old = pd.read_csv(OUTPUT_CSV)
+                _old_rnd = int(_old["round_num"].iloc[0]) if "round_num" in _old.columns else -1
+                if _old_rnd == _last and "win_mc_pct" in _old.columns:
+                    _r_act   = race_df[race_df["round"] == _last]
+                    _winners = _r_act[_r_act["pos"] == 1]["code"].values
+                    if len(_winners) > 0:
+                        _actual = _winners[0]
+                        bs      = brier_score(_old, _actual)
+                        _pred_w = _old.loc[_old["win_mc_pct"].idxmax(), "code"]
+                        _cname  = _old["race_name"].iloc[0] if "race_name" in _old.columns else "?"
+                        _hist   = priors.get("brier_history", [])
+                        _hist.append({
+                            "round"            : _last,
+                            "circuit"          : _cname,
+                            "brier_score"      : bs,
+                            "predicted_winner" : _pred_w,
+                            "actual_winner"    : _actual,
+                        })
+                        priors["brier_history"] = _hist
+                        save_priors(priors)
+                        print(f"\n📐  Brier Score R{_last} ({_cname}): {bs:.4f}  "
+                              f"(predicho: {_pred_w}  |  ganador real: {_actual})")
+            except Exception as e:
+                print(f"   ⚠  Brier score: {e}")
+
+        # One-time R8 bootstrap — CSV was overwritten before this tracker was added.
+        # Approximated win% from the stable pre-race prediction run for Austrian GP.
+        _hist = priors.get("brier_history", [])
+        if not any(h.get("round") == 8 for h in _hist) and _last >= 8:
+            _r8_act = race_df[race_df["round"] == 8]
+            _r8_win = _r8_act[_r8_act["pos"] == 1]["code"].values
+            if len(_r8_win) > 0:
+                _R8_KNOWN = {"RUS": 19.8, "ANT": 13.1, "HAM": 10.7,
+                             "LEC": 7.2,  "NOR": 6.0,  "PIA": 5.8}
+                _codes = scored["code"].tolist()
+                _rem   = (100 - sum(_R8_KNOWN.values())) / max(len(_codes) - len(_R8_KNOWN), 1)
+                _r8_df = pd.DataFrame([
+                    {"code": c, "win_mc_pct": _R8_KNOWN.get(c, _rem)} for c in _codes
+                ])
+                bs8 = brier_score(_r8_df, _r8_win[0])
+                _hist.append({
+                    "round"            : 8,
+                    "circuit"          : "Austrian Grand Prix",
+                    "brier_score"      : bs8,
+                    "predicted_winner" : "RUS",
+                    "actual_winner"    : str(_r8_win[0]),
+                    "note"             : "bootstrapped — CSV overwritten before tracker added",
+                })
+                priors["brier_history"] = _hist
+                save_priors(priors)
+                print(f"\n📐  Brier Score R8 (Austrian Grand Prix) [bootstrapped]: {bs8:.4f}  "
+                      f"(predicho: RUS  |  ganador real: {_r8_win[0]})")
+
+    # 14c. LOO cross-validation + calibration curve
+    if len(completed) >= 4:
+        print(f"\n🔄  Corriendo validación LOO ({len(completed)} carreras)...")
+        loo_results, loo_driver_preds = cross_validate_season(
+            feat, race_df, quali_df, schedule)
+        if loo_results:
+            print_loo_validation(loo_results)
+            priors["loo_validation"] = loo_results
+        if loo_driver_preds:
+            cal = calibration_analysis(loo_driver_preds)
+            print_calibration(cal)
+            priors["calibration"] = cal
+            # 14d. Fit/update stacking meta-model from per-model LOO predictions
+            _meta_new = fit_stacking_meta_model(loo_driver_preds)
+            if _meta_new:
+                priors["stacking_meta"] = _meta_new
+                print(f"   💾  Meta-modelo guardado "
+                      f"({_meta_new['n_rounds']} rondas, R{_meta_new['trained_round']})")
+        if loo_results or loo_driver_preds:
+            save_priors(priors)
 
     # 15. Reporte
     print_report(scored, next_info, len(completed), model_used,
@@ -3230,14 +5515,25 @@ def main():
         "code", "FullName", "TeamName", "champ_pts", "avg_finish", "avg_grid",
         "recent_form", "sprint_pts", "fp_avg_delta", "avg_sector_delta",
         "tyre_deg_slope", "lap1_gain", "teammate_delta", "dnf_rate",
-        "avg_pitstop", "penalty_count", "sc_gain_avg", "win_pct",
-        "win_mc_pct", "podium_mc_pct", "finish_mc_pct", "avg_mc_pos",
+        "avg_pitstop", "penalty_count", "sc_gain_avg", "raw_score", "win_pct",
+        "win_mc_pct", "p10_win_pct", "p90_win_pct",
+        "podium_mc_pct", "finish_mc_pct", "avg_mc_pos",
         "p10_pos", "p90_pos",
         "compound_score", "circuit_score", "soft_delta", "medium_delta", "hard_delta",
         "circuit_type_score", "quali_gap_teammate", "fp2_longrun_delta",
-        "momentum_pos", "last_race_pts", "last_race_pos",
+        "momentum_pos", "last_race_pts", "last_race_pos", "constructor_momentum",
+        "circuit_affinity",
         "mechanical_risk", "accident_risk", "dominant_failure", "team_mech_rate",
+        "sector_balance",
         "quali_pos_next", "quali_time_next", "fp_next_delta", "fp2_next_longrun",
+        "soft_pace_delta", "medium_pace_delta", "hard_pace_delta", "compound_preference",
+        "tyre_deg_rate", "corner_profile_score",
+        "race_sim_delta", "race_sim_deg",
+        "streak_score", "post_dnf_bounce", "championship_pressure",
+        "epistemic_unc", "aleatoric_unc", "gp_uncertainty",
+        "overtaking_ability", "quali_consistency", "wet_weather_delta",
+        "historical_dnf_rate", "tyre_management_index",
+        "compatibility_score",
     ] if c in scored.columns]
     scored[save_cols].to_csv(OUTPUT_CSV, index=False)
     print(f"💾  Resultados guardados en: {OUTPUT_CSV}\n")

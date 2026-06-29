@@ -1,304 +1,170 @@
-# BoxBoxAI
+# F1 2026 ML Race Predictor
 
-A Formula 1 analysis Telegram bot that gives grounded, data-driven answers about the 2026 season — no hallucinated lap times, no invented grid orders.
+**A best-in-class standalone machine learning predictor for Formula 1 race outcomes.**
 
 ---
 
 ## What it does
 
-BoxBoxAI is a conversational F1 analyst you interact with over Telegram. Ask it anything about the 2026 season and it answers from real data: race results, qualifying sheets, FIA stewards decisions, tyre strategy, circuit characteristics, championship projections, and ML-based race predictions. The design priority throughout is accuracy over confidence — if the data isn't there, it says so plainly rather than improvising.
+The predictor fetches live data from three public APIs, runs a three-model machine learning ensemble, simulates 10,000 race scenarios, and outputs per-driver win probabilities, podium probabilities, and confidence intervals — all from a single command.
 
-Concrete things it handles well:
-
-- **Race debrief** — winner, podium, DNFs, fastest lap, tyre strategies, full classification
-- **Qualifying** — pole positions, sector times, grid order
-- **FIA stewards decisions** — fetched live from fia.com (via Playwright, since their site blocks `requests`), parsed and surfaced for penalty/incident questions
-- **Driver deep-dive** — career stats, recent form, teammate comparison, championship trajectory
-- **Circuit guides** — sector characteristics, DRS zones, overtaking difficulty, tyre degradation tendencies, 2026 Straight Mode activation points
-- **Race predictions** — XGBoost + Monte Carlo model, updated after qualifying on race weekend
-- **Championship scenarios** — points math for "what does Norris need to close the gap"
-- **Live session data** — OpenF1 lap times and sector splits during race weekends
+- **Live data** from Jolpica (race results, standings, qualifying), OpenF1 (lap times, tyre stints, pit stops, weather), and Open-Meteo (rain nowcast)
+- **Three-model ensemble**: XGBoost (two-stage quali + race), LightGBM, and Gaussian Process Regression — blended by a stacking meta-model that learns optimal per-circuit-type weights from leave-one-out validation
+- **10,000 Monte Carlo simulations** per run — explicit safety car probability, undercut windows, DNF risk by component, and weather perturbations
+- **Full grid output**: win%, podium%, expected finishing position, P10/P90 confidence intervals, and uncertainty estimates for all 22 drivers
 
 ---
 
-## Architecture
+## Feature set
 
-Three Python processes sharing one memory store:
+### Data sources
 
-```
-boxboxai_bot.py     ← production Telegram bot (~8,700 lines)
-f1_agent.py         ← developer CLI/REPL for the same functions
-f1_2026_predictor.py ← ML predictor, spawned as a subprocess
-         │
-         └── f1_memory_2026.json   (single source of truth)
-```
+| Source | What it provides |
+|--------|-----------------|
+| **Jolpica** (`api.jolpi.ca/ergast/f1`) | Race results, standings, qualifying positions, pit stop data, lap times |
+| **OpenF1** (`api.openf1.org/v1`) | Sector times, tyre stint data, pit stop timing, race control messages, weather feed |
+| **Open-Meteo** | Rain probability nowcast for race location and weekend |
+| **FIA behavioral data** | Historical overtaking events, qualifying consistency, tyre management rates (2023–2025) |
 
-### Context injection, not tool use
+### Machine learning models
 
-There are no Anthropic tools defined. Every analysis flows through `ask_claude()` → `_gather_context()` → `build_system_prompt()`. The system prompt is assembled from conditionally-injected context blocks — each block only included when its trigger fires:
+| Model | Role |
+|-------|------|
+| **XGBoost (quali stage)** | Predicts qualifying position from season-to-date features when actual quali hasn't happened yet |
+| **XGBoost (race stage)** | Regresses race finishing position from 21 engineered features; online learning via warm start |
+| **LightGBM** | Parallel race position regressor with gradient-boosted trees; same feature set as XGBoost |
+| **Gaussian Process Regression** | Explicitly models prediction uncertainty as a function of data density; produces per-driver σ (epistemic uncertainty) alongside position estimate |
+| **Stacking meta-model** | Logistic regression that learns optimal XGB/LGBM blend weights per circuit type (high-speed / street / technical / mixed) from LOO validation history |
+| **Bayesian priors** | Per-driver score multipliers derived from prediction error history; applied at all stages and updated after every race |
 
-```
-NEXT_RACE      triggered by next-race / prediction / weather queries
-NEWS           triggered by news/practice/qualifying keywords
-LIVE_SEARCH    triggered by live session questions when OpenF1 has no data
-FIA_DOCS       triggered by penalty/retirement/incident/stewards keywords
-WEATHER        triggered by weather keywords
-LIVE_SESSION   triggered by OpenF1 live session feed
-SESSION_DATA   triggered by FP1/FP2/FP3/qualifying/sprint keywords
-CIRCUIT        triggered by circuit name or strategy keywords
-DRIVER_STATS   triggered by career stats questions
-DRIVER_PROFILE triggered by driver deep-dive questions
-RACE_REPLAY    triggered by replay/lap-by-lap questions
-CHAMPIONSHIP_SCENARIOS triggered by standings/gap/title keywords
-FAN_PROFILE    triggered by fan tracking context
-HISTORY        triggered by historical comparison keywords
-PREDICTION_RECORD triggered by accuracy/prediction keywords
-USER           always injected (short personalization block)
-```
+### Features (21 race model features)
 
-Each block has an explicit character limit matched to its real content size. These limits were audited after discovering silent truncation bugs that were cutting 52–85% of content — every block in `build_system_prompt()` now logs its post-truncation size at `DEBUG` level.
+**Season history**
+- `champ_pts` — current championship points
+- `avg_finish` — season average finishing position
+- `avg_grid` — season average grid position
+- `fl_rate` — fastest lap rate
+- `lap_std` — lap-time consistency (σ within races)
+- `recent_form` — exponentially-weighted results (last 5 races)
+- `momentum_pos` — exp-weighted recent starting position
+- `sprint_pts` — sprint race points accumulated
 
-### Memory model (`f1_memory_2026.json`)
+**Circuit and tyre**
+- `fp_avg_delta` — practice pace delta vs. field mean
+- `avg_sector_delta` — sector time delta vs. teammate
+- `tyre_deg_slope` — tyre degradation rate (s/lap linear fit)
+- `avg_pitstop` — average pit stop time this season
 
-| Key | Contents |
-|-----|----------|
-| `semantic` | Keyed knowledge facts (`circuit/monaco`, `driver/norris`, `team/mclaren`, etc.) with `tags` and `relevance_keys` |
-| `episodic` | One rich entry per completed race — winner, podium, qualifying, pitstops, tyre strategies, DNFs, race control messages, championship standings snapshot, narrative `story`. `telemetry_source` is `"fastf1"` once enriched, else `"jolpica"` |
-| `pending_predictions` | Predictor output stored after qualifying, surfaced by `/predict` on race day |
+**Race-specific**
+- `lap1_gain` — average positions gained on lap 1
+- `teammate_delta` — race pace delta vs. teammate
+- `sc_gain_avg` — historical position gain under safety car
+- `dnf_rate` — season DNF rate (mechanical + accident)
+- `penalty_count` — penalty incidents this season
 
-### Background loops (launched post-init, each ~6h)
+**Behavioral profiles (2023–2025 historical)**
+- `overtaking_ability` — net positions gained from P6–P15 starts
+- `quali_consistency` — qualifying gap σ vs. teammate across seasons
+- `tyre_management_index` — pace gain in final 20% of stints vs. field
 
-| Loop | What it does |
+**Driver-circuit compatibility**
+- `compatibility_score` — cosine similarity of 3D driver embedding (Aggression, Consistency, Endurance) and 3D circuit embedding (Speed, Technical, Endurance)
+
+### Next-race features (when qualifying has happened)
+
+When pre-race qualifying data is available, a second feature tier is unlocked and qualifying gets a 55% dominant weight:
+
+- `quali_pos_next` — actual qualifying position (P1–P22)
+- `fp_next_delta` — FP pace delta vs. field at this circuit
+- `fp2_next_longrun` — FP2 long-run pace delta
+- `sector_balance` — σ across S1/S2/S3 (lower = more balanced)
+- `soft_pace_delta`, `medium_pace_delta` — compound-specific pace
+- `tyre_deg_rate` — observed tyre deg at this circuit in practice
+- `corner_profile_score` — corner-speed profile match for this circuit type
+- `race_sim_delta` — FP1 race simulation pace delta
+
+### Outputs
+
+| Column | Description |
+|--------|-------------|
+| `win_pct` | Model ensemble win probability (%) |
+| `win_mc_pct` | Monte Carlo win probability (%) |
+| `podium_mc_pct` | Monte Carlo podium probability (%) |
+| `avg_mc_pos` | Expected finishing position |
+| `p10_pos` / `p90_pos` | P10–P90 confidence interval on finishing position |
+| `epistemic_unc` | Model disagreement uncertainty (XGB vs LGBM vs GP) |
+| `aleatoric_unc` | Monte Carlo spread (inherent race randomness) |
+| `gp_uncertainty` | Gaussian Process σ (data-density uncertainty) |
+| `compatibility_score` | Driver-circuit style match (–1 to 1) |
+| `mechanical_risk` | Component-level DNF probability |
+| `accident_risk` | Incident-based DNF probability |
+| `circuit_affinity` | Historical driver performance at this circuit |
+| `wet_weather_delta` | Driver pace delta in wet vs. dry (negative = faster in wet) |
+
+### Validation and calibration
+
+- **Leave-one-out (LOO) cross-validation** across all completed rounds — MAE in positions and Brier score per round
+- **Calibration curve**: win probability buckets vs. empirical win rate
+- **Feature importance tracking**: XGBoost and LightGBM importances logged per round; fed back into manual weight system
+- **Bayesian self-correction**: prediction error per driver (predicted rank vs. actual rank) updates a per-driver correction multiplier stored in priors and applied to subsequent predictions
+- **Model disagreement flag**: drivers where XGB and LGBM disagree by > 2 positions are flagged `[models disagree]` in output
+
+---
+
+## Files
+
+| File | Description |
 |------|-------------|
-| `auto_ingest_loop` | Detects new results, fetches telemetry, generates post-race briefing, runs prediction self-correction |
-| `auto_predictor_loop` | Saturday night: on qualifying availability, spawns predictor subprocess and stores `pending_predictions` |
-| `auto_memory_enrichment_loop` | Waits ~48h post-race for FastF1, enriches episodes with tyre strategies / sector bests / stint data. Retries capped at 14 days to avoid endless re-enrichment |
-| `notification_loop` | Session reminders (timezone-aware), Sunday weekly digest |
+| `f1_2026_predictor.py` | Main predictor — data fetch, feature engineering, ensemble models, Monte Carlo, output |
+| `f1_update_priors.py` | Standalone post-race prior updater; run after each race before the next prediction |
+| `f1_2026_bayesian_priors.json` | Bayesian priors (per-driver multipliers), LOO validation history, stacking meta-model coefficients |
+| `f1_2026_driver_profiles.json` | Historical behavioral profiles (2023–2025) and 3D driver style embeddings |
+| `f1_2026_predicciones.csv` | Latest prediction output (one row per driver) |
+| `f1_2026_xgb_race_model.json` | Saved XGBoost race model (warm-started each round) |
+| `f1_2026_lgbm_race_model.txt` | Saved LightGBM race model (warm-started each round) |
+| `requirements.txt` | Python dependencies |
+| `f1_cache/` | Cached API responses (FastF1 SQLite cache) |
 
 ---
 
-## Data sources
-
-| Source | What it provides | Notes |
-|--------|-----------------|-------|
-| **Jolpica-F1** (`api.jolpi.ca/ergast/f1`) | Canonical results, standings, qualifying, pitstops | Ergast-compatible API; primary results source |
-| **OpenF1** (`api.openf1.org/v1`) | Lap times, stints, pit stops, weather, race control messages | Used for live session data during race weekends |
-| **FastF1** | Telemetry, sector times, tyre stint data | Cached in `./f1_cache/`. Data lags ~48h post-race; enrichment loop accounts for this |
-| **FIA.com** | Stewards decisions, technical directives, circuit maps | Scraped via Playwright/Chromium — fia.com returns 403 to `requests`. Playwright sync API runs in a thread to avoid asyncio conflict |
-| **Motorsport.com** | Fallback news and article context | Extracted via JSON-LD structured data embedded in article pages |
-| **RSS feeds** | News headlines from F1 outlets | 30-minute refresh cache (`boxboxai_news_cache.json`) |
-| **Pirelli** | Tyre compound data | No stable public API endpoint found; not currently automated |
-
-The system degrades cleanly at each layer: works without FastF1 (Jolpica only), without a predictor CSV (grid-based analysis), without qualifying data (pre-quali preview mode).
-
----
-
-## The predictor (`f1_2026_predictor.py`)
-
-Version 7.0 — "Bayesian + Momentum + Component Risk"
-
-### Two-phase model
-
-**Races < 6:** Bayesian priors from `f1_2026_bayesian_priors.json` — per-driver score multipliers derived from pre-season expectations, blended with rolling prediction-error history. XGBoost isn't trained yet (insufficient data).
-
-**Races ≥ 6:** XGBoost regression trained on ~24 engineered features per driver:
-
-- Qualifying position (real or sentinel 22.0 pre-qualifying)
-- Recent form (exponentially weighted last 5 results)
-- Circuit score (historical driver performance at this venue type)
-- Compound/tyre degradation slope
-- Sector delta vs. teammate
-- Mechanical / DNF risk score
-- Momentum (points trend over last 3 rounds)
-- Teammate comparison
-
-A **Leave-One-Out cross-validation** loop measures MAE in positions. XGBoost feature importances feed back into the manual weight system as a "feedback loop" — the learned importances update how the weights are blended.
-
-### Monte Carlo
-
-10,000 simulations per run produce `win_pct`, `podium_pct`, and average finishing position per driver. Output: `f1_2026_predicciones.csv` (one row per driver, with `round_num` stamp for staleness detection).
-
-### Pre-qualifying mode
-
-When qualifying hasn't happened, `quali_pos_next` is set to sentinel value `22.0` for all drivers. `_is_pre_qualifying_csv()` detects this and `format_predictor_for_claude()` suppresses the qualifying position column, replacing it with a "PRE-QUALIFYING PREVIEW" header so Claude doesn't treat grid-agnostic probabilities as post-qualifying predictions.
-
-### Stale-CSV protection
-
-The CSV is stamped with `round_num`. `get_predictor_context(expected_round=N)` returns empty if the CSV round doesn't match — prevents a Spanish GP prediction from leaking into Austrian GP analysis.
-
----
-
-## Key engineering decisions
-
-### Anti-hallucination grounding
-
-The single biggest risk with an LLM F1 bot is invented positions and times. Three mechanisms address this:
-
-**CLASSIFICATION FACT injection** — when a query mentions a driver and a race, the driver's exact finishing position (or DNF with cause) is extracted from `full_classification` in episodic memory and injected as a hard fact with `"Use this exact position when answering."` This prevents Claude from inventing mid-field positions that weren't in the compact race summary.
-
-**RACE CONTROL FACT injection** — in-race penalties (e.g., 5-second time penalties served during a pit stop) don't change the final classification and can't be inferred from results. The race control message feed is searched for the driver's surname and injected separately. Crucially: if race control messages exist for a race but none mention the queried driver, that *absence* is also injected as informative negative evidence.
-
-**"No stewards doc = mechanical, not missing data"** — the system prompt instructs Claude that absence of FIA stewards documents for a DNF is itself informative. Stewards investigate on-track incidents; mechanical failures don't generate documents. Claude is told to say "no stewards investigation was opened, which points to a mechanical issue" rather than "I don't have that information."
-
-### Driver-code word-boundary matching
-
-Mapping text to driver codes (`"hamilton"` → `HAM`) is a false-positive minefield. Common English words like `"per"`, `"had"`, `"gas"`, `"ham"` were all in early versions of the map, producing absurd matches (`"performance"` → PER, `"I had a good lap"` → HAD). The current implementation uses word-boundary regex matching and explicitly removes common-word codes from the map. Tested with regressions like `"is barcelona a 1 or 2 stopper"` (must not match PER), `"fill up the gas tank"` (must not match GAS).
-
-### Context block size audit
-
-An audit found six blocks where the `[:N]` limit in `ctx_blocks.append()` silently cut between 52% and 85% of real content. The RACE REPLAY block (typically ~597 chars) was routed through the USER block's 150-char limit. HISTORY was capped at 200 when real content runs to 1,200. Each block now has a limit matched to its actual content ceiling, and `build_system_prompt()` logs `log.debug(f"ctx_block LABEL: N chars")` after every append for future auditing.
-
-### Spa/Spanish substring collision
-
-`"spanish"` contains `"spa"` — if circuit lookup uses simple substring matching, `"tell me about the Spanish GP"` resolves to Spa-Francorchamps. The `_resolve_circuit_key()` function uses word-boundary matching (`\bspa\b`) to prevent this while keeping `"spa francorchamps"` and `"belgium gp at spa"` working correctly.
-
----
-
-## Setup and running
-
-### Environment variables
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...      # Required — console.anthropic.com
-export TELEGRAM_BOT_TOKEN=123456:ABC...  # Required — @BotFather on Telegram
-export F1_PREDICTOR_PATH=...             # Optional — overrides default predictor script path
-```
-
-### Install
+## How to run
 
 ```bash
 pip install -r requirements.txt
 
-# Playwright needs its browser binaries (done once)
-playwright install chromium
+# Run the predictor (writes f1_2026_predicciones.csv)
+python f1_2026_predictor.py
+
+# Update Bayesian priors after a race result is official
+python f1_update_priors.py --round N
 ```
 
-Playwright/Chromium is **lazy-installed** in the Railway container on first use — the container doesn't have it at build time, so `get_circuit_guide()` and `fetch_fia_race_documents()` trigger installation on the first call that needs it.
-
-### Run
-
-```bash
-# Production Telegram bot
-python3 boxboxai_bot.py
-
-# Developer CLI/REPL (same memory, no Telegram)
-python3 f1_agent.py
-
-# ML predictor standalone (writes f1_2026_predicciones.csv)
-python3 f1_2026_predictor.py
-
-# One-time memory bootstrap (loads completed 2026 races into f1_memory_2026.json)
-python3 build_2026_memory.py
-
-# OpenF1 column-availability diagnostic (run before changing predictor data fields)
-python3 f1_diagnostico_openf1.py
-```
-
-### Deployment
-
-Railway via `Procfile`:
-
-```
-worker: python3 boxboxai_bot.py
-```
-
-The deploy-version sanity marker at the top of `boxboxai_bot.py` (`# DEPLOY-CHECK-MARKER`) lets you verify Railway picked up the latest push.
-
-### Runtime state files
-
-These are generated at runtime and gitignored:
-
-| File | Contents |
-|------|----------|
-| `f1_memory_2026.json` | Shared memory store (semantic + episodic + predictions) |
-| `boxboxai_sessions.json` | User profiles, timezone, preferences, per-user chat history (last 6 messages) |
-| `boxboxai_news_cache.json` | RSS cache, 30-min refresh |
-| `boxboxai_enrichment.json` | FastF1 enrichment state |
-| `boxboxai_predictor_state.json` | Auto-predictor run state |
-| `f1_2026_predicciones.csv` | Latest predictor output |
-| `f1_cache/` | FastF1 SQLite HTTP cache |
+Run `f1_2026_predictor.py` **before qualifying** for an early race simulation driven by season-to-date history and practice pace. Run it again **after qualifying** to unlock the 55% qualifying-weighted prediction with full next-race feature set.
 
 ---
 
-## Testing
+## Race weekend workflow
 
-```bash
-python3 -m pytest test_boxboxai_core.py -v
-```
-
-86 tests covering:
-
-- **Trigger functions** — `_needs_fia_docs`, `_is_live_session_question`, `_is_weather_query` and their false-positive cases
-- **Driver resolution** — `resolve_driver_code`, `_resolve_multiple_driver_codes`, word-boundary edge cases
-- **Predictor staleness** — `get_predictor_context` round-stamp matching, missing CSV, old CSV without `round_num` column
-- **Pre-qualifying detection** — sentinel value detection, block formatting with/without qualifying positions
-- **Tyre strategy routing** — regression against the key-name mismatches that were silently dropping tyre data
-- **Circuit guide** — Spa/Spanish collision, zone data injection, graceful degradation when Playwright fails
-- **FIA circuit map parsing** — `_parse_circuit_map_pdf_text` against real pypdf-extracted text from the 2026 Barcelona circuit map PDF
-- **Context truncation limits** — every context block verified at its real size boundary
-- **`/reingest` race condition** — regression for the `mem_ref[0]` vs stale local copy bug
-- **`/debug_context` formatting** — `_format_debug_context_report` char-count accuracy, preview capping, empty-block omission
-
-No mocking of external APIs in the core test suite. Tests that touch `cmd_reingest` and `cmd_debug_context` use `AsyncMock` with patches on specific bot functions rather than full integration.
+| When | What to do | What you get |
+|------|-----------|--------------|
+| **Thursday / FP1** | `python f1_2026_predictor.py` | Early race simulation from FP1 delta, corner speed profile, historical affinity |
+| **Friday / FP2** | `python f1_2026_predictor.py` | Tyre deg slope, long-run pace, compound-specific deltas added |
+| **Saturday post-quali** | `python f1_2026_predictor.py` | Full prediction: 55% qualifying weight + all race features. Stacking meta-model picks XGB/LGBM weights for this circuit type |
+| **Sunday –2h** | `python f1_2026_predictor.py` | Weather nowcast upgrade if rain probability has changed overnight |
+| **Sunday post-race** | `python f1_update_priors.py --round N` then `python f1_2026_predictor.py` | Priors updated, prediction record logged, next-round early prediction ready |
 
 ---
 
-## Bot commands
+## 2026 season status
 
-| Command | Who | What |
-|---------|-----|-------|
-| `/start` | All users | Welcome message with feature overview |
-| `/help` | All users | Command reference |
-| `/standings` | All users | Current driver championship standings |
-| `/constructors` | All users | Constructor championship standings |
-| `/predict` | All users | Race prediction for the next/current round |
-| `/winner` | All users | Quick win probability summary |
-| `/reingest <round>` | Owner only | Force re-fetch a race result from Jolpica (clears ingest/enrichment/predictor state for that round) |
-| `/debug_context <query>` | Owner only | Dry-run the context pipeline for a query — shows which blocks would be injected, their character counts, and a 100-char preview of each, without making a Claude API call |
-
-Free-text messages route through `handle_message()` → `ask_claude()` for full conversational analysis.
-
-### CLI agent commands (`f1_agent.py`)
-
-The REPL exposes the same memory and predictor without the Telegram layer:
-
-`/memory`, `/season`, `/standings`, `/preview`, `/add_race`, `/ingest`, `/correct`, `/predict`
+**Round 8 — Austrian GP (Silverstone Circuit, next)**
+- R8 result: Russell win predicted ✓ — Brier score **0.0315** (27% better than random baseline)
+- Championship: ANT leads 171 pts · HAM 125 pts · RUS 131 pts (after R8)
+- Model: 3-way ensemble (XGB + LGBM + GP), online warm-start learning, 8 races of Bayesian priors
+- Stacking meta-model: 8 LOO rounds — XGB/LGBM weights learned per circuit type
 
 ---
 
-## Known limitations
+## Technical architecture
 
-**Monolith.** `boxboxai_bot.py` is a single ~8,700-line file. It works and the logic is well-organized into sections, but it is not structured as a package with modules. This was a deliberate choice to keep deployment simple (one file to push) rather than an oversight.
-
-**FastF1 lag.** Telemetry data isn't available until ~48 hours after a race. Enrichment runs automatically but answers about specific sector times or stint lengths will be generic immediately post-race.
-
-**Calibration tracking is limited.** Prediction accuracy is tracked (the `PREDICTION RECORD` block and self-correction loop), but the calibration methodology is informal — win percentage predictions aren't formally compared against empirical frequencies.
-
-**No Pirelli API.** Tyre compound data for race weekends (allocation per driver, compound characteristics) would improve predictions meaningfully. No stable public Pirelli endpoint exists.
-
-**Race weekend timing.** The session reminder and auto-ingest calendar is hardcoded for the 2026 F1 season. It will need updating for 2027.
-
-**English and Mexican Spanish only.** The bot detects user language and responds in kind, but only these two are tested.
-
----
-
-## Tech stack
-
-| Component | Technology |
-|-----------|-----------|
-| Bot framework | `python-telegram-bot` 22.7 |
-| LLM | Anthropic API — `claude-sonnet-4-5` |
-| ML predictor | XGBoost, scikit-learn, NumPy, pandas |
-| F1 telemetry | FastF1 |
-| FIA document scraping | Playwright (Chromium) + pypdf |
-| HTTP | requests |
-| Deployment | Railway (single worker dyno) |
-| Testing | pytest |
-
----
-
-## Why this exists
-
-This started as a personal project to combine a long-standing F1 interest with hands-on work on production AI systems — specifically, exploring what it takes to make an LLM give *accurate* answers in a domain where hallucination is immediately obvious (you either got the race result right or you didn't). The bot is in daily use during the 2026 season and has been a useful forcing function for finding real failure modes in LLM-grounded systems: truncation bugs that silently drop data, false-positive trigger functions that inject irrelevant context, and the gap between "Claude sounds confident" and "Claude has the actual data."
-
-Development has been AI-assisted throughout using Claude Code, which is fitting given the subject matter.
+The predictor runs as a single Python script with no server or daemon. On each invocation it fetches fresh data from Jolpica and OpenF1 over HTTP (responses are cached to `f1_cache/` by FastF1 and request-level TTLs), builds a 21-column feature matrix (one row per driver), and passes it through three models. XGBoost and LightGBM are trained incrementally via warm start — each new race adds 20 trees weighted 3× to emphasise recency, while the full training set provides the base. The Gaussian Process uses an RBF + WhiteKernel composite kernel with `normalize_y=True`; its σ output explicitly measures how sparse the feature space is around each driver — useful signal in an 8-race season. A logistic regression stacking meta-model trained on LOO validation history learns per-circuit-type blending weights (high-speed, street, technical, mixed) for the XGB/LGBM pair; GP always gets a fixed 20% share. The blended score feeds a Monte Carlo engine that runs 10,000 race simulations with safety car Poisson draws, undercut probability windows, and component-level DNF risk by team, producing full probability distributions rather than point estimates. Bayesian priors — per-driver correction multipliers derived from rolling prediction error — are applied before scoring and updated after every race result. Driver behavioral profiles derived from 2023–2025 race data add five historical features (overtaking ability, qualifying consistency, wet-weather delta, DNF rate, tyre management index) and three-dimensional style embeddings whose cosine similarity with circuit embeddings produces a driver-circuit compatibility score.
