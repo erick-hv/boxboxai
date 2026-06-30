@@ -28,6 +28,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 
@@ -654,6 +655,205 @@ def generate_prerace_briefing(round_num: int | None = None) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  SECTION 4b: WhatsApp briefing via CallMeBot
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Circuit → country flag emoji for WhatsApp header line
+_CIRCUIT_FLAG: dict[str, str] = {
+    "Bahrain International Circuit"      : "🇧🇭",
+    "Jeddah Corniche Circuit"            : "🇸🇦",
+    "Albert Park Grand Prix Circuit"     : "🇦🇺",
+    "Suzuka Circuit"                     : "🇯🇵",
+    "Shanghai International Circuit"     : "🇨🇳",
+    "Miami International Autodrome"      : "🇺🇸",
+    "Autodromo Enzo e Dino Ferrari"      : "🇮🇹",
+    "Circuit de Monaco"                  : "🇲🇨",
+    "Circuit de Barcelona-Catalunya"     : "🇪🇸",
+    "Circuit Gilles Villeneuve"          : "🇨🇦",
+    "Red Bull Ring"                      : "🇦🇹",
+    "Silverstone Circuit"                : "🇬🇧",
+    "Hungaroring"                        : "🇭🇺",
+    "Circuit de Spa-Francorchamps"       : "🇧🇪",
+    "Circuit Park Zandvoort"             : "🇳🇱",
+    "Autodromo Nazionale di Monza"       : "🇮🇹",
+    "Baku City Circuit"                  : "🇦🇿",
+    "Marina Bay Street Circuit"          : "🇸🇬",
+    "Circuit of the Americas"            : "🇺🇸",
+    "Autodromo Hermanos Rodriguez"       : "🇲🇽",
+    "Autodromo Jose Carlos Pace"         : "🇧🇷",
+    "Las Vegas Strip Circuit"            : "🇺🇸",
+    "Losail International Circuit"       : "🇶🇦",
+    "Yas Marina Circuit"                 : "🇦🇪",
+}
+
+
+def _build_whatsapp_message(round_num: int) -> str | None:
+    """
+    Assemble a compact, emoji-rich WhatsApp message from the same data
+    sources as generate_prerace_briefing(). Returns the message string
+    or None if the CSV is missing/empty.
+    """
+    import csv as _csv
+
+    csv_path = HERE / "f1_2026_predicciones.csv"
+    if not csv_path.exists():
+        return None
+    with open(csv_path, newline="", encoding="utf-8") as fh:
+        rows = list(_csv.DictReader(fh))
+    rd_rows = [r for r in rows if _csv_int(r.get("round_num")) == round_num]
+    if not rd_rows:
+        return None
+    ranked = sorted(rd_rows, key=lambda r: _csv_float(r, "win_mc_pct"), reverse=True)
+
+    race_name = ranked[0].get("race_name", f"Round {round_num}")
+
+    # Log metadata (same fallback logic as generate_prerace_briefing)
+    RUNS_DIR.mkdir(exist_ok=True)
+    log_candidates = sorted(
+        list(RUNS_DIR.glob(f"R{round_num}_*.log")),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
+    fallback = HERE / "austria_r8_prediction.txt"
+    log_path = log_candidates[0] if log_candidates else (fallback if fallback.exists() else None)
+    meta = _parse_log_meta(log_path) if log_path else {}
+
+    circuit    = meta.get("circuit", "")
+    weather_raw = meta.get("weather_line", "")
+    rain_prob  = meta.get("rain_prob")
+    nowcast    = meta.get("nowcast", False)
+
+    sc_prob = SAFETY_CAR_PROB.get(circuit, 0.50)
+    flag    = _CIRCUIT_FLAG.get(circuit, "🏁")
+
+    # ── Weather line ──────────────────────────────────────────────────────
+    if rain_prob is not None:
+        if rain_prob < 0.10:   w_desc = f"Dry — {rain_prob:.0%} rain"
+        elif rain_prob < 0.30: w_desc = f"Mostly dry — {rain_prob:.0%} rain"
+        elif rain_prob < 0.60: w_desc = f"Mixed — {rain_prob:.0%} rain"
+        else:                   w_desc = f"Wet — {rain_prob:.0%} rain"
+    elif weather_raw:
+        _ES_TO_EN = {
+            "Seco esperado": "Dry expected", "Lluvia posible": "Rain possible",
+            "Lluvia probable": "Rain likely", "Lluvia esperada": "Rain expected",
+            "Condiciones mixtas": "Mixed conditions",
+        }
+        parts = [p.strip() for p in weather_raw.split("|")]
+        cond  = parts[0].replace("☀","").replace("🌧","").replace("⛅","").replace("🌦","").strip()
+        w_desc = _ES_TO_EN.get(cond, cond)
+        # Append track temp if present
+        extras = [p for p in parts[1:] if "°C" in p]
+        if extras:
+            w_desc += " · " + extras[0].strip()
+        rain_prob = 0.0
+    else:
+        w_desc = "Weather unavailable"
+        rain_prob = 0.0
+
+    low = w_desc.lower()
+    rp  = rain_prob or 0.0
+    if rp >= 0.60:      w_emoji = "🌧️"
+    elif rp >= 0.30:    w_emoji = "⛅"
+    elif rp >= 0.10:    w_emoji = "🌦️"
+    elif "rain" in low: w_emoji = "🌧️"
+    elif "mixed" in low:w_emoji = "⛅"
+    else:               w_emoji = "☀️"
+
+    # ── SC label ──────────────────────────────────────────────────────────
+    if sc_prob >= 0.70:   sc_short = "very high"
+    elif sc_prob >= 0.55: sc_short = "high"
+    elif sc_prob >= 0.45: sc_short = "coin flip"
+    else:                 sc_short = "below average"
+
+    # ── Epistemic uncertainty threshold ───────────────────────────────────
+    unc_vals = [_csv_float(r, "epistemic_unc") for r in ranked]
+    unc_mean = sum(unc_vals) / len(unc_vals) if unc_vals else 0
+    unc_std  = (sum((v - unc_mean) ** 2 for v in unc_vals) / len(unc_vals)) ** 0.5
+    unc_hi   = unc_mean + unc_std
+
+    def _last(name: str) -> str:
+        return name.split()[-1]
+
+    medals = ["🥇", "🥈", "🥉"]
+    pred_lines: list[str] = []
+    warn_lines: list[str] = []
+
+    for i, row in enumerate(ranked[:5], 1):
+        name = row.get("FullName", row.get("code", "?"))
+        team = _normalize_team(row.get("TeamName", ""))
+        win  = _csv_float(row, "win_mc_pct")
+        pod  = _csv_float(row, "podium_mc_pct")
+        if i <= 3:
+            pred_lines.append(
+                f"{medals[i-1]} {_last(name)} ({team}) — {win:.1f}% win · {pod:.1f}% podium"
+            )
+        else:
+            pred_lines.append(f"{i}  {_last(name)} ({team}) — {win:.1f}% win")
+        if _csv_float(row, "epistemic_unc") > unc_hi:
+            warn_lines.append(f"⚠️ {_last(name)}: models disagree on outcome")
+
+    # Biggest wildcard: widest P10-P90 span in top 3
+    for row in ranked[:3]:
+        p10 = _csv_float(row, "p10_pos")
+        p90 = _csv_float(row, "p90_pos")
+        if p10 and p90 and (p90 - p10) > 7:
+            warn_lines.append(
+                f"⚠️ {_last(row.get('FullName','?'))} P{int(p10)}–P{int(p90)} range — biggest wildcard"
+            )
+            break
+
+    parts: list[str] = [
+        f"🏁 R{round_num} {race_name} {flag}",
+        "",
+        f"{w_emoji} {w_desc}",
+        f"🚦 SC {sc_prob:.0%} — {sc_short}",
+        "",
+        "🔮 PREDICTION  (10k simulations)",
+    ] + pred_lines
+
+    if warn_lines:
+        parts += [""] + warn_lines
+
+    parts += ["", f"🏎️ Full breakdown → f1_runs/R{round_num}_BRIEFING.txt"]
+
+    return "\n".join(parts)
+
+
+def send_whatsapp_briefing(round_num: int) -> None:
+    """
+    Send a compact pre-race briefing to WhatsApp via the CallMeBot API.
+
+    Reads WHATSAPP_PHONE and CALLMEBOT_API_KEY from environment variables
+    (set these as GitHub Actions secrets). Silently skips if either is absent.
+    Errors are logged but never raised — caller continues unaffected.
+    """
+    import os
+    phone  = os.environ.get("WHATSAPP_PHONE", "").strip()
+    apikey = os.environ.get("CALLMEBOT_API_KEY", "").strip()
+
+    if not phone or not apikey:
+        print("  [WhatsApp] WHATSAPP_PHONE or CALLMEBOT_API_KEY not set — skipping.")
+        return
+
+    msg = _build_whatsapp_message(round_num)
+    if not msg:
+        print("  [WhatsApp] Could not build message (CSV missing?) — skipping.")
+        return
+
+    url = (
+        f"https://api.callmebot.com/whatsapp.php"
+        f"?phone={quote(phone)}&text={quote(msg)}&apikey={quote(apikey)}"
+    )
+    try:
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 200:
+            print(f"  [WhatsApp] Briefing sent to {phone[:6]}***  ✓")
+        else:
+            print(f"  [WhatsApp] API returned {resp.status_code}: {resp.text[:120]}")
+    except Exception as exc:
+        print(f"  [WhatsApp] Send failed (non-fatal): {exc}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  SECTION 5: Predictor runner (subprocess with tee to log file)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -839,6 +1039,8 @@ def check_once() -> None:
                 save_state(state)
                 # Generate the human-readable briefing after the prediction run
                 generate_prerace_briefing(next_rnd)
+                # Send compact WhatsApp summary (only for pre-race, not every session)
+                send_whatsapp_briefing(next_rnd)
             elif now < trigger_at:
                 mins = int((trigger_at - now).total_seconds() / 60)
                 print(f"  [pre_race] fires in {mins} min "

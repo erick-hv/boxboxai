@@ -20,7 +20,9 @@ jobs:
       contents: write
 
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+      WHATSAPP_PHONE:       ${{ secrets.WHATSAPP_PHONE }}
+      CALLMEBOT_API_KEY:    ${{ secrets.CALLMEBOT_API_KEY }}
 
     steps:
       - name: Checkout repo
