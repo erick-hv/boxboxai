@@ -725,38 +725,53 @@ def _build_whatsapp_message(round_num: int) -> str | None:
     sc_prob = SAFETY_CAR_PROB.get(circuit, 0.50)
     flag    = _CIRCUIT_FLAG.get(circuit, "🏁")
 
-    # ── Weather line ──────────────────────────────────────────────────────
-    if rain_prob is not None:
-        if rain_prob < 0.10:   w_desc = f"Dry — {rain_prob:.0%} rain"
-        elif rain_prob < 0.30: w_desc = f"Mostly dry — {rain_prob:.0%} rain"
-        elif rain_prob < 0.60: w_desc = f"Mixed — {rain_prob:.0%} rain"
-        else:                   w_desc = f"Wet — {rain_prob:.0%} rain"
-    elif weather_raw:
-        _ES_TO_EN = {
-            "Seco esperado": "Dry expected", "Lluvia posible": "Rain possible",
-            "Lluvia probable": "Rain likely", "Lluvia esperada": "Rain expected",
-            "Condiciones mixtas": "Mixed conditions",
-        }
-        parts = [p.strip() for p in weather_raw.split("|")]
-        cond  = parts[0].replace("☀","").replace("🌧","").replace("⛅","").replace("🌦","").strip()
-        w_desc = _ES_TO_EN.get(cond, cond)
-        # Append track temp if present
-        extras = [p for p in parts[1:] if "°C" in p]
-        if extras:
-            w_desc += " · " + extras[0].strip()
-        rain_prob = 0.0
+    # ── Weather block ─────────────────────────────────────────────────────
+    # Parse the pipe-separated weather line for condition, temp, humidity.
+    # rain_prob (from nowcast) is shown as an explicit % when available.
+    _ES_TO_EN_W = {
+        "Seco esperado": "Dry expected", "Lluvia posible": "Rain possible",
+        "Lluvia probable": "Rain likely", "Lluvia esperada": "Rain expected",
+        "Condiciones mixtas": "Mixed conditions",
+    }
+    temp_str = ""
+    hum_str  = ""
+    if weather_raw:
+        raw_parts = [p.strip() for p in weather_raw.split("|")]
+        cond_raw  = raw_parts[0].replace("☀","").replace("🌧","").replace("⛅","").replace("🌦","").strip()
+        w_cond    = _ES_TO_EN_W.get(cond_raw, cond_raw)
+        for seg in raw_parts[1:]:
+            if "°C" in seg:
+                temp_str = seg.replace("Pista","").replace("~","").strip()
+            if "Humedad" in seg or "Humidity" in seg:
+                hum_str = seg.replace("Humedad", "Humidity").strip()
+    elif rain_prob is not None:
+        if rain_prob < 0.10:   w_cond = "Dry expected"
+        elif rain_prob < 0.30: w_cond = "Mostly dry"
+        elif rain_prob < 0.60: w_cond = "Mixed conditions"
+        else:                   w_cond = "Wet conditions"
     else:
-        w_desc = "Weather unavailable"
-        rain_prob = 0.0
+        w_cond = "Weather unavailable"
 
-    low = w_desc.lower()
-    rp  = rain_prob or 0.0
-    if rp >= 0.60:      w_emoji = "🌧️"
-    elif rp >= 0.30:    w_emoji = "⛅"
-    elif rp >= 0.10:    w_emoji = "🌦️"
-    elif "rain" in low: w_emoji = "🌧️"
-    elif "mixed" in low:w_emoji = "⛅"
-    else:               w_emoji = "☀️"
+    rp = rain_prob if rain_prob is not None else 0.0
+    low = w_cond.lower()
+    if rp >= 0.60:       w_emoji = "🌧️"
+    elif rp >= 0.30:     w_emoji = "⛅"
+    elif rp >= 0.10:     w_emoji = "🌦️"
+    elif "rain" in low:  w_emoji = "🌧️"
+    elif "mixed" in low: w_emoji = "⛅"
+    else:                w_emoji = "☀️"
+
+    # First line: condition + explicit rain % if nowcast available
+    if rain_prob is not None:
+        w_line1 = f"{w_emoji} {w_cond} · {rain_prob:.0%} rain chance"
+    else:
+        w_line1 = f"{w_emoji} {w_cond}"
+
+    # Second line: track temp + humidity (omitted if neither available)
+    detail_parts = []
+    if temp_str: detail_parts.append(f"Track {temp_str}")
+    if hum_str:  detail_parts.append(hum_str)
+    w_line2 = ("   " + "  ·  ".join(detail_parts)) if detail_parts else ""
 
     # ── SC label ──────────────────────────────────────────────────────────
     if sc_prob >= 0.70:   sc_short = "very high"
@@ -801,10 +816,21 @@ def _build_whatsapp_message(round_num: int) -> str | None:
             )
             break
 
+    disclaimer = (
+        "⚠️ This is an experimental ML prediction model still under "
+        "active development. Actual race results may vary significantly."
+    )
+
+    weather_block = [w_line1]
+    if w_line2:
+        weather_block.append(w_line2)
+
     parts: list[str] = [
+        disclaimer,
+        "",
         f"🏁 R{round_num} {race_name} {flag}",
         "",
-        f"{w_emoji} {w_desc}",
+    ] + weather_block + [
         f"🚦 SC {sc_prob:.0%} — {sc_short}",
         "",
         "🔮 PREDICTION  (10k simulations)",
