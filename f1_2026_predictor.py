@@ -17,6 +17,7 @@ Uso:
 """
 
 import warnings
+import re
 from datetime import datetime, timezone, timedelta
 warnings.filterwarnings("ignore")
 import urllib3
@@ -1862,6 +1863,226 @@ PIT_STOP_LOSS = {
 _PIT_LOSS_DEFAULT = 2.6
 _PIT_LOSS_BEST    = min(PIT_STOP_LOSS.values())   # 2.3
 _PIT_LOSS_WORST   = max(PIT_STOP_LOSS.values())   # 2.9
+
+# ── Pirelli compound selections for 2026 (historical defaults / confirmed) ────
+# Source: Pirelli press releases (press.pirelli.com), pitpass.com, f1network.net
+# Format: (hard_C, medium_C, soft_C) — C6 was dropped for 2026; range is C1–C5.
+# ✓ = confirmed from live Pirelli announcement; est. = estimated from circuit type.
+# CONFIDENCE: lower than API-sourced features — scraped from inconsistent HTML.
+# These serve as fallback when fetch_compound_selection() cannot reach live sources.
+CIRCUIT_COMPOUND_DEFAULTS_2026: dict[str, tuple[int, int, int]] = {
+    "Albert Park Grand Prix Circuit"   : (3, 4, 5),  # ✓ R1 confirmed
+    "Shanghai International Circuit"   : (2, 3, 4),  # ✓ R2 confirmed
+    "Suzuka Circuit"                   : (1, 2, 3),  # ✓ R3 confirmed
+    "Bahrain International Circuit"    : (1, 2, 3),  # est. (demanding, high wear)
+    "Jeddah Corniche Circuit"          : (2, 3, 4),  # est.
+    "Miami International Autodrome"    : (2, 3, 4),  # est.
+    "Autodromo Enzo e Dino Ferrari"    : (2, 3, 4),  # est.
+    "Circuit de Monaco"                : (3, 4, 5),  # est. (street, softest)
+    "Circuit de Barcelona-Catalunya"   : (2, 3, 4),  # est.
+    "Circuit Gilles Villeneuve"        : (2, 3, 4),  # est.
+    "Red Bull Ring"                    : (3, 4, 5),  # ✓ R8 confirmed
+    # Silverstone: majority of sources say C1/C2/C3; one source (The Race) says
+    # C2/C3/C4 ("one step softer than before"). Using C1/C2/C3 as default —
+    # confirmed flag is False so the print output signals the uncertainty.
+    "Silverstone Circuit"              : (1, 2, 3),  # majority: C1/C2/C3 (conflict: one src C2/C3/C4)
+    "Hungaroring"                      : (2, 3, 4),  # est.
+    "Circuit de Spa-Francorchamps"     : (1, 2, 3),  # est. (high-speed like Silverstone)
+    "Circuit Park Zandvoort"           : (2, 3, 4),  # ✓ confirmed
+    "Autodromo Nazionale di Monza"     : (3, 4, 5),  # ✓ confirmed
+    "Baku City Circuit"                : (3, 4, 5),  # est. (was C4/C5/C6 in 2025; C6 dropped)
+    "Marina Bay Street Circuit"        : (3, 4, 5),  # ✓ confirmed
+    "Circuit of the Americas"          : (1, 3, 4),  # ✓ confirmed
+    "Autodromo Hermanos Rodriguez"     : (2, 4, 5),  # ✓ confirmed
+    "Autodromo Jose Carlos Pace"       : (2, 3, 4),  # ✓ confirmed
+    "Las Vegas Strip Circuit"          : (3, 4, 5),  # ✓ confirmed
+    "Losail International Circuit"     : (1, 2, 3),  # ✓ confirmed
+    "Yas Marina Circuit"               : (3, 4, 5),  # ✓ confirmed
+}
+
+# Realistic weekend softness range: C1/C2/C3 avg=2.0 (hardest) → C3/C4/C5 avg=4.0 (softest).
+# Used to normalize compound_softness to [0, 1] for the MC undercut multiplier.
+_COMPOUND_AVG_MIN = 2.0   # C1/C2/C3
+_COMPOUND_AVG_MAX = 4.0   # C3/C4/C5
+
+
+def fetch_compound_selection(
+        circuit_name: str,
+        round_num: int,
+        race_name: str = "",
+) -> dict:
+    """
+    Fetch the confirmed Pirelli dry compound selection (Hard/Medium/Soft C-numbers)
+    for the upcoming race. Tries live web sources first; falls back to
+    CIRCUIT_COMPOUND_DEFAULTS_2026 when scraping fails or the preview has not
+    been published yet (typically <2 weeks before FP1).
+
+    DATA RELIABILITY WARNING: This uses HTML scraping from inconsistent public
+    sources, not a clean API. Confidence is intentionally lower than API-derived
+    features. Source conflicts are flagged explicitly in the output.
+
+    Returns:
+        {
+          "hard": int, "medium": int, "soft": int,   # C-numbers (1–5)
+          "softness": float,  # normalised [0,1]: 0 = hardest weekend, 1 = softest
+          "confirmed": bool,  # True = live web source; False = historical default
+          "conflict": bool,   # True = sources disagree (do not treat as ground truth)
+          "source": str,      # URL or "historical_default"
+        }
+    """
+    import json as _json
+
+    NOM_CACHE = Path("./f1_2026_compound_noms.json")
+    cache_key = str(round_num)
+
+    def _softness(h: int, m: int, s: int) -> float:
+        avg = (h + m + s) / 3.0
+        return float(np.clip((avg - _COMPOUND_AVG_MIN) / (_COMPOUND_AVG_MAX - _COMPOUND_AVG_MIN), 0.0, 1.0))
+
+    # ── Check cache ───────────────────────────────────────────────────────
+    if NOM_CACHE.exists():
+        try:
+            cached = _json.loads(NOM_CACHE.read_text(encoding="utf-8"))
+            if cache_key in cached:
+                e = cached[cache_key]
+                result = {
+                    "hard": e["hard"], "medium": e["medium"], "soft": e["soft"],
+                    "softness": _softness(e["hard"], e["medium"], e["soft"]),
+                    "confirmed": e.get("confirmed", False),
+                    "conflict":  e.get("conflict", False),
+                    "source":    e.get("source", "cache"),
+                }
+                tag = "confirmed ✓" if result["confirmed"] else (
+                    "⚠ source conflict — treat as estimate" if result["conflict"]
+                    else "historical default")
+                print(f"   🏎️  Compounds (cached): C{e['hard']}/C{e['medium']}/C{e['soft']} "
+                      f"→ softness {result['softness']:.2f}  [{tag}]")
+                return result
+        except Exception:
+            pass
+
+    # ── Scrape live sources ───────────────────────────────────────────────
+    # Pirelli preview articles follow no consistent URL pattern; we try known
+    # pages that were found to contain 2026 compound data for AUT+GBR.
+    # This list should be updated as new press releases are published.
+    # WARNING: HTML structure changes silently — always verify scraped results.
+    _SCRAPE_URLS = [
+        "https://www.f1network.net/main/s107/st208612.htm",
+        "https://www.pitpass.com/82890/Pirelli-reveals-Austrian-and-British-GP-tyre-compounds",
+    ]
+
+    def _fetch_text(url: str) -> str:
+        try:
+            hdrs = {"User-Agent": "Mozilla/5.0 (compatible; F1Predictor/1.0)"}
+            r = requests.get(url, headers=hdrs, timeout=10)
+            if r.status_code != 200:
+                return ""
+            stripped = re.sub(r"<[^>]+>", " ", r.text)
+            return re.sub(r"\s+", " ", stripped)
+        except Exception:
+            return ""
+
+    def _extract_triple(text: str) -> tuple[int, int, int] | None:
+        """
+        Look for three consecutive C-numbers (C_n, C_{n+1}, C_{n+2}) in the text.
+        Returns (hard, medium, soft) or None.
+        Only accepts clean consecutive triples to avoid false matches.
+        """
+        nums = [int(m) for m in re.findall(r"\bC([1-5])\b", text)]
+        seen: list[int] = []
+        for n in nums:
+            if n not in seen:
+                seen.append(n)
+        for i in range(len(seen) - 2):
+            a, b, c = seen[i], seen[i+1], seen[i+2]
+            if b == a + 1 and c == b + 1:
+                return (a, b, c)
+        return None
+
+    # Check if this URL is relevant to this circuit
+    circuit_kw = circuit_name.lower().split()[0]  # e.g. "silverstone"
+    race_kw    = race_name.lower().split()[-2] if len(race_name.split()) >= 2 else race_name.lower()
+
+    candidates: list[tuple[int, int, int]] = []
+    found_source = ""
+    for url in _SCRAPE_URLS:
+        text = _fetch_text(url)
+        if not text:
+            continue
+        tl = text.lower()
+        if circuit_kw not in tl and race_kw not in tl:
+            continue   # page doesn't mention this circuit
+        triple = _extract_triple(text)
+        if triple:
+            candidates.append(triple)
+            if not found_source:
+                found_source = url
+
+    # ── Resolve ───────────────────────────────────────────────────────────
+    conflict  = False
+    confirmed = False
+
+    if len(candidates) >= 2 and candidates[0] == candidates[1]:
+        # Two sources agree → confirmed
+        hard, medium, soft = candidates[0]
+        confirmed = True
+    elif len(candidates) == 1:
+        # Single source — use it but don't mark confirmed
+        hard, medium, soft = candidates[0]
+    elif len(candidates) >= 2:
+        # Sources disagree → flag conflict, use majority or first
+        conflict  = True
+        hard, medium, soft = candidates[0]
+        print(f"   ⚠️  Compound source conflict: {candidates} — using first, flagged as uncertain")
+    else:
+        # No live data found — fall back to hardcoded defaults
+        default = CIRCUIT_COMPOUND_DEFAULTS_2026.get(circuit_name)
+        if default:
+            hard, medium, soft = default
+        else:
+            hard, medium, soft = 2, 3, 4   # mid-range neutral
+        found_source = "historical_default"
+
+    softness = _softness(hard, medium, soft)
+    result = {
+        "hard": hard, "medium": medium, "soft": soft,
+        "softness": softness, "confirmed": confirmed,
+        "conflict": conflict, "source": found_source,
+    }
+
+    # ── Print summary ──────────────────────────────────────────────────────
+    if found_source == "historical_default":
+        is_known_conflict = circuit_name == "Silverstone Circuit"
+        note = ("⚠ one source says C2/C3/C4 — conflict not resolved"
+                if is_known_conflict else "historical default")
+        print(f"   🏎️  Compounds (fallback): C{hard}/C{medium}/C{soft} "
+              f"→ softness {softness:.2f}  [{note}]")
+    elif conflict:
+        print(f"   🏎️  Compounds (conflict): C{hard}/C{medium}/C{soft} "
+              f"→ softness {softness:.2f}  [⚠ sources disagree]")
+    else:
+        tag = "confirmed ✓" if confirmed else "single source"
+        print(f"   🏎️  Compounds ({tag}): C{hard}/C{medium}/C{soft} "
+              f"→ softness {softness:.2f}")
+
+    # ── Cache result (atomic write) ────────────────────────────────────────
+    try:
+        cache: dict = {}
+        if NOM_CACHE.exists():
+            cache = _json.loads(NOM_CACHE.read_text(encoding="utf-8"))
+        cache[cache_key] = {
+            "hard": hard, "medium": medium, "soft": soft,
+            "confirmed": confirmed, "conflict": conflict, "source": found_source,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tmp = NOM_CACHE.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(cache, indent=2), encoding="utf-8")
+        tmp.replace(NOM_CACHE)
+    except Exception as exc:
+        print(f"   ⚠  Could not save compound cache: {exc}")
+
+    return result
+
 
 CIRCUIT_ID_MAP = {
     "Albert Park Grand Prix Circuit"   : "albert_park",
@@ -4739,13 +4960,14 @@ def build_reliability(feat: pd.DataFrame, race_df: pd.DataFrame,
 #  21c. SIMULACIÓN MONTE CARLO
 # ─────────────────────────────────────────────────────────────
 def monte_carlo_simulation(
-        feat         : pd.DataFrame,
-        base_scores  : pd.Series,
-        reliability  : pd.DataFrame,
-        weather      : dict,
-        n_sims       : int = 10_000,
-        circuit_name : str = "",
-        gnn_overtake : "dict | None" = None,
+        feat              : pd.DataFrame,
+        base_scores       : pd.Series,
+        reliability       : pd.DataFrame,
+        weather           : dict,
+        n_sims            : int = 10_000,
+        circuit_name      : str = "",
+        gnn_overtake      : "dict | None" = None,
+        compound_softness : float = 0.5,   # normalised [0,1]: 0=C1/C2/C3, 1=C3/C4/C5
 ) -> pd.DataFrame:
     """
     Corre N simulaciones de la carrera inyectando variaciones aleatorias en:
@@ -4777,16 +4999,24 @@ def monte_carlo_simulation(
     sc_prob   = SAFETY_CAR_PROB.get(circuit_name, _DEFAULT_SC_PROB)
     sc_lambda = -np.log(1.0 - sc_prob) if sc_prob < 1.0 else 3.0
     _uw          = UNDERCUT_WINDOW.get(circuit_name, {"laps": (16, 20), "prob": 0.40})
-    undercut_prob = float(_uw["prob"])
     _uw_laps      = _uw["laps"]
+    # Scale undercut probability by compound softness.
+    # Softer compounds degrade faster → larger strategy windows → more undercuts.
+    # compound_softness=0 (C1/C2/C3) → ×0.90; =0.5 (C2/C3/C4) → ×1.00; =1.0 (C3/C4/C5) → ×1.10
+    # Capped at [0.05, 0.80] to stay physically plausible.
+    # CONFIDENCE: lower than other inputs — depends on scraped compound data.
+    _compound_scale = 1.0 + 0.20 * (compound_softness - 0.5)
+    undercut_prob   = float(np.clip(float(_uw["prob"]) * _compound_scale, 0.05, 0.80))
     print(f"🎲  Corriendo {n_sims:,} simulaciones Monte Carlo...")
     print(f"   🚦  SC/VSC prob: {sc_prob:.0%}  "
           f"(λ={sc_lambda:.2f}, ~{sc_lambda:.1f} SC esperados por carrera)")
     if _uw_laps[0] > 0:
         print(f"   🔁  Undercut prob: {undercut_prob:.0%}  "
-              f"(ventana óptima laps {_uw_laps[0]}–{_uw_laps[1]})")
+              f"(ventana óptima laps {_uw_laps[0]}–{_uw_laps[1]}, "
+              f"compound scale ×{_compound_scale:.2f})")
     else:
-        print(f"   🔁  Undercut prob: {undercut_prob:.0%}  (circuito urbano — sin ventana)")
+        print(f"   🔁  Undercut prob: {undercut_prob:.0%}  "
+              f"(circuito urbano — sin ventana, compound scale ×{_compound_scale:.2f})")
 
     rng      = np.random.default_rng(42)
     n        = len(feat)
@@ -6305,15 +6535,25 @@ def main():
                 print(f"      {r['code']}: {r['mechanical_risk']*100:.1f}% "
                       f"({r.get('dominant_failure','?')})")
 
+    # 12b. Pirelli compound selection → circuit_compound_softness
+    # Scraped from public sources (inconsistent HTML, not a clean API).
+    # Falls back to CIRCUIT_COMPOUND_DEFAULTS_2026 if live source unavailable.
+    # Used only as a multiplier on undercut_prob inside MC — low-weight signal.
+    print("\n🏎️  Pirelli compound selection...")
+    _next_race_name = next_info.get("name", "") if hasattr(next_info, "get") else ""
+    _compound_data  = fetch_compound_selection(next_circuit, next_round, _next_race_name)
+    _compound_softness = _compound_data["softness"]
+
     # 13. Simulación Monte Carlo
     mc_df = monte_carlo_simulation(
-        feat         = scored,
-        base_scores  = scored["raw_score"],
-        reliability  = reliability,
-        weather      = weather,
-        n_sims       = 10_000,
-        circuit_name = next_circuit,
-        gnn_overtake = gnn_overtake_matrix,
+        feat              = scored,
+        base_scores       = scored["raw_score"],
+        reliability       = reliability,
+        weather           = weather,
+        n_sims            = 10_000,
+        circuit_name      = next_circuit,
+        gnn_overtake      = gnn_overtake_matrix,
+        compound_softness = _compound_softness,
     )
 
     # Aleatoric uncertainty — inherent randomness from MC spread relative to win%

@@ -1,0 +1,11 @@
+{
+  "9": {
+    "hard": 1,
+    "medium": 2,
+    "soft": 3,
+    "confirmed": false,
+    "conflict": false,
+    "source": "historical_default",
+    "fetched_at": "2026-06-30T17:46:51.002794+00:00"
+  }
+}
