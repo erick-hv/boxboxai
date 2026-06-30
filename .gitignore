@@ -1,2 +1,8 @@
 venv/
 __pycache__/
+
+# FastF1 API response cache — large, transient, never commit
+f1_cache/
+
+# Cron runtime log — append-only, not meaningful to track in git
+f1_runs/cron.log
