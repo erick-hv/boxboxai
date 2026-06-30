@@ -215,7 +215,7 @@
       "round": 1,
       "circuit": "Australian Grand Prix",
       "circuit_type": "high_speed",
-      "brier_score": 0.0452,
+      "brier_score": 0.045,
       "predicted_winner": "ANT",
       "actual_winner": "RUS"
     },
@@ -223,7 +223,7 @@
       "round": 2,
       "circuit": "Chinese Grand Prix",
       "circuit_type": "technical",
-      "brier_score": 0.0382,
+      "brier_score": 0.0367,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -239,7 +239,7 @@
       "round": 4,
       "circuit": "Miami Grand Prix",
       "circuit_type": "mixed",
-      "brier_score": 0.0379,
+      "brier_score": 0.038,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -247,7 +247,7 @@
       "round": 5,
       "circuit": "Canadian Grand Prix",
       "circuit_type": "street",
-      "brier_score": 0.0367,
+      "brier_score": 0.0394,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -255,7 +255,7 @@
       "round": 6,
       "circuit": "Monaco Grand Prix",
       "circuit_type": "street",
-      "brier_score": 0.0462,
+      "brier_score": 0.0388,
       "predicted_winner": "HAM",
       "actual_winner": "ANT"
     },
@@ -263,7 +263,7 @@
       "round": 7,
       "circuit": "Barcelona Grand Prix",
       "circuit_type": "mixed",
-      "brier_score": 0.0497,
+      "brier_score": 0.0464,
       "predicted_winner": "ANT",
       "actual_winner": "HAM"
     },
@@ -277,36 +277,6 @@
     }
   ],
   "feature_importance_history": [
-    {
-      "round": 8,
-      "importances": {
-        "predicted_quali_pos": 0.2717,
-        "momentum_pos": 0.186,
-        "avg_finish": 0.1002,
-        "tyre_deg_slope": 0.0639,
-        "champ_pts": 0.0481,
-        "avg_pitstop": 0.0425,
-        "fp_avg_delta": 0.0341,
-        "tyre_management_index": 0.0329,
-        "teammate_delta": 0.0322,
-        "lap_std": 0.0301
-      }
-    },
-    {
-      "round": 8,
-      "importances": {
-        "momentum_pos": 0.294,
-        "predicted_quali_pos": 0.1587,
-        "avg_finish": 0.1037,
-        "fp_avg_delta": 0.0487,
-        "tyre_deg_slope": 0.043,
-        "avg_sector_delta": 0.0426,
-        "champ_pts": 0.0335,
-        "sprint_pts": 0.0319,
-        "tyre_management_index": 0.027,
-        "avg_pitstop": 0.0268
-      }
-    },
     {
       "round": 8,
       "importances": {
@@ -351,6 +321,36 @@
         "lap_std": 0.026,
         "teammate_delta": 0.0253
       }
+    },
+    {
+      "round": 8,
+      "importances": {
+        "momentum_pos": 0.2631,
+        "predicted_quali_pos": 0.184,
+        "avg_finish": 0.1179,
+        "fp_avg_delta": 0.0647,
+        "sprint_pts": 0.0399,
+        "tyre_deg_slope": 0.0398,
+        "champ_pts": 0.0324,
+        "tyre_management_index": 0.0307,
+        "teammate_delta": 0.0289,
+        "lap_std": 0.0277
+      }
+    },
+    {
+      "round": 8,
+      "importances": {
+        "momentum_pos": 0.2554,
+        "predicted_quali_pos": 0.1871,
+        "avg_finish": 0.1225,
+        "fp_avg_delta": 0.0657,
+        "sprint_pts": 0.0414,
+        "tyre_deg_slope": 0.0404,
+        "tyre_management_index": 0.032,
+        "champ_pts": 0.0318,
+        "teammate_delta": 0.0281,
+        "constructor_pts": 0.0268
+      }
     }
   ],
   "calibration": {
@@ -358,31 +358,31 @@
       "0-5%": {
         "lo": 0,
         "hi": 5,
-        "n_predictions": 159,
+        "n_predictions": 156,
         "n_wins": 2,
-        "actual_rate": 1.26,
+        "actual_rate": 1.28,
         "midpoint": 2.5
       },
       "5-10%": {
         "lo": 5,
         "hi": 10,
-        "n_predictions": 4,
+        "n_predictions": 7,
         "n_wins": 2,
-        "actual_rate": 50.0,
+        "actual_rate": 28.57,
         "midpoint": 7.5
       },
       "10-15%": {
         "lo": 10,
         "hi": 15,
-        "n_predictions": 6,
+        "n_predictions": 7,
         "n_wins": 4,
-        "actual_rate": 66.67,
+        "actual_rate": 57.14,
         "midpoint": 12.5
       },
       "15-20%": {
         "lo": 15,
         "hi": 20,
-        "n_predictions": 2,
+        "n_predictions": 3,
         "n_wins": 0,
         "actual_rate": 0.0,
         "midpoint": 17.5
@@ -390,13 +390,13 @@
       "20%+": {
         "lo": 20,
         "hi": 101,
-        "n_predictions": 5,
+        "n_predictions": 3,
         "n_wins": 0,
         "actual_rate": 0.0,
-        "midpoint": 28.9
+        "midpoint": 25.2
       }
     },
-    "calibration_score": 28.86,
+    "calibration_score": 21.93,
     "total_predictions": 176,
     "total_wins": 8,
     "n_races": 8
@@ -407,14 +407,14 @@
   },
   "stacking_meta": {
     "coef": [
-      1.3948541258377578,
-      0.03481721834040347,
-      1.8112160884080224,
-      -0.050342377075703035,
-      1.320297111105506,
-      0.01459890585077956,
-      1.077205414814454,
-      0.12568830186252775
+      1.3140691342213215,
+      0.06301580761855906,
+      2.2681850446864043,
+      -0.023836900652543527,
+      1.548967858914591,
+      0.03501561400840481,
+      1.143027564268104,
+      0.141342977621559
     ],
     "ctypes": [
       "high_speed",

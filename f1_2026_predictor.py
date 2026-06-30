@@ -47,6 +47,7 @@ _GP_WEIGHT               = 0.20  # GP gets 20% of final blend; XGB+LGBM share re
 JOLPICA_BASE    = "https://api.jolpi.ca/ergast/f1"
 OPENF1_BASE     = "https://api.openf1.org/v1"
 XGB_MIN_RACES   = 6          # Carreras mínimas para activar XGBoost
+LSTM_MIN_RACES  = 12         # Carreras mínimas para activar LSTM (more sequences needed)
 
 # ═════════════════════════════════════════════════════════════
 #  CAPA DE DATOS OPENF1 — Reemplaza FastF1 para datos 2026
@@ -2157,6 +2158,43 @@ def of1_collect_next_race_qualifying(next_round: int,
     return best
 
 
+def of1_collect_next_sprint_qualifying(next_round: int,
+                                        sessions_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Descarga datos de Sprint Qualifying del PRÓXIMO GP (solo fines de semana sprint).
+    Retorna sq_pos_next (posición en SQ) y sq_time_next (tiempo de vuelta).
+    Devuelve DataFrame vacío en fines de semana normales o si SQ no está disponible aún.
+    """
+    if next_round not in SPRINT_ROUNDS:
+        return pd.DataFrame(columns=["code", "sq_pos_next", "sq_time_next"])
+    sk = of1_session_key(sessions_df, next_round, "SQ")
+    if not sk:
+        return pd.DataFrame(columns=["code", "sq_pos_next", "sq_time_next"])
+
+    print(f"⚡  Descargando Sprint Qualifying del próximo GP (sk={sk})...")
+    laps = of1_get_laps(sk, enrich_with_stints=False)
+    if laps.empty or "lap_duration" not in laps.columns:
+        print("   ⚠  Sin datos de Sprint Qualifying para el próximo GP")
+        return pd.DataFrame(columns=["code", "sq_pos_next", "sq_time_next"])
+
+    valid = laps.dropna(subset=["lap_duration"])
+    valid = valid[valid["lap_duration"] > 0]
+    best  = valid.groupby("code").agg(
+        sq_time_next=("lap_duration", "min"),
+    ).reset_index()
+
+    best = best.sort_values("sq_time_next").reset_index(drop=True)
+    best["sq_pos_next"] = best.index + 1
+
+    n_drivers = len(best)
+    print(f"   ✅  {n_drivers} pilotos en Sprint Qualifying del próximo GP")
+    if not best.empty:
+        sq_pole = best.iloc[0]
+        print(f"   ⚡  SQ POLE: {sq_pole['code']} — {sq_pole['sq_time_next']:.3f}s")
+
+    return best[["code", "sq_pos_next", "sq_time_next"]]
+
+
 def of1_collect_next_race_fp(next_round: int,
                                sessions_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -2166,8 +2204,17 @@ def of1_collect_next_race_fp(next_round: int,
     hard_pace_delta) from FP2 long stints when compound data is available.
     compound_preference = soft_pace_delta - medium_pace_delta
       (negative → driver is relatively faster on softs, positive → better on mediums)
+
+    Sprint weekends (FP1 only): SESSION_WEIGHTS = {"FP1": 1.00}; FP1 long stints
+    (≥8 laps, >1.5% slower than driver's best) are promoted to fp2_next_longrun as
+    the race simulation proxy (no FP2/FP3 sessions exist on sprint weekends).
     """
-    SESSION_WEIGHTS   = {"FP1": 0.20, "FP2": 0.50, "FP3": 0.30}
+    # Sprint weekends: FP1 is the only practice session — FP2/FP3 do not exist
+    is_sprint = next_round in SPRINT_ROUNDS
+    if is_sprint:
+        print(f"   🏃  Sprint weekend (R{next_round}): FP1 is the only practice session — "
+              f"FP2/FP3 do not exist")
+    SESSION_WEIGHTS   = {"FP1": 1.00} if is_sprint else {"FP1": 0.20, "FP2": 0.50, "FP3": 0.30}
     quick_records     = {}
     longrun_records   = {}
     compound_longrun  = {}   # {code: {compound: [avg_pace_seconds]}}
@@ -2176,7 +2223,8 @@ def of1_collect_next_race_fp(next_round: int,
     race_sim_records  = {}   # {code: [(pace_s, deg_slope, n_laps)]}
     sessions_found    = []
 
-    for sname in ["FP1", "FP2", "FP3"]:
+    fp_session_list = ["FP1"] if is_sprint else ["FP1", "FP2", "FP3"]
+    for sname in fp_session_list:
         sk = of1_session_key(sessions_df, next_round, sname)
         if not sk:
             continue
@@ -2234,8 +2282,15 @@ def of1_collect_next_race_fp(next_round: int,
                     slope = np.polyfit(np.arange(len(sl)), sl.values, 1)[0]
                     race_sim_records.setdefault(code, []).append((pace, slope, len(sl)))
 
-        # FP2 long runs — extract compound pace + degradation slope
-        if sname == "FP2" and "stint_number" in valid.columns:
+        # FP2 long runs (or FP1 on sprint weekends as race sim proxy) —
+        # extract compound pace + degradation slope.
+        # On sprint weekends FP1 long stints serve as the race simulation data
+        # (heavy fuel signature: >1.5% slower than driver best) → fp2_next_longrun.
+        _is_longrun_session = (sname == "FP2") or (is_sprint and sname == "FP1")
+        if is_sprint and sname == "FP1":
+            print("   ⚠  Sprint weekend: using FP1 long runs as race sim proxy "
+                  "(fp2_next_longrun derived from FP1)")
+        if _is_longrun_session and "stint_number" in valid.columns:
             has_cmp     = "compound" in valid.columns
             has_lapnum  = "lap_number" in valid.columns
             stint_len   = valid.groupby(["code","stint_number"]).size()
@@ -2888,6 +2943,134 @@ def fetch_press_conference_sentiment(
     return {}
 
 
+def detect_pace_anomalies(feat: pd.DataFrame,
+                           is_sprint_weekend: bool = False) -> pd.DataFrame:
+    """
+    IsolationForest pace anomaly detector with corrected F1 logic.
+
+    F1 session pairing key:
+      fp_next_delta    = FP1/FP3 qualifying-simulation pace → comparable to quali_time_next
+      fp2_next_longrun = FP2 long-run race pace (heavy fuel) → comparable to grid position
+
+    Sprint weekend override (is_sprint_weekend=True):
+      FP3 does not exist → skip FP3 vs GP Qualifying comparison.
+      Instead compare Sprint Qualifying position vs GP Qualifying position:
+        sprint_quali_delta > 0 → driver improved SQ→GP (was hiding pace in SQ)
+        sprint_quali_delta < 0 → driver regressed SQ→GP (genuine struggle in GP quali)
+      Race threat detection unchanged: FP1 long-run (promoted to fp2_next_longrun) vs grid slot.
+
+    Returns per driver:
+      anomaly_score    — positive = normal, negative = anomalous (IsolationForest)
+      sandbagging_flag — hid pace in practice vs actual qualifying
+      struggling_flag  — underperformed vs practice pace signal
+      race_threat_flag — race pace rank much better than grid slot (will charge)
+
+    Called BEFORE the NaN fill so raw NaN values identify drivers without real session data.
+    """
+    _FEATS = ["fp_next_delta", "quali_time_next", "fp2_next_longrun", "sector_balance"]
+
+    _result = pd.DataFrame({
+        "code":             feat["code"].values,
+        "anomaly_score":    np.zeros(len(feat)),
+        "sandbagging_flag": np.zeros(len(feat), dtype=bool),
+        "struggling_flag":  np.zeros(len(feat), dtype=bool),
+        "race_threat_flag": np.zeros(len(feat), dtype=bool),
+    }, index=feat.index)
+
+    # Need ≥2 feature columns that each have ≥5 real values
+    _avail = [c for c in _FEATS
+              if c in feat.columns and feat[c].notna().sum() >= 5]
+    if len(_avail) < 2:
+        _have = sum(1 for c in _FEATS if c in feat.columns and feat[c].notna().any())
+        print(f"   🔍  IsolationForest: sin datos suficientes ({_have}/{len(_FEATS)} features) — neutral")
+        return _result
+
+    _min_ok   = max(2, len(_avail) // 2)
+    _row_mask = feat[_avail].notna().sum(axis=1) >= _min_ok
+    if _row_mask.sum() < 5:
+        print(f"   🔍  IsolationForest: solo {_row_mask.sum()} pilotos con datos — neutral")
+        return _result
+
+    _sub = feat.loc[_row_mask, _avail].copy()
+    for _c in _avail:
+        _sub[_c] = _sub[_c].fillna(_sub[_c].median())
+
+    try:
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.ensemble import IsolationForest
+
+        _X      = StandardScaler().fit_transform(_sub.values)
+        _iso    = IsolationForest(contamination=0.1, n_estimators=100, random_state=42)
+        _iso.fit(_X)
+        _scores = _iso.decision_function(_X)
+
+        _row_idx = feat.index[_row_mask]
+        _result.loc[_row_idx, "anomaly_score"] = _scores
+
+    except Exception as _e:
+        print(f"   ⚠  IsolationForest falló: {_e}")
+        return _result
+
+    # ── Sandbagging / struggling ─────────────────────────────────────────
+    _has_fp   = ("fp_next_delta"       in feat.columns and feat["fp_next_delta"].notna().any())
+    _has_qt   = ("quali_time_next"     in feat.columns and feat["quali_time_next"].notna().any())
+    _has_qpos = ("quali_pos_next"      in feat.columns and feat["quali_pos_next"].notna().any())
+    _has_fp2  = ("fp2_next_longrun"    in feat.columns and feat["fp2_next_longrun"].notna().any())
+    _has_sqdelta = ("sprint_quali_delta" in feat.columns and
+                    feat["sprint_quali_delta"].abs().sum() > 0)
+
+    _is_anom = (_result["anomaly_score"].values < 0)
+
+    if is_sprint_weekend and _has_sqdelta:
+        # Sprint weekend: FP3 doesn't exist — compare Sprint Qualifying vs GP Qualifying.
+        # sprint_quali_delta = sq_pos - gp_pos (positive = improved from SQ to GP = hid pace)
+        _sq_delta = feat["sprint_quali_delta"].values
+        _sq_real  = feat["sprint_quali_delta"].abs().gt(0).values  # non-zero means both SQ+Q exist
+        _result["sandbagging_flag"] = _is_anom & _sq_real & (_sq_delta >  3)
+        _result["struggling_flag"]  = _is_anom & _sq_real & (_sq_delta < -3)
+    elif _has_fp and _has_qt:
+        # Normal weekend: compare FP3/FP1 qualifying simulation pace vs actual GP qualifying.
+        # fp_next_delta rank ascending: rank 1 = fastest qualifying sim (most-negative delta)
+        # quali_time_next rank ascending: rank 1 = fastest qualifying time
+        _fp_rank    = feat["fp_next_delta"].rank(ascending=True, na_option="bottom")
+        _qt_rank    = feat["quali_time_next"].rank(ascending=True, na_option="bottom")
+        # positive diff → FP3 rank worse than quali rank → driver hid pace (sandbagging)
+        # negative diff → FP3 rank better than quali rank → driver underdelivered (struggling)
+        _fp_qt_diff = (_fp_rank - _qt_rank).values
+
+        _fp_real  = feat["fp_next_delta"].notna().values
+        _qt_real  = feat["quali_time_next"].notna().values
+
+        _result["sandbagging_flag"] = _is_anom & _fp_real & _qt_real & (_fp_qt_diff >  3)
+        _result["struggling_flag"]  = _is_anom & _fp_real & _qt_real & (_fp_qt_diff < -3)
+
+    # ── Race threat: FP2 race pace vs qualifying grid position ───────────
+    # fp2_next_longrun = FP2 long-run race pace (heavy fuel — race simulation)
+    # quali_pos_next   = qualifying grid position
+    # If FP2 race pace rank is much better than grid slot → driver will charge during race
+    # No anomaly flag required — this is a pure pace-vs-position gap signal
+    if _has_fp2 and _has_qpos:
+        _fp2_rank  = feat["fp2_next_longrun"].rank(ascending=True, na_option="bottom")
+        _qpos      = feat["quali_pos_next"]
+        # negative gap → fp2 pace rank better than grid slot → race threat
+        _race_gap  = (_fp2_rank - _qpos).values
+
+        _fp2_real  = feat["fp2_next_longrun"].notna().values
+        _qpos_real = feat["quali_pos_next"].notna().values
+
+        _result["race_threat_flag"] = _fp2_real & _qpos_real & (_race_gap < -3)
+
+    n_sand  = _result["sandbagging_flag"].sum()
+    n_stru  = _result["struggling_flag"].sum()
+    n_race  = _result["race_threat_flag"].sum()
+    n_anom  = (_result["anomaly_score"] < 0).sum()
+    if n_anom or n_race:
+        print(f"   🔍  IsolationForest: {n_anom} anomalías "
+              f"({n_sand} sandbagging, {n_stru} struggling, {n_race} race threats)")
+
+    return _result
+
+
 def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    sprint_df, sq_df, lap_std_df, fp_df, sector_df,
                    tyre_deg_df, lap1_df, dnf_df, teammate_df,
@@ -2900,7 +3083,9 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    behavioral_df=None,
                    sentiment_df=None,
                    next_circuit_laps: int = 57,
-                   next_circuit_type: str = "mixed") -> pd.DataFrame:
+                   next_circuit_type: str = "mixed",
+                   sprint_quali_df=None,
+                   is_sprint_weekend: bool = False) -> pd.DataFrame:
     compound_df          = compound_df          if compound_df          is not None else pd.DataFrame()
     circuit_df           = circuit_df           if circuit_df           is not None else pd.DataFrame()
     circuit_type_df      = circuit_type_df      if circuit_type_df      is not None else pd.DataFrame()
@@ -2908,6 +3093,7 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
     next_quali_df        = next_quali_df        if next_quali_df        is not None else pd.DataFrame()
     next_fp_df           = next_fp_df           if next_fp_df           is not None else pd.DataFrame()
     circuit_affinity_df  = circuit_affinity_df  if circuit_affinity_df  is not None else pd.DataFrame()
+    sprint_quali_df      = sprint_quali_df      if sprint_quali_df      is not None else pd.DataFrame()
     """Combina todas las fuentes en un DataFrame de features por piloto."""
 
     feat = driver_standings[["code", "FullName", "TeamName", "champ_pts"]].copy()
@@ -3130,6 +3316,34 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
                    quali_pos_next=np.nan, quali_time_next=np.nan,
                    s1_next=np.nan, s2_next=np.nan, s3_next=np.nan)
 
+    # ── Sprint Qualifying data (sprint weekends only) ──────────────────────
+    # sq_pos_next / sq_time_next: performance in Friday's Sprint Qualifying
+    # sprint_quali_delta = sq_pos - gp_quali_pos:
+    #   positive → driver improved from SQ to GP quali (hid pace / SQ setback)
+    #   negative → driver regressed from SQ to GP quali (genuine pace step-back)
+    if not sprint_quali_df.empty and "sq_pos_next" in sprint_quali_df.columns:
+        feat = feat.merge(sprint_quali_df[["code", "sq_pos_next", "sq_time_next"]],
+                          on="code", how="left")
+        if "quali_pos_next" in feat.columns and feat["quali_pos_next"].notna().any():
+            feat["sprint_quali_delta"] = feat["sq_pos_next"] - feat["quali_pos_next"]
+            _sq_avail = feat["sprint_quali_delta"].notna().sum()
+            if _sq_avail:
+                _sq_top = (feat[["code", "sprint_quali_delta"]]
+                           .dropna(subset=["sprint_quali_delta"])
+                           .sort_values("sprint_quali_delta", ascending=False))
+                print(f"   ⚡  Sprint quali delta ({_sq_avail} pilotos) — "
+                      f"top improvers SQ→GP: "
+                      + ", ".join(f"{r['code']} (+{r['sprint_quali_delta']:.0f})"
+                                  for _, r in _sq_top.head(3).iterrows()
+                                  if r["sprint_quali_delta"] > 0))
+        else:
+            feat["sprint_quali_delta"] = np.nan
+    else:
+        feat["sq_pos_next"]        = np.nan
+        feat["sq_time_next"]       = np.nan
+        feat["sprint_quali_delta"] = np.nan
+    feat["sprint_quali_delta"] = feat["sprint_quali_delta"].fillna(0.0)
+
     # ── Sector balance: σ of S1/S2/S3 deltas vs field best in next quali ──
     _s_cols = ["s1_next", "s2_next", "s3_next"]
     if all(c in feat.columns for c in _s_cols) and feat[_s_cols].notna().any().any():
@@ -3345,6 +3559,9 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
     # ── Constructor pts ───────────────────────────────────────────────
     feat["constructor_pts"] = feat["TeamName"].map(constructor_pts).fillna(0)
 
+    # ── Pace anomaly detection — run BEFORE NaN fill to keep raw NaN pattern ──
+    _anomaly_result = detect_pace_anomalies(feat, is_sprint_weekend=is_sprint_weekend)
+
     # ── Relleno de NaN ────────────────────────────────────────────────
     # Posiciones: NaN → peor posición + 1 (no mediana, para no dar ventaja falsa)
     position_cols = ["quali_pos_next", "quali_pos", "avg_grid", "avg_finish",
@@ -3358,6 +3575,43 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
         else:
             median = feat[col].median()
             feat[col] = feat[col].fillna(median if not np.isnan(median) else 0)
+
+    # ── Merge anomaly results (after NaN fill — keeps bool cols out of fill loop) ──
+    feat = feat.merge(
+        _anomaly_result[["code", "anomaly_score", "sandbagging_flag",
+                         "struggling_flag", "race_threat_flag"]],
+        on="code", how="left",
+    )
+    feat["anomaly_score"]    = feat["anomaly_score"].fillna(0.0)
+    feat["sandbagging_flag"] = feat["sandbagging_flag"].fillna(False)
+    feat["struggling_flag"]  = feat["struggling_flag"].fillna(False)
+    feat["race_threat_flag"] = feat["race_threat_flag"].fillna(False)
+
+    # Print driver pace anomaly flags
+    _fp_ranks  = (feat["fp_next_delta"].rank(ascending=True)
+                  if "fp_next_delta"    in feat.columns else None)
+    _fp2_ranks = (feat["fp2_next_longrun"].rank(ascending=True)
+                  if "fp2_next_longrun" in feat.columns else None)
+    _flagged = feat[feat["sandbagging_flag"] | feat["struggling_flag"] | feat["race_threat_flag"]]
+    if not _flagged.empty:
+        print("   🚨  PACE ANOMALY FLAGS:")
+    for _, _fr in _flagged.iterrows():
+        _qpos   = int(_fr.get("quali_pos_next", 22))
+        _fp_est = (int(round(_fp_ranks.loc[_fr.name]))
+                   if _fp_ranks is not None else "?")
+        if _fr["sandbagging_flag"]:
+            print(f"   ⚠  {_fr['code']} — SANDBAGGING: FP3 suggested P{_fp_est}, "
+                  f"qualified P{_qpos} (hiding pace)")
+        elif _fr["struggling_flag"]:
+            print(f"   ⚠  {_fr['code']} — STRUGGLING: FP3 suggested P{_fp_est}, "
+                  f"qualified P{_qpos} (setup issue)")
+        if _fr["race_threat_flag"] and _fp2_ranks is not None:
+            _fp2_r = int(round(_fp2_ranks.loc[_fr.name]))
+            _fp2_label = ("top-3" if _fp2_r <= 3 else
+                          "top-5" if _fp2_r <= 5 else
+                          "top-10" if _fp2_r <= 10 else f"P{_fp2_r}")
+            print(f"   🚀  {_fr['code']} — RACE THREAT: FP2 race pace {_fp2_label}, "
+                  f"starts P{_qpos} (will charge)")
 
     return feat
 
@@ -3445,6 +3699,12 @@ def score_manual(feat: pd.DataFrame,
         "compatibility_score"   : 0.04 if has_next_quali else 0.03,
         # ── NLP sentiment — only active when press conf has happened (≈ post-quali) ──
         "press_sentiment"       : 0.03 if has_next_quali else 0.00,
+        # ── Sprint weekend: SQ→GP qualifying improvement signal ────────────
+        # Only meaningful when both Sprint Quali and GP Quali data are available
+        "sprint_quali_delta"    : 0.02 if (has_next_quali and
+                                            "sprint_quali_delta" in feat.columns and
+                                            feat["sprint_quali_delta"].abs().sum() > 0)
+                                       else 0.00,
     }
 
     # When qualifying is available, rescale season-history features so raw dict sums to 1.0
@@ -3536,6 +3796,7 @@ def score_manual(feat: pd.DataFrame,
     s += apply("tyre_management_index", "desc")
     s += apply("compatibility_score",   "desc")  # driver-circuit style match
     s += apply("press_sentiment",       "desc")  # pre-race confidence from press conf NLP
+    s += apply("sprint_quali_delta",   "desc")  # sprint wknd: improved SQ→GP = latent pace
 
     s -= feat.get("dnf_rate",      pd.Series(0.0, index=feat.index)).fillna(0) * 0.10
     s -= feat.get("historical_dnf_rate",
@@ -3929,6 +4190,374 @@ def score_gaussian_process(feat: pd.DataFrame, race_df: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────────
+#  21b-2. LSTM MOMENTUM MODEL
+# ─────────────────────────────────────────────────────────────
+
+def score_lstm(feat: pd.DataFrame,
+               race_df: pd.DataFrame,
+               completed: list,
+               seq_len: int = 5) -> "pd.Series | None":
+    """
+    LSTM sequential momentum model — captures trend signals XGBoost cannot.
+
+    Architecture:
+      Input  : (batch, seq_len=5, 4) — [pos_norm, dnf, grid_norm, pts_norm]
+      LSTM   : hidden_size=32, num_layers=2, dropout=0.2, bidirectional=False
+      Linear : 32 → 1  (predicted next finishing position, lower = better)
+
+    Training:
+      Sliding window over each driver's race history.
+      Sample weights: recency-scaled 1×→3× (mirrors XGBoost treatment).
+      Adam lr=0.01, 50 epochs, weighted MSE loss.
+
+    Returns pd.Series (higher score = better predicted outcome) aligned to
+    feat.index, or None when dormant or data is insufficient.
+
+    Active only when len(completed) >= LSTM_MIN_RACES so the sliding-window
+    dataset has enough samples per driver to generalise.
+    """
+    if len(completed) < LSTM_MIN_RACES:
+        print(f"   🧠  LSTM dormant ({len(completed)}/{LSTM_MIN_RACES} races)")
+        return None
+
+    try:
+        import torch
+        import torch.nn as nn
+    except ImportError:
+        print("   ⚠  torch not installed — LSTM skipped  (pip install torch)")
+        return None
+
+    if race_df.empty:
+        return None
+
+    # ── Normalisation constants ──────────────────────────────────────────
+    _N_POS  = 22.0
+    _N_GRID = 22.0
+    _N_PTS  = 26.0   # 25 pts for win + 1 fastest lap
+
+    _pts_map = {1:25, 2:18, 3:15, 4:12, 5:10, 6:8, 7:6, 8:4, 9:2, 10:1}
+
+    def _row_feats(r) -> list:
+        pos  = float(r.get("pos",  22.0)) / _N_POS
+        dnf  = float(r.get("dnf",   0.0))
+        grid = float(r.get("grid", 11.0)) / _N_GRID
+        pts  = float(_pts_map.get(int(r.get("pos", 22)), 0)) / _N_PTS
+        return [pos, dnf, grid, pts]
+
+    # ── Build (X, y, weight) training tuples ────────────────────────────
+    sorted_df = race_df.sort_values("round")
+    X_list, y_list, w_list = [], [], []
+
+    for code, grp in sorted_df.groupby("code"):
+        rows = [_row_feats(r) for _, r in grp.iterrows()]
+        n    = len(rows)
+        if n < 2:
+            continue
+        for i in range(n - 1):
+            start  = max(0, i - seq_len + 1)
+            window = rows[start : i + 1]
+            pad    = seq_len - len(window)
+            seq    = [[0.0, 0.0, 0.0, 0.0]] * pad + window
+            target = rows[i + 1][0]          # next-race pos_norm
+
+            recency = (i + 1) / max(n - 1, 1)   # 0..1 → more recent = 1
+            weight  = 1.0 + 2.0 * recency        # range [1, 3]
+
+            X_list.append(seq)
+            y_list.append(target)
+            w_list.append(weight)
+
+    if len(X_list) < 10:
+        print(f"   ⚠  LSTM: only {len(X_list)} training sequences — skipped")
+        return None
+
+    X = torch.tensor(X_list, dtype=torch.float32)          # (N, seq_len, 4)
+    y = torch.tensor(y_list, dtype=torch.float32)          # (N,)
+    w = torch.tensor(w_list, dtype=torch.float32)          # (N,)
+
+    # ── Model definition ─────────────────────────────────────────────────
+    class _RaceLSTM(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lstm = nn.LSTM(input_size=4, hidden_size=32, num_layers=2,
+                                dropout=0.2, batch_first=True, bidirectional=False)
+            self.fc   = nn.Linear(32, 1)
+
+        def forward(self, x):
+            out, _ = self.lstm(x)
+            return self.fc(out[:, -1, :]).squeeze(1)   # last timestep → scalar
+
+    model = _RaceLSTM()
+    opt   = torch.optim.Adam(model.parameters(), lr=0.01)
+
+    # ── Training loop ────────────────────────────────────────────────────
+    model.train()
+    for _ in range(50):
+        opt.zero_grad()
+        pred = model(X)
+        loss = ((pred - y) ** 2 * w).mean()
+        loss.backward()
+        opt.step()
+    final_loss = float(loss.item())
+
+    # ── Inference: predict next position for each current driver ─────────
+    model.eval()
+    all_codes   = feat["code"].tolist()
+    pred_by_code: dict[str, float] = {}
+
+    with torch.no_grad():
+        for code in all_codes:
+            grp = sorted_df[sorted_df["code"] == code]
+            if grp.empty:
+                pred_by_code[code] = 0.5   # midfield default (normalised)
+                continue
+            rows_inf = [_row_feats(r) for _, r in grp.tail(seq_len).iterrows()]
+            pad      = seq_len - len(rows_inf)
+            seq      = [[0.0, 0.0, 0.0, 0.0]] * pad + rows_inf
+            x_inf    = torch.tensor([seq], dtype=torch.float32)
+            pred_by_code[code] = float(model(x_inf).item())
+
+    # ── Convert to score (higher = better) ───────────────────────────────
+    # Predicted position (lower = better) → negate → normalize to [0, 1]
+    pred_s = feat["code"].map(pred_by_code)
+    score  = -pred_s                                          # invert direction
+    s_min, s_max = score.min(), score.max()
+    if s_max > s_min:
+        score = (score - s_min) / (s_max - s_min)
+    else:
+        score = pd.Series(0.5, index=feat.index)
+
+    score.index = feat.index
+
+    n_seqs = len(X_list)
+    print(f"   🧠  LSTM: {n_seqs} sequences, {len(completed)} races, "
+          f"loss={final_loss:.4f}")
+    top3 = score.nlargest(3)
+    _top_codes = feat.loc[top3.index, "code"].tolist()
+    print(f"   🧠  LSTM top-3 momentum: {', '.join(_top_codes)}")
+
+    return score
+
+
+# ─────────────────────────────────────────────────────────────
+#  21b-3. GRAPH NEURAL NETWORK — OVERTAKING PROBABILITY
+# ─────────────────────────────────────────────────────────────
+
+def score_gnn_overtaking(
+        feat: pd.DataFrame,
+        race_df: pd.DataFrame,
+        completed: list,
+        next_circuit_type: str = "mixed",
+) -> "tuple[pd.Series, dict] | None":
+    """
+    Manual 2-layer Graph Convolutional Network for overtaking-potential modeling.
+
+    Activation: len(completed) >= LSTM_MIN_RACES (same 12-race threshold as LSTM).
+
+    ── DATA HONESTY ────────────────────────────────────────────────────────
+    The ideal GNN would use per-lap position swaps with gap < 2 s from
+    OpenF1 /intervals as edge labels.  Those data are not in the current
+    pipeline — fetching 8 historical interval streams would add ~8 API
+    round-trips that are not yet cached, and the /intervals endpoint
+    returns timestamps rather than lap-number-aligned records, requiring
+    non-trivial join logic to obtain per-lap proximity windows.
+
+    Instead we approximate with what race_df provides:
+      · Adjacency: drivers who started within 3 grid positions = "proximity
+        contest" (proxy for "within 2 seconds" at lap 1 of the race).
+      · Training signal: grid_pos − final_pos per driver (overall position
+        gain), not per-lap swap events.
+
+    The GCN's genuine added value here is NEIGHBOURHOOD CONTEXT: a driver
+    surrounded by aggressive overtakers on the grid faces different dynamics
+    than one surrounded by conservative pacers, even after adjusting for
+    raw pace.  With 12+ races and per-lap gap data this model would be
+    substantially more discriminating.  At 12 races it adds marginal but
+    real signal on top of `overtaking_ability`.
+
+    Returns:
+        (driver_scores, overtake_matrix) — or None when dormant/insufficient
+        driver_scores  : pd.Series [0,1], higher = more overtaking potential
+        overtake_matrix: {(code_a, code_b): float} — lap-1 pass probability
+                         for adjacent grid pairs (code_a starts ahead;
+                         code_b is the passer)
+    ────────────────────────────────────────────────────────────────────────
+    """
+    if len(completed) < LSTM_MIN_RACES:
+        print(f"   🕸️  GNN dormant ({len(completed)}/{LSTM_MIN_RACES} races)")
+        return None
+
+    try:
+        import torch
+        import torch.nn as nn
+    except ImportError:
+        print("   ⚠  torch not installed — GNN skipped  (pip install torch)")
+        return None
+
+    if race_df.empty or "grid" not in race_df.columns:
+        return None
+
+    # ── Index: all drivers in the current feature frame ──────────────────
+    all_codes = feat["code"].tolist()   # preserves order; aligns with feat.index
+    code_idx  = {c: i for i, c in enumerate(all_codes)}
+    n         = len(all_codes)
+
+    # ── Historical adjacency matrix ───────────────────────────────────────
+    # pass_matrix[i, j]  = times driver j passed driver i
+    #                       (j started behind i AND finished ahead of i)
+    # opp_matrix[i, j]   = times they were within 3 grid positions
+    #                       (i started ahead — opportunity for j to pass i)
+    pass_matrix = np.zeros((n, n), dtype=np.float32)
+    opp_matrix  = np.zeros((n, n), dtype=np.float32)
+
+    for rnd, grp in race_df.groupby("round"):
+        grp = grp.dropna(subset=["grid", "pos"])
+        grp = grp[grp["code"].isin(code_idx)]
+        if len(grp) < 4:
+            continue
+        grid_map = {r["code"]: int(r["grid"]) for _, r in grp.iterrows()}
+        pos_map  = {r["code"]: int(r["pos"])  for _, r in grp.iterrows()}
+        codes_r  = list(grid_map)
+
+        for k, code_a in enumerate(codes_r):
+            for code_b in codes_r[k + 1:]:
+                g_a, g_b = grid_map[code_a], grid_map[code_b]
+                p_a, p_b = pos_map[code_a],  pos_map[code_b]
+                if abs(g_a - g_b) > 3:
+                    continue
+                i, j = code_idx[code_a], code_idx[code_b]
+                if g_a < g_b:              # a starts ahead — can b pass a?
+                    opp_matrix[i, j] += 1
+                    if p_b < p_a:          # b finished ahead = overtake
+                        pass_matrix[i, j] += 1
+                else:                      # b starts ahead — can a pass b?
+                    opp_matrix[j, i] += 1
+                    if p_a < p_b:
+                        pass_matrix[j, i] += 1
+
+    # Empirical pass rate with Laplace smoothing (prior = 0.10).
+    # Without smoothing, 0/0 → NaN and 1/1 → 1.0 — both unreliable at low N.
+    prior = 0.10
+    with np.errstate(divide="ignore", invalid="ignore"):
+        adj = np.where(
+            opp_matrix > 0,
+            (pass_matrix + prior) / (opp_matrix + 1.0),
+            0.0,
+        ).astype(np.float32)
+
+    A = adj + np.eye(n, dtype=np.float32) * 0.5   # self-loops for stability
+    row_sums = A.sum(axis=1, keepdims=True)
+    row_sums = np.where(row_sums == 0, 1.0, row_sums)
+    A_norm   = (A / row_sums).astype(np.float32)
+    A_t      = torch.tensor(A_norm, dtype=torch.float32)
+
+    # ── Node features [pace, overtaking_ability, grid_slot] ──────────────
+    def _norm01(arr: np.ndarray) -> np.ndarray:
+        lo, hi = arr.min(), arr.max()
+        return ((arr - lo) / max(float(hi - lo), 1e-9)).astype(np.float32)
+
+    fi = feat.set_index("code")
+
+    pace_col = "raw_score" if "raw_score" in feat.columns else "avg_finish"
+    pace_n   = _norm01(fi[pace_col].reindex(all_codes).fillna(0.5).values.astype(np.float32))
+
+    oa_n = _norm01(
+        fi["overtaking_ability"].reindex(all_codes).fillna(0.0).values.astype(np.float32)
+        if "overtaking_ability" in feat.columns
+        else np.full(n, 0.0, dtype=np.float32)
+    )
+
+    if "quali_pos_next" in feat.columns:
+        gp_raw = fi["quali_pos_next"].reindex(all_codes).fillna(11.0).values.astype(np.float32)
+        gp_n   = 1.0 - _norm01(gp_raw)   # invert: P1 → 1.0, P22 → 0.0
+    else:
+        gp_n   = np.full(n, 0.5, dtype=np.float32)
+
+    X   = np.column_stack([pace_n, oa_n, gp_n]).astype(np.float32)
+    X_t = torch.tensor(X, dtype=torch.float32)
+
+    # ── Training target: mean position gain (grid − final) ────────────────
+    gains = {}
+    for code in all_codes:
+        drv = race_df[race_df["code"] == code].dropna(subset=["grid", "pos"])
+        if not drv.empty:
+            gains[code] = float((drv["grid"] - drv["pos"]).mean())
+    y_raw  = np.array([gains.get(c, 0.0) for c in all_codes], dtype=np.float32)
+    y_t    = torch.tensor(_norm01(y_raw), dtype=torch.float32)
+
+    # ── Manual 2-layer GCN (no torch_geometric dependency) ───────────────
+    # Kipf & Welling (2017): H_{l+1} = ReLU(Â @ H_l @ W_l)
+    # where Â = D^{-1} A (simplified symmetric normalisation).
+    class _ManualGCN(nn.Module):
+        def __init__(self, in_dim: int, hidden: int):
+            super().__init__()
+            self.W1   = nn.Linear(in_dim, hidden, bias=False)
+            self.W2   = nn.Linear(hidden, hidden, bias=False)
+            self.head = nn.Linear(hidden, 1, bias=True)
+            self.relu = nn.ReLU()
+
+        def forward(self, x: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+            h1 = self.relu(a @ self.W1(x))    # (n, hidden)
+            h2 = self.relu(a @ self.W2(h1))   # (n, hidden)
+            return self.head(h2).squeeze(1)    # (n,)
+
+    model = _ManualGCN(in_dim=3, hidden=32)
+    opt   = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-4)
+
+    model.train()
+    for _ in range(100):
+        opt.zero_grad()
+        pred = model(X_t, A_t)
+        loss = nn.functional.mse_loss(pred, y_t)
+        loss.backward()
+        opt.step()
+    final_loss = float(loss.item())
+
+    # ── Inference ─────────────────────────────────────────────────────────
+    model.eval()
+    with torch.no_grad():
+        raw_out = model(X_t, A_t).numpy()   # (n,) predicted normalised gain
+
+    scores_norm = _norm01(raw_out)
+    driver_scores = pd.Series(scores_norm, index=feat.index)
+
+    # ── Pairwise lap-1 overtake probability matrix for Monte Carlo ─────────
+    # Only driver pairs adjacent in the NEXT race qualifying grid (within 2
+    # positions).  For each pair where code_a starts ahead, we estimate the
+    # probability that code_b passes code_a on lap 1.
+    # Formula: base empirical rate (Laplace-smoothed) ± GCN score differential.
+    overtake_matrix: dict[tuple, float] = {}
+
+    if "quali_pos_next" in feat.columns:
+        next_grid = {
+            row["code"]: int(row.get("quali_pos_next", 22))
+            for _, row in feat.iterrows()
+        }
+        for code_a in all_codes:
+            for code_b in all_codes:
+                if code_a == code_b:
+                    continue
+                ga = next_grid.get(code_a, 22)
+                gb = next_grid.get(code_b, 22)
+                if ga >= gb or gb - ga > 2:   # only: a ahead AND b within 2 slots
+                    continue
+                i, j = code_idx[code_a], code_idx[code_b]
+                base_p     = float(adj[i, j])
+                score_diff = (scores_norm[j] - scores_norm[i]) * 0.15
+                p          = float(np.clip(base_p + score_diff, 0.02, 0.35))
+                overtake_matrix[(code_a, code_b)] = p
+
+    sparsity = float((adj > 0).mean())
+    n_pairs  = len(overtake_matrix)
+    print(f"   🕸️  GNN: {n}×{n} adj ({sparsity:.0%} non-zero), "
+          f"{n_pairs} lap-1 pairs, loss={final_loss:.4f}")
+    top3 = [all_codes[i] for i in np.argsort(scores_norm)[::-1][:3]]
+    print(f"   🕸️  GNN top-3 overtakers: {', '.join(top3)}")
+
+    return driver_scores, overtake_matrix
+
+
+# ─────────────────────────────────────────────────────────────
 #  21c. MODELO DE FIABILIDAD
 # ─────────────────────────────────────────────────────────────
 # Clasificación de causas de DNF por componente
@@ -4100,6 +4729,7 @@ def monte_carlo_simulation(
         weather      : dict,
         n_sims       : int = 10_000,
         circuit_name : str = "",
+        gnn_overtake : "dict | None" = None,
 ) -> pd.DataFrame:
     """
     Corre N simulaciones de la carrera inyectando variaciones aleatorias en:
@@ -4108,10 +4738,15 @@ def monte_carlo_simulation(
       3. Safety Car                     (Poisson, lambda derivado de SAFETY_CAR_PROB)
       4. Pit stop time loss             (team-specific stationary time via PIT_STOP_LOSS)
       5. Clima / lluvia                 (si se espera lluvia, mezcla ranking)
-      6. Vuelta 1 incidente             (prob 18% de que alguien pierda 2-4 pos)
+      6. Vuelta 1 incidente             (GNN pairwise probs when active; generic 18% fallback)
       7. Tyre strategy / undercut       (circuit-specific prob from UNDERCUT_WINDOW, P3-P10)
          Traffic model: 30% of undercuts exit into traffic → partial gain recovery
       8. Final stint boost              (2-stop: +0.02 pace over last 20 laps)
+
+    gnn_overtake: {(code_a, code_b): float} — pairwise lap-1 overtake probability
+                  produced by score_gnn_overtaking().  When supplied, replaces the
+                  generic 18% lap-1 incident with per-pair sampling for adjacent
+                  grid pairs in the top-8.  Falls back to generic logic when None.
 
     Retorna un DataFrame con:
       - win_mc_pct    : % de simulaciones en que el piloto ganó
@@ -4148,6 +4783,17 @@ def monte_carlo_simulation(
     ranks = pd.Series(scores_v).rank(ascending=False, method='min').values
     scores_v = 1.03 - 0.06 * np.log(ranks) / np.log(len(ranks))
 
+    # Race threat boost: drivers whose FP2 race pace is much better than their grid
+    # slot get +0.015 added to their MC pace — they will charge forward in the race
+    _rt_flags = (feat["race_threat_flag"].values
+                 if "race_threat_flag" in feat.columns
+                 else np.zeros(n, dtype=bool))
+    _rt_boost = np.where(_rt_flags, 0.015, 0.0)
+    if _rt_boost.any():
+        _rt_codes = [codes[i] for i in range(n) if _rt_flags[i]]
+        print(f"   🚀  Race threat boost (+0.015) → {', '.join(_rt_codes)}")
+    scores_v += _rt_boost
+
     # Grid starting advantage — drivers hold qualifying position for the first
     # GRID_LAPS laps before pace takes over (5/57 ≈ 8.8% of a typical F1 race).
     # Falls back to season avg_grid ranking when next-race quali isn't loaded.
@@ -4156,6 +4802,7 @@ def monte_carlo_simulation(
         _qp = pd.Series(feat["avg_grid"].values).rank(method="first", ascending=True)
     _qp = _qp.clip(lower=1).fillna(float(n)).values.astype(float)
     grid_scores_v = 1.03 - 0.06 * np.log(np.maximum(_qp, 1)) / np.log(max(n, 2))
+    _grid_order   = np.argsort(_qp)   # index 0 = P1 starter, index n-1 = last
     GRID_LAPS   = 5
     RACE_LAPS   = 57          # representative F1 race length (laps vary 52–78)
     grid_weight = GRID_LAPS / RACE_LAPS   # ≈ 0.0877
@@ -4221,10 +4868,23 @@ def monte_carlo_simulation(
         pit_victim = rng.integers(0, n)
         sim_scores[pit_victim] *= (1.0 - _pit_penalty[pit_victim] * rng.uniform(0.8, 1.2))
 
-        # 5. Vuelta 1 incidente (prob 18%)
-        if rng.random() < 0.18:
-            victim = rng.integers(0, min(8, n))   # más probable en top-8
-            sim_scores[victim] *= (1 - rng.uniform(0.02, 0.05))
+        # 5. Vuelta 1: GNN pairwise overtake sampling (active) or generic incident
+        if gnn_overtake:
+            # Sample each adjacent-grid pair in the top-8 independently.
+            # If b passes a, a loses a small score fragment and b gains one.
+            # Aggregate effect across 7 pairs approximates the generic 18% model
+            # when individual probabilities are ~0.05–0.15 per pair.
+            for _gi in range(min(7, n - 1)):
+                _idx_a  = _grid_order[_gi]
+                _idx_b  = _grid_order[_gi + 1]
+                _p_pass = gnn_overtake.get((codes[_idx_a], codes[_idx_b]), 0.05)
+                if rng.random() < _p_pass:
+                    sim_scores[_idx_a] *= (1.0 - rng.uniform(0.01, 0.03))
+                    sim_scores[_idx_b] *= (1.0 + rng.uniform(0.01, 0.02))
+        else:
+            if rng.random() < 0.18:
+                victim = rng.integers(0, min(8, n))   # más probable en top-8
+                sim_scores[victim] *= (1 - rng.uniform(0.02, 0.05))
 
         # 5b. Tyre strategy events
         # Undercut: circuit-specific probability from UNDERCUT_WINDOW.
@@ -5247,16 +5907,23 @@ def main():
     data_source = "OpenF1" if of1_available else ("FastF1" if (completed and ("ff1_available" in dir() and ff1_available)) else "Solo API")
     print(f"   📊  Fuente de datos de vuelta: {data_source}")
 
+    # Sprint weekend detection — used for FP session weighting, anomaly logic, SQ fetch
+    is_sprint_weekend = next_round in SPRINT_ROUNDS
+
     print(f"   🏁  Circuito: {next_circuit}")
     print(f"   🗂   Tipo: {next_circuit_type}  |  Dificultad adelantar: {ot_difficulty:.2f}")
     print(f"   ⚖   Peso qualifying dinámico: {round(0.22 + ot_difficulty * 0.16, 3):.1%}")
+    if is_sprint_weekend:
+        print(f"   🏃  Sprint weekend — R{next_round} {next_circuit}: "
+              f"FP1 only, no FP2/FP3 — FP1 long stints proxy race pace")
 
     # 6d. Datos del próximo GP — clasificación y prácticas ya disponibles
-    print("\n🎯  Descargando datos pre-carrera del próximo GP (Ronda {next_round})...")
+    print(f"\n🎯  Descargando datos pre-carrera del próximo GP (Ronda {next_round})...")
     if of1_available:
         next_quali_df = of1_collect_next_race_qualifying(
                             next_round, of1_sessions, driver_standings)
         next_fp_df    = of1_collect_next_race_fp(next_round, of1_sessions)
+        sprint_quali_df = of1_collect_next_sprint_qualifying(next_round, of1_sessions)
         if not next_quali_df.empty:
             print(f"   ✅  Clasificación del próximo GP cargada ({len(next_quali_df)} pilotos)")
         else:
@@ -5265,19 +5932,26 @@ def main():
             print(f"   ✅  Prácticas del próximo GP cargadas ({len(next_fp_df)} pilotos)")
         else:
             print("   ⏳  Prácticas del próximo GP aún no disponibles")
+        if is_sprint_weekend:
+            if not sprint_quali_df.empty:
+                print(f"   ✅  Sprint Qualifying cargado ({len(sprint_quali_df)} pilotos)")
+            else:
+                print("   ⏳  Sprint Qualifying del próximo GP aún no disponible")
     else:
-        next_quali_df = pd.DataFrame(columns=["code","quali_pos_next","quali_time_next"])
-        next_fp_df    = pd.DataFrame(columns=["code", "fp_next_delta", "fp2_next_longrun",
-                                              "soft_pace_delta", "medium_pace_delta",
-                                              "hard_pace_delta", "compound_preference",
-                                              "tyre_deg_rate", "deg_rate_soft",
-                                              "deg_rate_medium", "deg_rate_hard",
-                                              "high_speed_delta", "medium_speed_delta",
-                                              "low_speed_delta", "corner_balance",
-                                              "race_sim_delta", "race_sim_deg"])
+        next_quali_df   = pd.DataFrame(columns=["code","quali_pos_next","quali_time_next"])
+        next_fp_df      = pd.DataFrame(columns=["code", "fp_next_delta", "fp2_next_longrun",
+                                                "soft_pace_delta", "medium_pace_delta",
+                                                "hard_pace_delta", "compound_preference",
+                                                "tyre_deg_rate", "deg_rate_soft",
+                                                "deg_rate_medium", "deg_rate_hard",
+                                                "high_speed_delta", "medium_speed_delta",
+                                                "low_speed_delta", "corner_balance",
+                                                "race_sim_delta", "race_sim_deg"])
+        sprint_quali_df = pd.DataFrame(columns=["code", "sq_pos_next", "sq_time_next"])
 
     # 7. Clima y penalizaciones para próxima carrera
     weather  = fetch_weather_for_race(next_round, schedule)
+    weather["is_sprint_weekend"] = is_sprint_weekend
     grid_pen = fetch_grid_penalties(next_round, schedule)
 
     # 8b. Perfiles comportamentales históricos (2023-2025, caché 7 días)
@@ -5354,6 +6028,8 @@ def main():
         sentiment_df=sentiment_df,
         next_circuit_laps=next_circuit_laps,
         next_circuit_type=next_circuit_type,
+        sprint_quali_df=sprint_quali_df,
+        is_sprint_weekend=is_sprint_weekend,
     )
     # Rain probability available after weather fetch — store for score_manual()
     feat.attrs["rain_prob"] = float(weather.get("rain_prob", 0.0))
@@ -5562,6 +6238,33 @@ def main():
         priors["feature_importance_history"] = _imp_hist[-5:]
         save_priors(priors)
 
+    # 9d. LSTM momentum blend (active at >= LSTM_MIN_RACES)
+    print(f"\n🧠  LSTM momentum model...")
+    lstm_result = score_lstm(feat, race_df, completed)
+    if lstm_result is not None:
+        # Normalise existing scores to [0, 1] before blending
+        _s_min, _s_rng = scores.min(), scores.max() - scores.min()
+        _scores_norm = (scores - _s_min) / max(float(_s_rng), 1e-9)
+        # lstm_result is already [0, 1]
+        scores = 0.85 * _scores_norm + 0.15 * lstm_result.reindex(scores.index).fillna(0.5)
+        feat["lstm_score"] = lstm_result.reindex(feat.index).fillna(0.0).values
+        print(f"   ✅  LSTM blend applied: 0.85 × ensemble + 0.15 × LSTM")
+    else:
+        feat["lstm_score"] = np.nan
+
+    # 9e. GNN overtaking model (active at >= LSTM_MIN_RACES)
+    print(f"\n🕸️  GNN overtaking model...")
+    gnn_result = score_gnn_overtaking(
+        feat, race_df, completed, next_circuit_type=next_circuit_type
+    )
+    if gnn_result is not None:
+        _gnn_scores, gnn_overtake_matrix = gnn_result
+        feat["gnn_score"] = _gnn_scores.reindex(feat.index).fillna(0.0).values
+        print(f"   ✅  GNN: {len(gnn_overtake_matrix)} pairwise lap-1 probs wired to MC")
+    else:
+        feat["gnn_score"]   = np.nan
+        gnn_overtake_matrix = None
+
     # 10. Aplicar priors bayesianos al score
     if priors and completed:
         scores = apply_bayesian_priors(scores, feat, priors)
@@ -5594,6 +6297,7 @@ def main():
         weather      = weather,
         n_sims       = 10_000,
         circuit_name = next_circuit,
+        gnn_overtake = gnn_overtake_matrix,
     )
 
     # Aleatoric uncertainty — inherent randomness from MC spread relative to win%
@@ -5749,6 +6453,9 @@ def main():
         "historical_dnf_rate", "tyre_management_index",
         "compatibility_score",
         "press_sentiment",
+        "anomaly_score", "sandbagging_flag", "struggling_flag", "race_threat_flag",
+        "sq_pos_next", "sprint_quali_delta",
+        "lstm_score", "gnn_score",
     ] if c in scored.columns]
     scored[save_cols].to_csv(OUTPUT_CSV, index=False)
     print(f"💾  Resultados guardados en: {OUTPUT_CSV}\n")
