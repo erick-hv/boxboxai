@@ -46,17 +46,17 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage only meaningful output files — never f1_cache/ (large, transient)
-          git add \
-            f1_auto_state.json \
-            f1_2026_predicciones.csv \
-            f1_2026_bayesian_priors.json \
-            f1_2026_driver_profiles.json \
-            f1_2026_xgb_race_model.json \
-            f1_2026_lgbm_race_model.txt \
-            "f1_runs/*.log" \
-            "f1_runs/*.txt" \
-            || true
+          # Stage each output file individually so a missing optional file
+          # never blocks the others from being staged (one || true per add).
+          # Never stages f1_cache/ (large, transient API cache).
+          git add f1_auto_state.json            2>/dev/null || true
+          git add f1_2026_predicciones.csv      2>/dev/null || true
+          git add f1_2026_bayesian_priors.json  2>/dev/null || true
+          git add f1_2026_driver_profiles.json  2>/dev/null || true
+          git add f1_2026_xgb_race_model.json   2>/dev/null || true
+          git add f1_2026_lgbm_race_model.txt   2>/dev/null || true
+          git add f1_runs/*.log                 2>/dev/null || true
+          git add f1_runs/*.txt                 2>/dev/null || true
 
           # Exit cleanly if nothing changed this cycle
           if git diff --cached --quiet; then
