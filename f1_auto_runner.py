@@ -406,6 +406,21 @@ def _biggest_risk(ranked: list[dict], rain_prob: float) -> str:
     )
 
 
+# Maps legacy/API team name variants to 2026 official names.
+# Mirrors the normalization in f1_2026_predictor.py so old CSVs
+# are corrected at display time without needing a re-run.
+_TEAM_NAME_ALIASES: dict[str, str] = {
+    "RB F1 Team"           : "Racing Bulls",
+    "Visa Cash App RB"     : "Racing Bulls",
+    "VCARB"                : "Racing Bulls",
+    "AlphaTauri"           : "Racing Bulls",
+    "Scuderia AlphaTauri"  : "Racing Bulls",
+}
+
+def _normalize_team(name: str) -> str:
+    return _TEAM_NAME_ALIASES.get(name, name)
+
+
 def generate_prerace_briefing(round_num: int | None = None) -> str | None:
     """
     Build a human-readable pre-race briefing from f1_2026_predicciones.csv
@@ -486,7 +501,17 @@ def generate_prerace_briefing(round_num: int | None = None) -> str | None:
         parts = [p.strip() for p in weather_raw.split("|")]
         # First segment is the condition label (strip emoji)
         cond  = parts[0].replace("☀", "").replace("🌧", "").replace("⛅", "").replace("🌦", "").strip()
-        w_desc      = cond    # e.g. "Seco esperado"
+        # Translate Spanish condition phrases to English for the briefing only.
+        # The predictor logs stay in Spanish — this mapping is applied here alone.
+        _ES_TO_EN = {
+            "Seco esperado"    : "Dry expected",
+            "Lluvia posible"   : "Rain possible",
+            "Lluvia probable"  : "Rain likely",
+            "Lluvia esperada"  : "Rain expected",
+            "Condiciones mixtas": "Mixed conditions",
+        }
+        cond = _ES_TO_EN.get(cond, cond)
+        w_desc      = cond
         rain_prob_for_risk = 0.0
     else:
         w_desc = "Weather data not available in log"
@@ -576,20 +601,19 @@ def generate_prerace_briefing(round_num: int | None = None) -> str | None:
     a(f"  {sc_prob:.0%} probability  —  {sc_note}")
     a()
 
-    a("TOP 8 WIN PROBABILITIES  (10,000 Monte Carlo simulations)")
+    a("TOP 10 WIN PROBABILITIES  (10,000 Monte Carlo simulations)")
     a()
-    for i, row in enumerate(ranked[:8], 1):
+    for i, row in enumerate(ranked[:10], 1):
         name = row.get("FullName", row.get("code", "?"))
-        team = row.get("TeamName", "")
+        team = _normalize_team(row.get("TeamName", ""))
         win  = _csv_float(row, "win_mc_pct")
         pod  = _csv_float(row, "podium_mc_pct")
         exp  = _csv_float(row, "avg_mc_pos")
         p10  = _csv_int(row.get("p10_pos"))
         p90  = _csv_int(row.get("p90_pos"))
         ci   = f"P{p10}–P{p90}" if p10 and p90 else "?"
-        name_team = f"{name} ({team})"
-        stats = f"Win {win:5.1f}%  Podium {pod:4.1f}%  Exp P{exp:.0f}  [{ci}]"
-        a(f"  {i:>2}.  {name_team:<30}  {stats}")
+        a(f"  {i:>2}. {name} ({team})")
+        a(f"      Win {win:.1f}%  ·  Podium {pod:.1f}%  ·  Exp finish P{exp:.0f}  ·  Range {ci}")
     a()
 
     a("PACE FLAGS  (top 10 drivers)")
@@ -602,7 +626,7 @@ def generate_prerace_briefing(round_num: int | None = None) -> str | None:
 
     winner   = ranked[0]
     win_name = winner.get("FullName", winner.get("code", "?"))
-    win_team = winner.get("TeamName", "")
+    win_team = _normalize_team(winner.get("TeamName", ""))
     win_pod  = _csv_float(winner, "podium_mc_pct")
     win_exp  = _csv_float(winner, "avg_mc_pos")
     a("VERDICT")

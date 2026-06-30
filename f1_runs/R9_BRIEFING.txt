@@ -4,22 +4,34 @@
 ════════════════════════════════════════════════════════════════
 
 WEATHER
-  Seco esperado
+  Dry expected
   Pista ~35°C  ·  Humedad 58%
 
 SAFETY CAR / VSC
   45% probability  —  moderate — safety car is a coin flip
 
-TOP 8 WIN PROBABILITIES  (10,000 Monte Carlo simulations)
+TOP 10 WIN PROBABILITIES  (10,000 Monte Carlo simulations)
 
-   1.  Lewis Hamilton (Ferrari)        Win  20.1%  Podium 43.2%  Exp P5  [P1–P11]
-   2.  Andrea Kimi Antonelli (Mercedes)  Win  12.9%  Podium 32.9%  Exp P6  [P1–P12]
-   3.  George Russell (Mercedes)       Win   9.8%  Podium 26.6%  Exp P7  [P1–P13]
-   4.  Lando Norris (McLaren)          Win   6.9%  Podium 20.2%  Exp P7  [P2–P13]
-   5.  Max Verstappen (Red Bull)       Win   6.7%  Podium 20.0%  Exp P7  [P2–P13]
-   6.  Oscar Piastri (McLaren)         Win   6.2%  Podium 18.6%  Exp P7  [P2–P13]
-   7.  Charles Leclerc (Ferrari)       Win   4.5%  Podium 15.1%  Exp P8  [P2–P14]
-   8.  Liam Lawson (RB F1 Team)        Win   4.0%  Podium 12.5%  Exp P8  [P2–P14]
+   1. Lewis Hamilton (Ferrari)
+      Win 20.1%  ·  Podium 43.2%  ·  Exp finish P5  ·  Range P1–P11
+   2. Andrea Kimi Antonelli (Mercedes)
+      Win 12.9%  ·  Podium 32.9%  ·  Exp finish P6  ·  Range P1–P12
+   3. George Russell (Mercedes)
+      Win 9.8%  ·  Podium 26.6%  ·  Exp finish P7  ·  Range P1–P13
+   4. Lando Norris (McLaren)
+      Win 6.9%  ·  Podium 20.2%  ·  Exp finish P7  ·  Range P2–P13
+   5. Max Verstappen (Red Bull)
+      Win 6.7%  ·  Podium 20.0%  ·  Exp finish P7  ·  Range P2–P13
+   6. Oscar Piastri (McLaren)
+      Win 6.2%  ·  Podium 18.6%  ·  Exp finish P7  ·  Range P2–P13
+   7. Charles Leclerc (Ferrari)
+      Win 4.5%  ·  Podium 15.1%  ·  Exp finish P8  ·  Range P2–P14
+   8. Liam Lawson (Racing Bulls)
+      Win 4.0%  ·  Podium 12.5%  ·  Exp finish P8  ·  Range P2–P14
+   9. Isack Hadjar (Red Bull)
+      Win 3.4%  ·  Podium 11.7%  ·  Exp finish P8  ·  Range P2–P14
+  10. Pierre Gasly (Alpine F1 Team)
+      Win 3.0%  ·  Podium 11.3%  ·  Exp finish P8  ·  Range P2–P14
 
 PACE FLAGS  (top 10 drivers)
   Lewis Hamilton: models disagree on outcome
@@ -33,5 +45,5 @@ BIGGEST RISK
   George Russell's P10–P90 interval spans P1–P13 (12 places) — the model is uncertain enough that a podium or a points miss are both live.
 
 ════════════════════════════════════════════════════════════════
-  Generated: 2026-06-30 15:29 UTC
+  Generated: 2026-06-30 15:46 UTC
 ════════════════════════════════════════════════════════════════

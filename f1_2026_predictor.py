@@ -757,6 +757,22 @@ def get_completed_and_next(schedule: pd.DataFrame):
 
 
 # ─────────────────────────────────────────────────────────────
+#  Team name normalization — maps legacy/API names to 2026 official names.
+#  Applied at every point where Constructor.name comes in from Jolpica.
+# ─────────────────────────────────────────────────────────────
+_TEAM_NAME_ALIASES: dict[str, str] = {
+    "RB F1 Team"           : "Racing Bulls",
+    "Visa Cash App RB"     : "Racing Bulls",
+    "VCARB"                : "Racing Bulls",
+    "AlphaTauri"           : "Racing Bulls",
+    "Scuderia AlphaTauri"  : "Racing Bulls",
+}
+
+def normalize_team_name(name: str) -> str:
+    return _TEAM_NAME_ALIASES.get(name, name)
+
+
+# ─────────────────────────────────────────────────────────────
 #  2. STANDINGS (puntos de campeonato)
 # ─────────────────────────────────────────────────────────────
 def fetch_driver_standings() -> pd.DataFrame:
@@ -775,7 +791,7 @@ def fetch_driver_standings() -> pd.DataFrame:
         rows.append({
             "code"      : drv.get("code", drv.get("driverId", "???").upper()[:3]),
             "FullName"  : f"{drv.get('givenName','')} {drv.get('familyName','')}".strip(),
-            "TeamName"  : cons.get("name", "Desconocido"),
+            "TeamName"  : normalize_team_name(cons.get("name", "Desconocido")),
             "champ_pts" : safe_float(s.get("points", 0)),
         })
     return pd.DataFrame(rows)
@@ -790,7 +806,7 @@ def fetch_constructor_standings() -> dict:
                      .get("StandingsTable", {})
                      .get("StandingsLists", [{}])[0]
                      .get("ConstructorStandings", []))
-    return {s["Constructor"]["name"]: safe_float(s.get("points", 0))
+    return {normalize_team_name(s["Constructor"]["name"]): safe_float(s.get("points", 0))
             for s in standings}
 
 
