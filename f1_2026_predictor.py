@@ -48,8 +48,10 @@ _GP_WEIGHT               = 0.20  # GP gets 20% of final blend; XGB+LGBM share re
 JOLPICA_BASE    = "https://api.jolpi.ca/ergast/f1"
 OPENF1_BASE     = "https://api.openf1.org/v1"
 XGB_MIN_RACES   = 6          # Carreras mínimas para activar XGBoost
-LSTM_MIN_RACES  = 12         # Carreras mínimas para activar LSTM (more sequences needed)
-TYRE_INVENTORY_CACHE = Path("./f1_2026_tyre_inventory.json")
+LSTM_MIN_RACES       = 12         # Carreras mínimas para activar LSTM (more sequences needed)
+TELEMETRY_MIN_RACES  = 12         # Same threshold — corner telemetry needs a full data set
+TYRE_INVENTORY_CACHE     = Path("./f1_2026_tyre_inventory.json")
+CORNER_TELEMETRY_CACHE   = Path("./f1_2026_corner_telemetry.json")
 
 # ═════════════════════════════════════════════════════════════
 #  CAPA DE DATOS OPENF1 — Reemplaza FastF1 para datos 2026
@@ -1909,6 +1911,64 @@ CIRCUIT_COMPOUND_DEFAULTS_2026: dict[str, tuple[int, int, int]] = {
 _COMPOUND_AVG_MIN = 2.0   # C1/C2/C3
 _COMPOUND_AVG_MAX = 4.0   # C3/C4/C5
 
+# ── Corner telemetry segments — APPROXIMATE distance ranges (meters from lap start) ──
+# IMPORTANT: These values are estimated from published circuit maps and GPS overlays.
+# Accuracy is ±50–100 m. FastF1 telemetry is sampled at ~4 Hz (~70–80 km/h per sample
+# at racing speeds), so precision is limited to ~5–15 m at best.
+# Covers 8 strategically significant circuits only; others return neutral (NaN).
+# DO NOT treat as authoritative track engineering data.
+CIRCUIT_CORNERS: dict[str, dict[str, tuple[int, int]]] = {
+    "Silverstone Circuit": {
+        "Copse"             : (300,   550),   # T1 — fast right, entry speed diagnostic
+        "Maggotts-Becketts" : (1400, 2100),   # T3-5 complex — most demanding sector
+        "Stowe"             : (4700, 5000),   # T15 — high-load right hander
+        "Club"              : (5100, 5450),   # T16 — final complex before pits
+    },
+    "Circuit de Monaco": {
+        "Sainte Devote"     : (50,    220),   # T1 — opening right, sets up tunnel straight
+        "Casino"            : (850,  1050),   # T6 — cambered right, tricky exit
+        "Mirabeau"          : (1300, 1550),   # T8 — hairpin entry commitment
+        "Rascasse"          : (2900, 3100),   # T18 — final chicane, last overtake spot
+    },
+    "Circuit de Spa-Francorchamps": {
+        "La Source"         : (50,    200),   # T1 — hairpin, braking zone
+        "Eau Rouge-Raidillon": (700,  1100),  # T2-3 — iconic uphill sequence
+        "Pouhon"            : (3600, 3900),   # T11 — double left, highest-G flat corner
+        "Blanchimont"       : (5700, 6050),   # T15-16 — high-speed left before Bus Stop
+    },
+    "Autodromo Nazionale di Monza": {
+        "Variante del Rettifilo": (200,  600),  # T1-2 — first chicane, key braking zone
+        "Variante della Roggia" : (1400, 1750), # T4-5 — second chicane, braking commitment
+        "Lesmo 2"               : (3200, 3550), # T9 — fast right, circuit character
+        "Parabolica"            : (5100, 5550), # T11 — final corner, last lap opportunity
+    },
+    "Suzuka Circuit": {
+        "Turns 1-2"         : (100,   380),  # opening complex, race-start incident zone
+        "Esses"             : (900,  1600),  # T3-7 — iconic S-curves, driver skill test
+        "Hairpin"           : (2850, 3050),  # T11 — slow, key undercut pivot
+        "Spoon"             : (4000, 4450),  # T13-14 — double left apex commitment
+        "130R"              : (5050, 5250),  # T17 — fastest corner, bravery test
+    },
+    "Hungaroring": {
+        "Turn 1"            : (50,    250),  # opening hairpin — only real overtake spot
+        "Turn 2"            : (300,   500),  # tight right, exit sets up sector 1
+        "Turns 6-7"         : (1800, 2150),  # mid-corner complex — traction key
+        "Turn 11"           : (3200, 3500),  # final hairpin — pivotal for lap time
+    },
+    "Red Bull Ring": {
+        "Turn 1"            : (100,   370),  # steep uphill braking zone
+        "Turn 3"            : (950,  1150),  # crest exit — car balance critical
+        "Turn 6"            : (2700, 2900),  # tight right hander, slow
+        "Turns 9-10"        : (3800, 4100),  # final complex — DRS activation corner
+    },
+    "Bahrain International Circuit": {
+        "Turns 1-2"         : (100,   400),  # first braking zone — race start critical
+        "Turn 4"            : (650,   870),  # hairpin — main overtaking spot
+        "Turns 8-10"        : (2100, 2500),  # flowing mid-circuit complex
+        "Turns 14-15"       : (4200, 4580),  # tight final sector — tyre stress
+    },
+}
+
 
 def fetch_compound_selection(
         circuit_name: str,
@@ -2867,6 +2927,246 @@ def compute_tyre_inventory(
         df["tyre_inventory_score"] = 0.0
 
     return df
+
+
+def fetch_corner_telemetry(
+        next_round   : int,
+        next_circuit : str,
+        completed    : list,
+) -> pd.DataFrame:
+    """
+    Loads qualifying telemetry for next_round via FastF1 and computes per-driver
+    corner mastery metrics for each named segment in CIRCUIT_CORNERS[next_circuit].
+
+    Returns DataFrame[code, corner_mastery_score, corner_detail] or empty DataFrame.
+
+    CONFIDENCE notes (lower than OpenF1 API features):
+    - Corner distance boundaries are APPROXIMATE (±50–100 m from circuit maps).
+    - FastF1 telemetry is ~4 Hz → one sample every ~15–20 m at racing speed.
+    - Throttle/Brake channels vary by session: float 0–100 or bool 0/1.
+    - Only 8 circuits have corner maps; all others return empty → neutral fallback.
+    - Dormant below TELEMETRY_MIN_RACES (12) — not enough history to calibrate.
+
+    Metrics per corner:
+      min_speed    : minimum speed (km/h) in the corner distance window
+      throttle_pct : fraction through window where Throttle first exceeds 50 %
+                     (earlier = better exit; NaN if channel unavailable)
+      brake_pct    : fraction through window where Brake last exceeds 50 %
+                     (later = deeper braking commitment; NaN if unavailable)
+
+    corner_mastery_score = weighted mean of (driver_min_speed / session_best_min_speed)
+    across all corners, weighted by corner length (distance range).
+    Score near 1.0 = matching the fastest driver through corners.
+
+    Cache: CORNER_TELEMETRY_CACHE, keyed by "{SEASON}_{round}_Q".
+    FastF1 telemetry loads take several seconds per driver — cache is essential.
+    """
+    import json as _json
+
+    if len(completed) < TELEMETRY_MIN_RACES:
+        print(f"   🏎️  Corner telemetry dormant "
+              f"({len(completed)}/{TELEMETRY_MIN_RACES} races)")
+        return pd.DataFrame()
+
+    corners = CIRCUIT_CORNERS.get(next_circuit)
+    if corners is None:
+        print(f"   ℹ️  Corner telemetry: '{next_circuit}' not in CIRCUIT_CORNERS — neutral")
+        return pd.DataFrame()
+
+    # Load per-session cache
+    cache: dict = {}
+    if CORNER_TELEMETRY_CACHE.exists():
+        try:
+            cache = _json.loads(
+                CORNER_TELEMETRY_CACHE.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+
+    cache_key = f"{SEASON}_{next_round}_Q"
+    if cache_key in cache:
+        cached_rows = cache[cache_key]
+        if not cached_rows:
+            print(f"   ℹ️  Corner telemetry R{next_round}: no data (cached)")
+            return pd.DataFrame()
+        df = pd.DataFrame(cached_rows)
+        # corner_detail is stored as dict string — restore
+        if "corner_detail" in df.columns:
+            df["corner_detail"] = df["corner_detail"].apply(
+                lambda x: x if isinstance(x, dict) else {})
+        print(f"   💾  Corner telemetry R{next_round}: "
+              f"{len(df)} pilotos (cache)")
+        return df
+
+    # ── Load qualifying session with telemetry via FastF1 ─────────────────
+    print(f"   📡  Cargando telemetría FastF1 Q R{next_round} "
+          f"({next_circuit}) — puede tardar ~30–60 s...")
+    try:
+        sess = fastf1.get_session(SEASON, next_round, "Q")
+        sess.load(laps=True, telemetry=True, weather=False, messages=False)
+    except Exception as _e:
+        print(f"   ⚠  FastF1 telemetry load failed: {_e}")
+        cache[cache_key] = []
+        _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
+        return pd.DataFrame()
+
+    try:
+        laps = sess.laps
+        if laps is None or len(laps) == 0:
+            raise ValueError("no laps in session")
+    except Exception as _e:
+        print(f"   ⚠  FastF1 Q session has no lap data: {_e}")
+        cache[cache_key] = []
+        _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
+        return pd.DataFrame()
+
+    corner_names   = list(corners.keys())
+    corner_ranges  = list(corners.values())
+    corner_lengths = [r[1] - r[0] for r in corner_ranges]
+    total_length   = sum(corner_lengths)
+    corner_weights = [ln / total_length for ln in corner_lengths]
+
+    # session-best minimum speed per corner (across all drivers)
+    session_best: dict[str, float | None] = {n: None for n in corner_names}
+    # per-driver metrics: code → {corner_name → {min_speed, throttle_pct, brake_pct}}
+    driver_metrics: dict[str, dict] = {}
+
+    drivers_in_session = laps["Driver"].dropna().unique().tolist()
+    n_processed = 0
+
+    for drv in drivers_in_session:
+        try:
+            drv_laps = laps.pick_driver(drv)
+            if len(drv_laps) == 0:
+                continue
+            # Filter to representative fast laps before picking fastest
+            fast = drv_laps.pick_quicklaps(threshold=1.07)
+            fastest_lap = fast.pick_fastest() if len(fast) > 0 \
+                         else drv_laps.pick_fastest()
+            if fastest_lap is None:
+                continue
+
+            tel = fastest_lap.get_telemetry()
+            if tel is None or tel.empty:
+                continue
+            required = {"Distance", "Speed"}
+            if not required.issubset(tel.columns):
+                continue
+
+            # Map FastF1 driver abbr → our 3-letter code
+            # FastF1 "Driver" field is already the 3-letter abbreviation
+            code = str(drv).upper()
+
+            corner_data: dict[str, dict] = {}
+            for name, (d_start, d_end), w in zip(
+                    corner_names, corner_ranges, corner_weights):
+                seg = tel[(tel["Distance"] >= d_start) &
+                          (tel["Distance"] <= d_end)]
+                if len(seg) < 2:
+                    continue
+
+                min_speed = float(seg["Speed"].min())
+
+                throttle_pct = np.nan
+                brake_pct    = np.nan
+
+                if "Throttle" in seg.columns:
+                    t_vals   = seg["Throttle"].values.astype(float)
+                    t_thresh = 0.5 if t_vals.max() <= 1.0 else 50.0
+                    on_mask  = seg["Throttle"] > t_thresh
+                    if on_mask.any():
+                        first_on_d   = float(seg.loc[on_mask, "Distance"].iloc[0])
+                        throttle_pct = float(np.clip(
+                            (first_on_d - d_start) / (d_end - d_start), 0.0, 1.0))
+
+                if "Brake" in seg.columns:
+                    b_vals   = seg["Brake"].values.astype(float)
+                    b_thresh = 0.5 if b_vals.max() <= 1.0 else 50.0
+                    brk_mask = seg["Brake"] > b_thresh
+                    if brk_mask.any():
+                        last_brk_d = float(seg.loc[brk_mask, "Distance"].iloc[-1])
+                        brake_pct  = float(np.clip(
+                            (last_brk_d - d_start) / (d_end - d_start), 0.0, 1.0))
+
+                corner_data[name] = {
+                    "min_speed"   : round(min_speed, 1),
+                    "throttle_pct": round(throttle_pct, 3)
+                                    if not np.isnan(throttle_pct) else None,
+                    "brake_pct"   : round(brake_pct, 3)
+                                    if not np.isnan(brake_pct) else None,
+                }
+                # Track session best (highest min speed = least scrubbing)
+                if (session_best[name] is None or
+                        min_speed > session_best[name]):
+                    session_best[name] = min_speed
+
+            if corner_data:
+                driver_metrics[code] = corner_data
+                n_processed += 1
+
+        except Exception:
+            continue  # skip drivers with missing/malformed telemetry
+
+    if not driver_metrics:
+        print("   ⚠  Corner telemetry: no usable data extracted")
+        cache[cache_key] = []
+        _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
+        return pd.DataFrame()
+
+    print(f"   📊  Corner telemetry: {n_processed} pilotos procesados "
+          f"({next_circuit}, {len(corner_names)} corners)")
+
+    # ── Compute corner_mastery_score per driver ────────────────────────────
+    rows = []
+    for code, c_data in driver_metrics.items():
+        ratios   = []
+        weights  = []
+        per_name = {}
+
+        for name, (d_start, d_end), w in zip(
+                corner_names, corner_ranges, corner_weights):
+            best = session_best.get(name)
+            if best is None or best == 0 or name not in c_data:
+                continue
+            ratio = c_data[name]["min_speed"] / best
+            ratios.append(ratio)
+            weights.append(w)
+            per_name[name] = round(ratio, 4)
+
+        if not ratios:
+            continue
+
+        w_total = sum(weights)
+        mastery = float(
+            sum(r * wt / w_total for r, wt in zip(ratios, weights))
+        ) if w_total > 0 else float(np.mean(ratios))
+
+        rows.append({
+            "code"                : code,
+            "corner_mastery_score": round(mastery, 4),
+            "corner_detail"       : per_name,
+        })
+
+    if not rows:
+        cache[cache_key] = []
+        _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
+        return pd.DataFrame()
+
+    cache[cache_key] = rows
+    _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
+
+    return pd.DataFrame(rows)
+
+
+def _write_json_atomic(path: Path, data: dict) -> None:
+    """Atomic JSON write: write to .tmp then rename to avoid partial reads."""
+    import json as _json
+    try:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(data, indent=2, ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(path)
+    except Exception as _e:
+        print(f"   ⚠  JSON write failed ({path.name}): {_e}")
 
 
 def fetch_circuit_affinity(circuit_name: str) -> pd.DataFrame:
@@ -4084,6 +4384,13 @@ def score_manual(feat: pd.DataFrame,
         # Fresh soft sets remaining vs field avg — strategic flexibility signal.
         # Only meaningful once at least one practice session has completed.
         "tyre_inventory_score"  : 0.02 if has_next_quali else 0.00,
+        # Corner mastery from FastF1 telemetry — approximate, 8 circuits only.
+        # Active only when data was computed (col non-zero) AND has_next_quali.
+        # Weight is intentionally low: telemetry boundaries are ±50–100 m estimates.
+        "corner_mastery_score"  : 0.03 if (has_next_quali and
+                                            "corner_mastery_score" in feat.columns and
+                                            feat["corner_mastery_score"].abs().sum() > 0.01)
+                                       else 0.00,
     }
 
     # When qualifying is available, rescale season-history features so raw dict sums to 1.0
@@ -4092,7 +4399,7 @@ def score_manual(feat: pd.DataFrame,
         _next_keys = {"quali_pos_next", "fp_next_delta", "fp2_next_longrun",
                       "sector_balance", "soft_pace_delta", "medium_pace_delta",
                       "tyre_deg_rate", "corner_profile_score", "race_sim_delta",
-                      "tyre_inventory_score"}
+                      "tyre_inventory_score", "corner_mastery_score"}
         season_sum = sum(v for k, v in w.items() if k not in _next_keys)
         season_target = 1.0 - sum(w[k] for k in _next_keys if k in w)
         if season_sum > 0:
@@ -4110,7 +4417,7 @@ def score_manual(feat: pd.DataFrame,
     _NEXT_RACE_WEIGHTS = {"quali_pos_next", "fp_next_delta", "fp2_next_longrun",
                           "sector_balance", "soft_pace_delta", "medium_pace_delta",
                           "tyre_deg_rate", "corner_profile_score", "race_sim_delta",
-                          "tyre_inventory_score"}
+                          "tyre_inventory_score", "corner_mastery_score"}
     if xgb_weights:
         print("   🔄  Aplicando feedback XGBoost a pesos manuales...")
         total_xgb = sum(xgb_weights.values()) or 1
@@ -4179,6 +4486,7 @@ def score_manual(feat: pd.DataFrame,
     s += apply("press_sentiment",       "desc")  # pre-race confidence from press conf NLP
     s += apply("sprint_quali_delta",   "desc")  # sprint wknd: improved SQ→GP = latent pace
     s += apply("tyre_inventory_score", "desc")  # more fresh softs remaining = strategic advantage
+    s += apply("corner_mastery_score", "desc")  # higher ratio vs session best = better corners
 
     s -= feat.get("dnf_rate",      pd.Series(0.0, index=feat.index)).fillna(0) * 0.10
     s -= feat.get("historical_dnf_rate",
@@ -6328,6 +6636,8 @@ def main():
         sprint_quali_df = of1_collect_next_sprint_qualifying(next_round, of1_sessions)
         print("\n🔴  Calculando inventario de neumáticos (sesiones completadas)...")
         tyre_inv_df   = compute_tyre_inventory(of1_sessions, next_round)
+        print("\n🏎️  Corner telemetry analysis (FastF1)...")
+        corner_tel_df = fetch_corner_telemetry(next_round, next_circuit, completed)
         if not next_quali_df.empty:
             print(f"   ✅  Clasificación del próximo GP cargada ({len(next_quali_df)} pilotos)")
         else:
@@ -6353,6 +6663,9 @@ def main():
                                                 "race_sim_delta", "race_sim_deg"])
         sprint_quali_df = pd.DataFrame(columns=["code", "sq_pos_next", "sq_time_next"])
         tyre_inv_df     = pd.DataFrame()
+        # Corner telemetry uses FastF1 directly — attempt even without OpenF1
+        print("\n🏎️  Corner telemetry analysis (FastF1)...")
+        corner_tel_df = fetch_corner_telemetry(next_round, next_circuit, completed)
 
     # 7. Clima y penalizaciones para próxima carrera
     weather  = fetch_weather_for_race(next_round, schedule)
@@ -6466,7 +6779,34 @@ def main():
             except Exception as _e:
                 print(f"      ⚠  No se pudieron guardar embeddings: {_e}")
 
-    # 8d. Tyre set inventory — merge score into feat + print compact table
+    # 8d. Corner mastery from telemetry — merge into feat + print top-5 table
+    if not corner_tel_df.empty and "corner_mastery_score" in corner_tel_df.columns:
+        feat = feat.merge(
+            corner_tel_df[["code", "corner_mastery_score", "corner_detail"]],
+            on="code", how="left")
+        feat["corner_mastery_score"] = feat["corner_mastery_score"].fillna(
+            feat["corner_mastery_score"].median()
+            if feat["corner_mastery_score"].notna().any() else 0.0)
+        # Print top-5 with per-corner breakdown
+        _cm_top = (corner_tel_df
+                   .sort_values("corner_mastery_score", ascending=False)
+                   .head(5))
+        print(f"\n🏎️  Corner mastery top 5 ({next_circuit}):")
+        for _, _cmr in _cm_top.iterrows():
+            _detail = _cmr.get("corner_detail", {}) or {}
+            _parts  = ", ".join(
+                f"{cn}: {ratio:.3f}"
+                for cn, ratio in sorted(_detail.items(),
+                                        key=lambda x: x[1])[:4]
+            )
+            print(f"   {str(_cmr['code']):<5}  {_cmr['corner_mastery_score']:.3f}"
+                  f"  ({_parts})")
+        # Drop corner_detail column — not needed in feat for modelling
+        feat = feat.drop(columns=["corner_detail"], errors="ignore")
+    else:
+        feat["corner_mastery_score"] = 0.0
+
+    # 8f. Tyre set inventory — merge score into feat + print compact table
     print("\n🔴  Inventario de neumáticos (sesiones de práctica completadas):")
     if not tyre_inv_df.empty:
         feat = feat.merge(tyre_inv_df[["code", "tyre_inventory_score"]],
@@ -6899,6 +7239,7 @@ def main():
         "sq_pos_next", "sprint_quali_delta",
         "lstm_score", "gnn_score",
         "tyre_inventory_score",
+        "corner_mastery_score",
     ] if c in scored.columns]
     scored[save_cols].to_csv(OUTPUT_CSV, index=False)
     print(f"💾  Resultados guardados en: {OUTPUT_CSV}\n")
