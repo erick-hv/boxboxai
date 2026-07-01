@@ -5527,6 +5527,35 @@ def monte_carlo_simulation(
         for i in range(n)
     ])
 
+    # ── Per-driver wet-weather pace adjustment ───────────────────────────────
+    # wet_weather_delta: negative = better in wet (driver finishes above season avg).
+    # Manual override: VER computed delta (-0.698) is understated — 6-race sample
+    # includes 2023 Brazil DNF drag; overridden to -2.2 (ALO/RUS/NOR peer tier).
+    # Remove override when VER's wet-race sample exceeds ~15 races.
+    _WET_PACE_SCALE = 0.002   # 1 position-delta → 0.2% pace per rain unit
+    _WET_CLIP       = 4.0     # cap outliers beyond ±4 positions (small-sample teams)
+    _WET_OVERRIDES  = {"VER": -2.2}
+
+    _wet_deltas: dict[str, float] = {}
+    if "wet_weather_delta" in feat.columns:
+        for _, _row in feat.iterrows():
+            _wwd = _row.get("wet_weather_delta")
+            if _wwd is not None and not (isinstance(_wwd, float) and np.isnan(_wwd)):
+                _c = _row["code"]
+                _wet_deltas[_c] = float(_WET_OVERRIDES.get(_c, _wwd))
+
+    wet_pace_adj = np.array([
+        -float(np.clip(_wet_deltas.get(codes[i], 0.0), -_WET_CLIP, _WET_CLIP)) * _WET_PACE_SCALE
+        for i in range(n)
+    ])
+    if rain_prob > 0.05 and wet_pace_adj.any():
+        _top_wet = sorted(
+            ((codes[i], wet_pace_adj[i] * rain_prob) for i in range(n)),
+            key=lambda x: -x[1]
+        )[:3]
+        print(f"   🌧️  Wet-skill adj ({rain_prob:.0%} rain) — "
+              f"top boost: {', '.join(f'{c} +{v*100:.2f}%' for c, v in _top_wet)}")
+
     # Acumuladores
     wins    = np.zeros(n, dtype=int)
     podiums = np.zeros(n, dtype=int)
@@ -5557,6 +5586,11 @@ def monte_carlo_simulation(
             shuffle_size = max(1, round(n * rain_prob / 3))
             shuffle_idx  = rng.choice(n, size=shuffle_size, replace=False)
             sim_scores[shuffle_idx] = rng.permutation(sim_scores[shuffle_idx])
+
+        # 3b. Per-driver wet-weather skill — applied after the chaos shuffle so
+        #     individual skill differentiates drivers regardless of who was shuffled.
+        if rain_prob > 0.05:
+            sim_scores *= (1.0 + wet_pace_adj * rain_prob)
 
         # 4. Pit stop time loss — team-specific stationary time penalty.
         # Faster crews (Mercedes/McLaren 2.3s) incur smaller score hit than
@@ -5685,10 +5719,13 @@ def monte_carlo_simulation(
             "p90_pos"       : round(p90, 1),
             "p10_win_pct"   : round(float(p10_win_v[i]), 2),
             "p90_win_pct"   : round(float(p90_win_v[i]), 2),
+            "wet_mc_adj"    : round(float(wet_pace_adj[i] * rain_prob * 100), 3) if rain_prob > 0.05 else None,
         })
 
     mc_df = pd.DataFrame(rows).sort_values("win_mc_pct", ascending=False
                          ).reset_index(drop=True)
+    if "wet_mc_adj" in mc_df.columns and mc_df["wet_mc_adj"].isna().all():
+        mc_df = mc_df.drop(columns=["wet_mc_adj"])
     print(f"   ✅  Simulaciones completadas.")
     return mc_df
 
