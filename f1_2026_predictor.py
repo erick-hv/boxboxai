@@ -49,6 +49,7 @@ JOLPICA_BASE    = "https://api.jolpi.ca/ergast/f1"
 OPENF1_BASE     = "https://api.openf1.org/v1"
 XGB_MIN_RACES   = 6          # Carreras mínimas para activar XGBoost
 LSTM_MIN_RACES  = 12         # Carreras mínimas para activar LSTM (more sequences needed)
+TYRE_INVENTORY_CACHE = Path("./f1_2026_tyre_inventory.json")
 
 # ═════════════════════════════════════════════════════════════
 #  CAPA DE DATOS OPENF1 — Reemplaza FastF1 para datos 2026
@@ -137,7 +138,10 @@ def of1_session_key(sessions_df: pd.DataFrame,
     ]
     if hits.empty:
         return None
-    return int(hits.iloc[0]["session_key"])
+    val = hits.iloc[0]["session_key"]
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return None
+    return int(val)
 
 
 def of1_get_rounds_with_data(sessions_df: pd.DataFrame,
@@ -2730,6 +2734,141 @@ def of1_collect_next_race_fp(next_round: int,
                      "race_sim_deg":       rs.get("race_sim_deg",   np.nan)})
     return pd.DataFrame(rows)
 
+
+# 2026 dry tyre allocation per driver per race weekend (Article 30, Sporting Regs)
+# Standard: 8 soft / 3 medium / 2 hard (13 total)
+# Sprint:   6 soft / 4 medium / 2 hard (12 total; different distribution)
+_TYRE_ALLOC_STANDARD : dict[str, int] = {"SOFT": 8, "MEDIUM": 3, "HARD": 2}
+_TYRE_ALLOC_SPRINT   : dict[str, int] = {"SOFT": 6, "MEDIUM": 4, "HARD": 2}
+
+
+def compute_tyre_inventory(
+        sessions_df : pd.DataFrame,
+        next_round  : int,
+) -> pd.DataFrame:
+    """
+    Estimates per-driver new tyre set inventory for the upcoming race by
+    counting fresh-set starts (tyre_age_at_start == 0) across all completed
+    practice sessions of the current race weekend, then subtracting from the
+    standard 2026 allocation.
+
+    Tracked sessions:
+      Standard weekend : FP1, FP2, FP3
+      Sprint weekend   : FP1, S (Sprint Race)
+
+    Returns DataFrame[code, soft_new_remaining, medium_new_remaining,
+                      hard_new_remaining, total_new_remaining,
+                      tyre_inventory_score]
+    where tyre_inventory_score is the z-score of soft_new_remaining vs field.
+    Returns empty DataFrame when no practice data is available yet.
+
+    Cache: f1_2026_tyre_inventory.json, keyed by "{round}_{session_code}".
+    Cache is per-session so already-completed sessions are never re-fetched.
+    """
+    import json as _json
+
+    is_sprint   = next_round in SPRINT_ROUNDS
+    alloc       = _TYRE_ALLOC_SPRINT if is_sprint else _TYRE_ALLOC_STANDARD
+    sessions    = ["FP1", "S"] if is_sprint else ["FP1", "FP2", "FP3"]
+
+    # Load cache
+    cache: dict = {}
+    if TYRE_INVENTORY_CACHE.exists():
+        try:
+            cache = _json.loads(TYRE_INVENTORY_CACHE.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+
+    # fresh_used[driver_code][compound] = count of fresh sets used across sessions
+    fresh_used: dict[str, dict[str, int]] = {}
+    any_data = False
+
+    for sess_code in sessions:
+        cache_key = f"{next_round}_{sess_code}"
+
+        if cache_key in cache:
+            sess_data: dict = cache[cache_key]
+            if sess_data:
+                print(f"   💾  Tyre inventory {sess_code} R{next_round}: "
+                      f"{len(sess_data)} pilotos (cache)")
+        else:
+            sk = of1_session_key(sessions_df, next_round, sess_code)
+            if sk is None:
+                continue  # session not yet completed or not in calendar
+
+            stints_df = of1_get_stints(sk)
+            sess_data = {}
+
+            if not stints_df.empty and "tyre_age_at_start" in stints_df.columns:
+                for _, row in stints_df.iterrows():
+                    code     = str(row.get("code", "")).strip()
+                    compound = str(row.get("compound", "")).upper()
+                    age      = row.get("tyre_age_at_start", None)
+                    if not code or compound not in ("SOFT", "MEDIUM", "HARD"):
+                        continue
+                    if age is None or (isinstance(age, float) and np.isnan(age)):
+                        continue
+                    if int(age) == 0:
+                        sess_data.setdefault(code, {})
+                        sess_data[code][compound] = sess_data[code].get(compound, 0) + 1
+
+            # Persist to cache (even empty, so we don't re-fetch a completed session
+            # that genuinely returned no usable stints data)
+            cache[cache_key] = sess_data
+            try:
+                _tmp = TYRE_INVENTORY_CACHE.with_suffix(".tmp")
+                _tmp.write_text(_json.dumps(cache, indent=2, ensure_ascii=False),
+                                encoding="utf-8")
+                _tmp.replace(TYRE_INVENTORY_CACHE)
+            except Exception as _e:
+                print(f"   ⚠  No se pudo escribir caché de inventario: {_e}")
+
+            if sess_data:
+                print(f"   📊  Tyre inventory {sess_code} R{next_round}: "
+                      f"{len(sess_data)} pilotos (fetched)")
+
+        if not sess_data:
+            continue
+
+        any_data = True
+        for code, compounds in sess_data.items():
+            fresh_used.setdefault(code, {})
+            for compound, count in compounds.items():
+                fresh_used[code][compound] = fresh_used[code].get(compound, 0) + count
+
+    if not any_data:
+        return pd.DataFrame()
+
+    rows = []
+    for code, used in fresh_used.items():
+        soft_rem   = max(0, alloc["SOFT"]   - used.get("SOFT",   0))
+        medium_rem = max(0, alloc["MEDIUM"] - used.get("MEDIUM", 0))
+        hard_rem   = max(0, alloc["HARD"]   - used.get("HARD",   0))
+        rows.append({
+            "code"                 : code,
+            "soft_new_remaining"   : soft_rem,
+            "medium_new_remaining" : medium_rem,
+            "hard_new_remaining"   : hard_rem,
+            "total_new_remaining"  : soft_rem + medium_rem + hard_rem,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+
+    # tyre_inventory_score = z-score of soft_new_remaining across field
+    # Positive = more fresh softs than average = strategic flexibility advantage
+    _mean = df["soft_new_remaining"].mean()
+    _std  = df["soft_new_remaining"].std()
+    if _std and _std > 0:
+        df["tyre_inventory_score"] = (df["soft_new_remaining"] - _mean) / _std
+    else:
+        df["tyre_inventory_score"] = 0.0
+
+    return df
+
+
 def fetch_circuit_affinity(circuit_name: str) -> pd.DataFrame:
     """
     Fetch race results at circuit_name for the last 3 seasons from Jolpica.
@@ -3942,6 +4081,9 @@ def score_manual(feat: pd.DataFrame,
                                             "sprint_quali_delta" in feat.columns and
                                             feat["sprint_quali_delta"].abs().sum() > 0)
                                        else 0.00,
+        # Fresh soft sets remaining vs field avg — strategic flexibility signal.
+        # Only meaningful once at least one practice session has completed.
+        "tyre_inventory_score"  : 0.02 if has_next_quali else 0.00,
     }
 
     # When qualifying is available, rescale season-history features so raw dict sums to 1.0
@@ -3949,7 +4091,8 @@ def score_manual(feat: pd.DataFrame,
     if has_next_quali:
         _next_keys = {"quali_pos_next", "fp_next_delta", "fp2_next_longrun",
                       "sector_balance", "soft_pace_delta", "medium_pace_delta",
-                      "tyre_deg_rate", "corner_profile_score", "race_sim_delta"}
+                      "tyre_deg_rate", "corner_profile_score", "race_sim_delta",
+                      "tyre_inventory_score"}
         season_sum = sum(v for k, v in w.items() if k not in _next_keys)
         season_target = 1.0 - sum(w[k] for k in _next_keys if k in w)
         if season_sum > 0:
@@ -3966,7 +4109,8 @@ def score_manual(feat: pd.DataFrame,
     # _next features are excluded: XGBoost never trained on them, so it has no valid opinion
     _NEXT_RACE_WEIGHTS = {"quali_pos_next", "fp_next_delta", "fp2_next_longrun",
                           "sector_balance", "soft_pace_delta", "medium_pace_delta",
-                          "tyre_deg_rate", "corner_profile_score", "race_sim_delta"}
+                          "tyre_deg_rate", "corner_profile_score", "race_sim_delta",
+                          "tyre_inventory_score"}
     if xgb_weights:
         print("   🔄  Aplicando feedback XGBoost a pesos manuales...")
         total_xgb = sum(xgb_weights.values()) or 1
@@ -4034,6 +4178,7 @@ def score_manual(feat: pd.DataFrame,
     s += apply("compatibility_score",   "desc")  # driver-circuit style match
     s += apply("press_sentiment",       "desc")  # pre-race confidence from press conf NLP
     s += apply("sprint_quali_delta",   "desc")  # sprint wknd: improved SQ→GP = latent pace
+    s += apply("tyre_inventory_score", "desc")  # more fresh softs remaining = strategic advantage
 
     s -= feat.get("dnf_rate",      pd.Series(0.0, index=feat.index)).fillna(0) * 0.10
     s -= feat.get("historical_dnf_rate",
@@ -4960,14 +5105,15 @@ def build_reliability(feat: pd.DataFrame, race_df: pd.DataFrame,
 #  21c. SIMULACIÓN MONTE CARLO
 # ─────────────────────────────────────────────────────────────
 def monte_carlo_simulation(
-        feat              : pd.DataFrame,
-        base_scores       : pd.Series,
-        reliability       : pd.DataFrame,
-        weather           : dict,
-        n_sims            : int = 10_000,
-        circuit_name      : str = "",
-        gnn_overtake      : "dict | None" = None,
-        compound_softness : float = 0.5,   # normalised [0,1]: 0=C1/C2/C3, 1=C3/C4/C5
+        feat                   : pd.DataFrame,
+        base_scores            : pd.Series,
+        reliability            : pd.DataFrame,
+        weather                : dict,
+        n_sims                 : int = 10_000,
+        circuit_name           : str = "",
+        gnn_overtake           : "dict | None" = None,
+        compound_softness      : float = 0.5,   # normalised [0,1]: 0=C1/C2/C3, 1=C3/C4/C5
+        tyre_inventory_scores  : "dict | None" = None,  # {code: z-score} fresh soft advantage
 ) -> pd.DataFrame:
     """
     Corre N simulaciones de la carrera inyectando variaciones aleatorias en:
@@ -5140,7 +5286,17 @@ def monte_carlo_simulation(
         _sorted = np.argsort(-sim_scores)
         _uc = [i for i in _sorted[2:10] if is_1stop[i]]
         if _uc and rng.random() < undercut_prob:
-            winner_idx = rng.choice(_uc)
+            # Drivers with more fresh softs than average (tyre_inventory_score > 0.5)
+            # get +5% selection weight — they have more strategic flexibility to pit early.
+            if tyre_inventory_scores:
+                _uc_weights = np.array([
+                    1.05 if tyre_inventory_scores.get(codes[i], 0.0) > 0.5 else 1.0
+                    for i in _uc
+                ], dtype=float)
+                _uc_weights /= _uc_weights.sum()
+                winner_idx = rng.choice(_uc, p=_uc_weights)
+            else:
+                winner_idx = rng.choice(_uc)
             gain = rng.uniform(0.002, 0.004)
             if rng.random() < 0.30:  # traffic on pit exit
                 # net loss after 5-lap recovery = traffic_loss × (5/RACE_LAPS)
@@ -6170,6 +6326,8 @@ def main():
                             next_round, of1_sessions, driver_standings)
         next_fp_df    = of1_collect_next_race_fp(next_round, of1_sessions)
         sprint_quali_df = of1_collect_next_sprint_qualifying(next_round, of1_sessions)
+        print("\n🔴  Calculando inventario de neumáticos (sesiones completadas)...")
+        tyre_inv_df   = compute_tyre_inventory(of1_sessions, next_round)
         if not next_quali_df.empty:
             print(f"   ✅  Clasificación del próximo GP cargada ({len(next_quali_df)} pilotos)")
         else:
@@ -6194,6 +6352,7 @@ def main():
                                                 "low_speed_delta", "corner_balance",
                                                 "race_sim_delta", "race_sim_deg"])
         sprint_quali_df = pd.DataFrame(columns=["code", "sq_pos_next", "sq_time_next"])
+        tyre_inv_df     = pd.DataFrame()
 
     # 7. Clima y penalizaciones para próxima carrera
     weather  = fetch_weather_for_race(next_round, schedule)
@@ -6306,6 +6465,26 @@ def main():
                 print(f"      💾  Embeddings guardados → {PROFILES_FILE}")
             except Exception as _e:
                 print(f"      ⚠  No se pudieron guardar embeddings: {_e}")
+
+    # 8d. Tyre set inventory — merge score into feat + print compact table
+    print("\n🔴  Inventario de neumáticos (sesiones de práctica completadas):")
+    if not tyre_inv_df.empty:
+        feat = feat.merge(tyre_inv_df[["code", "tyre_inventory_score"]],
+                          on="code", how="left")
+        feat["tyre_inventory_score"] = feat["tyre_inventory_score"].fillna(0.0)
+        _avg_soft = tyre_inv_df["soft_new_remaining"].mean()
+        for _, _tr in tyre_inv_df.sort_values("tyre_inventory_score",
+                                               ascending=False).iterrows():
+            _flag = "  ⚠ BAJO" if _tr["soft_new_remaining"] < _avg_soft - 1.0 else ""
+            print(f"   {str(_tr['code']):<5}: "
+                  f"{int(_tr['soft_new_remaining'])} soft new, "
+                  f"{int(_tr['medium_new_remaining'])} med new, "
+                  f"{int(_tr['hard_new_remaining'])} hard new"
+                  f"{_flag}")
+        print(f"   (field avg: {_avg_soft:.1f} soft new remaining)")
+    else:
+        feat["tyre_inventory_score"] = 0.0
+        print("   ⏳  Sin datos de práctica completada — inventario neutral (0.0)")
 
     # 9. Cargar priors bayesianos de ejecuciones anteriores
     print("\n🧠  Cargando priors bayesianos...")
@@ -6545,15 +6724,22 @@ def main():
     _compound_softness = _compound_data["softness"]
 
     # 13. Simulación Monte Carlo
+    # Build per-driver tyre inventory score dict for MC undercut weighting
+    _tyre_inv_scores: "dict | None" = None
+    if not tyre_inv_df.empty:
+        _tyre_inv_scores = dict(zip(tyre_inv_df["code"],
+                                    tyre_inv_df["tyre_inventory_score"]))
+
     mc_df = monte_carlo_simulation(
-        feat              = scored,
-        base_scores       = scored["raw_score"],
-        reliability       = reliability,
-        weather           = weather,
-        n_sims            = 10_000,
-        circuit_name      = next_circuit,
-        gnn_overtake      = gnn_overtake_matrix,
-        compound_softness = _compound_softness,
+        feat                  = scored,
+        base_scores           = scored["raw_score"],
+        reliability           = reliability,
+        weather               = weather,
+        n_sims                = 10_000,
+        circuit_name          = next_circuit,
+        gnn_overtake          = gnn_overtake_matrix,
+        compound_softness     = _compound_softness,
+        tyre_inventory_scores = _tyre_inv_scores,
     )
 
     # Aleatoric uncertainty — inherent randomness from MC spread relative to win%
@@ -6712,6 +6898,7 @@ def main():
         "anomaly_score", "sandbagging_flag", "struggling_flag", "race_threat_flag",
         "sq_pos_next", "sprint_quali_delta",
         "lstm_score", "gnn_score",
+        "tyre_inventory_score",
     ] if c in scored.columns]
     scored[save_cols].to_csv(OUTPUT_CSV, index=False)
     print(f"💾  Resultados guardados en: {OUTPUT_CSV}\n")
