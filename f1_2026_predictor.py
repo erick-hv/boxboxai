@@ -49,7 +49,6 @@ JOLPICA_BASE    = "https://api.jolpi.ca/ergast/f1"
 OPENF1_BASE     = "https://api.openf1.org/v1"
 XGB_MIN_RACES   = 6          # Carreras mínimas para activar XGBoost
 LSTM_MIN_RACES       = 12         # Carreras mínimas para activar LSTM (more sequences needed)
-TELEMETRY_MIN_RACES  = 12         # Same threshold — corner telemetry needs a full data set
 TYRE_INVENTORY_CACHE     = Path("./f1_2026_tyre_inventory.json")
 CORNER_TELEMETRY_CACHE   = Path("./f1_2026_corner_telemetry.json")
 
@@ -2945,7 +2944,7 @@ def fetch_corner_telemetry(
     - FastF1 telemetry is ~4 Hz → one sample every ~15–20 m at racing speed.
     - Throttle/Brake channels vary by session: float 0–100 or bool 0/1.
     - Only 8 circuits have corner maps; all others return empty → neutral fallback.
-    - Dormant below TELEMETRY_MIN_RACES (12) — not enough history to calibrate.
+    - Falls back gracefully if qualifying session not yet run or data unavailable.
 
     Metrics per corner:
       min_speed    : minimum speed (km/h) in the corner distance window
@@ -2962,11 +2961,6 @@ def fetch_corner_telemetry(
     FastF1 telemetry loads take several seconds per driver — cache is essential.
     """
     import json as _json
-
-    if len(completed) < TELEMETRY_MIN_RACES:
-        print(f"   🏎️  Corner telemetry dormant "
-              f"({len(completed)}/{TELEMETRY_MIN_RACES} races)")
-        return pd.DataFrame()
 
     corners = CIRCUIT_CORNERS.get(next_circuit)
     if corners is None:
@@ -3004,7 +2998,8 @@ def fetch_corner_telemetry(
         sess = fastf1.get_session(SEASON, next_round, "Q")
         sess.load(laps=True, telemetry=True, weather=False, messages=False)
     except Exception as _e:
-        print(f"   ⚠  FastF1 telemetry load failed: {_e}")
+        print(f"   🏎️  Corner telemetry: qualifying session not yet available "
+              f"for R{next_round} ({_e})")
         cache[cache_key] = []
         _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
         return pd.DataFrame()
@@ -3014,7 +3009,8 @@ def fetch_corner_telemetry(
         if laps is None or len(laps) == 0:
             raise ValueError("no laps in session")
     except Exception as _e:
-        print(f"   ⚠  FastF1 Q session has no lap data: {_e}")
+        print(f"   🏎️  Corner telemetry: qualifying session not yet available "
+              f"for R{next_round} ({_e})")
         cache[cache_key] = []
         _write_json_atomic(CORNER_TELEMETRY_CACHE, cache)
         return pd.DataFrame()
