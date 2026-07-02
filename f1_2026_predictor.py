@@ -4149,7 +4149,7 @@ def build_features(driver_standings, constructor_pts, race_df, quali_df,
 
     # ── Perfiles comportamentales históricos (2023-2025) ──────────────
     _b_cols = ["overtaking_ability", "quali_consistency", "wet_weather_delta",
-               "historical_dnf_rate", "tyre_management_index"]
+               "historical_dnf_rate", "tyre_management_index", "n_wet"]
     if behavioral_df is not None and not behavioral_df.empty:
         _avail = [c for c in _b_cols if c in behavioral_df.columns]
         if _avail:
@@ -5533,23 +5533,31 @@ def monte_carlo_simulation(
 
     # ── Per-driver wet-weather pace adjustment ───────────────────────────────
     # wet_weather_delta: negative = better in wet (driver finishes above season avg).
+    # Shrunk toward 0 by sample size (n_wet) — empirical-Bayes style, so a 2-3
+    # race sample (noisy, team-confound-prone) doesn't carry the same weight as
+    # a 6-race sample. k=3 → 50% trust at 3 races, ~67% at 6 (current max n_wet).
     # Manual override: VER computed delta (-0.698) is understated — 6-race sample
-    # includes 2023 Brazil DNF drag; overridden to -2.2 (ALO/RUS/NOR peer tier).
+    # includes 2023 Brazil DNF drag; overridden to -2.2 (ALO/RUS/NOR peer tier),
+    # applied AFTER shrinkage so it isn't itself shrunk.
     # Remove override when VER's wet-race sample exceeds ~15 races.
-    _WET_PACE_SCALE = 0.002   # 1 position-delta → 0.2% pace per rain unit
-    _WET_CLIP       = 4.0     # cap outliers beyond ±4 positions (small-sample teams)
-    _WET_OVERRIDES  = {"VER": -2.2}
+    _WET_PACE_SCALE   = 0.002   # 1 position-delta → 0.2% pace per rain unit
+    _WET_SHRINK_K     = 3       # races of evidence for ~50% trust in raw delta
+    _WET_SHRUNK_CLIP  = 3.5     # safety backstop on shrunk value vs a future bad profile
+    _WET_OVERRIDES    = {"VER": -2.2}
 
     _wet_deltas: dict[str, float] = {}
-    if "wet_weather_delta" in feat.columns:
+    if "wet_weather_delta" in feat.columns and "n_wet" in feat.columns:
         for _, _row in feat.iterrows():
             _wwd = _row.get("wet_weather_delta")
             if _wwd is not None and not (isinstance(_wwd, float) and np.isnan(_wwd)):
-                _c = _row["code"]
-                _wet_deltas[_c] = float(_WET_OVERRIDES.get(_c, _wwd))
+                _c      = _row["code"]
+                _nw     = float(_row.get("n_wet", 0))
+                _shrunk = float(_wwd) * (_nw / (_nw + _WET_SHRINK_K))
+                _shrunk = float(np.clip(_shrunk, -_WET_SHRUNK_CLIP, _WET_SHRUNK_CLIP))
+                _wet_deltas[_c] = float(_WET_OVERRIDES.get(_c, _shrunk))
 
     wet_pace_adj = np.array([
-        -float(np.clip(_wet_deltas.get(codes[i], 0.0), -_WET_CLIP, _WET_CLIP)) * _WET_PACE_SCALE
+        -_wet_deltas.get(codes[i], 0.0) * _WET_PACE_SCALE
         for i in range(n)
     ])
     if rain_prob > 0.05 and wet_pace_adj.any():
@@ -6731,7 +6739,7 @@ def main():
     )
     _prof_metric_cols = ["overtaking_ability", "quali_consistency",
                          "wet_weather_delta", "historical_dnf_rate",
-                         "tyre_management_index"]
+                         "tyre_management_index", "n_wet"]
     behavioral_df = pd.DataFrame([
         {"code": code, **{k: v for k, v in metrics.items()
                           if k in _prof_metric_cols}}
