@@ -38,6 +38,7 @@ import sys
 SEASON          = 2026
 CACHE_DIR       = "./f1_cache"
 OUTPUT_CSV               = "f1_2026_predicciones.csv"
+RUNS_DIR                 = Path("f1_runs")
 XGB_MODEL_FILE           = "./f1_2026_xgb_race_model.json"
 LGBM_MODEL_FILE          = "./f1_2026_lgbm_race_model.txt"
 _INCREMENTAL_TREES       = 20
@@ -5436,12 +5437,15 @@ def monte_carlo_simulation(
                   generic 18% lap-1 incident with per-pair sampling for adjacent
                   grid pairs in the top-8.  Falls back to generic logic when None.
 
-    Retorna un DataFrame con:
+    Retorna una tupla (mc_df, h2h_df):
+      mc_df con:
       - win_mc_pct    : % de simulaciones en que el piloto ganó
       - podium_mc_pct : % de veces en top-3
       - finish_mc_pct : % de veces que terminó la carrera
       - avg_mc_pos    : posición promedio en las simulaciones
       - p10_pos / p90_pos : percentiles 10 y 90 de posición (intervalo de confianza)
+      h2h_df (n_drivers x n_drivers, index/columns = code):
+      - h2h_df.loc[A, B] = % de sims en que A terminó por delante de B (diagonal = NaN)
     """
     # Circuit-specific SC/VSC probability → Poisson lambda
     # lambda = -ln(1 - p)  so that P(≥1 SC) = 1 - e^(-lambda) = p
@@ -5726,8 +5730,23 @@ def monte_carlo_simulation(
                          ).reset_index(drop=True)
     if "wet_mc_adj" in mc_df.columns and mc_df["wet_mc_adj"].isna().all():
         mc_df = mc_df.drop(columns=["wet_mc_adj"])
+
+    # Head-to-head matrix — vectorized broadcast over pos_all (n, n_sims),
+    # no Python loop over the 484 pairs. h2h[i,j] = P(driver i ahead of j).
+    h2h = (pos_all[:, None, :] < pos_all[None, :, :]).mean(axis=2)
+    np.fill_diagonal(h2h, np.nan)
+    h2h_df = pd.DataFrame((h2h * 100).round(2), index=codes, columns=codes)
+
+    _pairs_total    = n_drivers * (n_drivers - 1) // 2
+    _lopsided_pairs = [
+        (codes[i], codes[j], h2h[i, j])
+        for i in range(n_drivers) for j in range(i + 1, n_drivers)
+        if h2h[i, j] > 0.95 or h2h[i, j] < 0.05
+    ]
+    print(f"   🥊  Head-to-head: {len(_lopsided_pairs)}/{_pairs_total} pares lopsided (>95% / <5%)")
+
     print(f"   ✅  Simulaciones completadas.")
-    return mc_df
+    return mc_df, h2h_df
 
 # ─────────────────────────────────────────────────────────────
 #  21. BRIER SCORE — calibración de predicción post-carrera
@@ -7103,7 +7122,7 @@ def main():
         _tyre_inv_scores = dict(zip(tyre_inv_df["code"],
                                     tyre_inv_df["tyre_inventory_score"]))
 
-    mc_df = monte_carlo_simulation(
+    mc_df, h2h_df = monte_carlo_simulation(
         feat                  = scored,
         base_scores           = scored["raw_score"],
         reliability           = reliability,
@@ -7114,6 +7133,13 @@ def main():
         compound_softness     = _compound_softness,
         tyre_inventory_scores = _tyre_inv_scores,
     )
+
+    # 22x22 matrix — too large for the main predictions CSV, separate file
+    if h2h_df is not None and not h2h_df.empty:
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        h2h_path = RUNS_DIR / f"R{next_round}_H2H_MATRIX.csv"
+        h2h_df.to_csv(h2h_path, index_label="code")
+        print(f"💾  Head-to-head matrix guardada en: {h2h_path}")
 
     # Aleatoric uncertainty — inherent randomness from MC spread relative to win%
     if mc_df is not None and not mc_df.empty:
