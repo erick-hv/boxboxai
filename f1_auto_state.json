@@ -1,8 +1,12 @@
 {
   "R9_FP1": {
-    "first_seen": "2026-07-03T19:49:52.962412+00:00"
+    "first_seen": "2026-07-03T19:49:52.962412+00:00",
+    "triggered_at": "2026-07-03T21:06:46.293360+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R9_FP1_20260703_210218.log"
   },
   "R9_SQ": {
-    "first_seen": "2026-07-03T19:49:53.341894+00:00"
+    "first_seen": "2026-07-03T19:49:53.341894+00:00",
+    "triggered_at": "2026-07-03T21:11:32.502491+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R9_SQ_20260703_210646.log"
   }
 }
