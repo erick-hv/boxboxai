@@ -251,9 +251,15 @@ def session_key_for(of1_sessions: list[dict], round_num: int, code: str) -> int 
 
 
 def has_laps_data(session_key: int) -> bool:
-    """Probe OpenF1 /laps — cheapest confirmation that a session has data."""
-    data = _get(f"{OPENF1_BASE}/laps",
-                params={"session_key": session_key, "limit": 1})
+    """
+    Probe OpenF1 /laps — cheapest confirmation that a session has data.
+    No `limit` param: OpenF1 currently 404s any /laps request that includes
+    one (confirmed on FP1/SQ/Sprint/Q session_keys and a known-complete
+    Race session, 2026-07-03), even when the unfiltered query returns real
+    data. Unfiltered requests return 200 correctly, so we fetch the full
+    response and only check for non-emptiness.
+    """
+    data = _get(f"{OPENF1_BASE}/laps", params={"session_key": session_key})
     return bool(data)
 
 
