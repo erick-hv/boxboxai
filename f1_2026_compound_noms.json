@@ -7,5 +7,14 @@
     "conflict": false,
     "source": "historical_default",
     "fetched_at": "2026-06-30T17:46:51.002794+00:00"
+  },
+  "10": {
+    "hard": 3,
+    "medium": 4,
+    "soft": 5,
+    "confirmed": true,
+    "conflict": false,
+    "source": "https://www.f1network.net/main/s107/st208612.htm",
+    "fetched_at": "2026-07-17T16:52:13.688951+00:00"
   }
 }
