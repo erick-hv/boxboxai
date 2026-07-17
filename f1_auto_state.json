@@ -22,5 +22,8 @@
   "R9_pre_race": {
     "triggered_at": "2026-07-05T12:19:03.041666+00:00",
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R9_pre_race_20260705_121432.log"
+  },
+  "R10_FP1": {
+    "first_seen": "2026-07-17T14:02:34.934349+00:00"
   }
 }
