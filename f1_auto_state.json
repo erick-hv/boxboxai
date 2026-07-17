@@ -29,6 +29,8 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_FP1_20260717_164640.log"
   },
   "R10_FP2": {
-    "first_seen": "2026-07-17T16:52:17.093377+00:00"
+    "first_seen": "2026-07-17T16:52:17.093377+00:00",
+    "triggered_at": "2026-07-17T18:09:12.594147+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_FP2_20260717_180339.log"
   }
 }
