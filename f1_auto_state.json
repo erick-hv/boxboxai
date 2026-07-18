@@ -34,9 +34,13 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_FP2_20260717_180339.log"
   },
   "R10_FP3": {
-    "first_seen": "2026-07-18T15:38:09.086484+00:00"
+    "first_seen": "2026-07-18T15:38:09.086484+00:00",
+    "triggered_at": "2026-07-18T16:42:23.683840+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_FP3_20260718_163701.log"
   },
   "R10_Q": {
-    "first_seen": "2026-07-18T15:38:09.878679+00:00"
+    "first_seen": "2026-07-18T15:38:09.878679+00:00",
+    "triggered_at": "2026-07-18T16:47:32.960795+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_Q_20260718_164224.log"
   }
 }
