@@ -1,0 +1,48 @@
+════════════════════════════════════════════════════════════════
+  RACE BRIEFING  —  R10  ·  Belgian Grand Prix
+  Circuit de Spa-Francorchamps  |  2026-07-19
+════════════════════════════════════════════════════════════════
+
+WEATHER
+  Dry expected — 0% rain probability (nowcast (live))
+  Pista ~25°C  ·  Humedad 65%  [nowcast]
+
+SAFETY CAR / VSC
+  50% probability  —  moderate — safety car is a coin flip
+
+TOP 10 WIN PROBABILITIES  (10,000 Monte Carlo simulations)
+
+   1. George Russell (Mercedes)
+      Win 19.7%  ·  Podium 41.5%  ·  Exp finish P5  ·  Range P1–P11
+   2. Lewis Hamilton (Ferrari)
+      Win 13.2%  ·  Podium 34.5%  ·  Exp finish P6  ·  Range P1–P12
+   3. Andrea Kimi Antonelli (Mercedes)
+      Win 10.1%  ·  Podium 27.0%  ·  Exp finish P7  ·  Range P1–P13
+   4. Lando Norris (McLaren)
+      Win 7.0%  ·  Podium 20.4%  ·  Exp finish P7  ·  Range P2–P13
+   5. Charles Leclerc (Ferrari)
+      Win 6.8%  ·  Podium 20.5%  ·  Exp finish P7  ·  Range P2–P13
+   6. Oscar Piastri (McLaren)
+      Win 5.8%  ·  Podium 17.1%  ·  Exp finish P7  ·  Range P2–P14
+   7. Max Verstappen (Red Bull)
+      Win 4.5%  ·  Podium 15.3%  ·  Exp finish P8  ·  Range P2–P14
+   8. Pierre Gasly (Alpine F1 Team)
+      Win 3.7%  ·  Podium 12.3%  ·  Exp finish P8  ·  Range P2–P14
+   9. Liam Lawson (Racing Bulls)
+      Win 3.7%  ·  Podium 13.1%  ·  Exp finish P8  ·  Range P2–P14
+  10. Isack Hadjar (Red Bull)
+      Win 3.5%  ·  Podium 12.2%  ·  Exp finish P8  ·  Range P2–P14
+
+PACE FLAGS  (top 10 drivers)
+  None detected for top 10
+
+VERDICT
+  George Russell (Mercedes) is the marginal favourite.
+  Win: 19.7%  ·  Podium: 41.5%  ·  Expected finish: P5
+
+BIGGEST RISK
+  Andrea Kimi Antonelli's P10–P90 interval spans P1–P13 (12 places) — the model is uncertain enough that a podium or a points miss are both live.
+
+════════════════════════════════════════════════════════════════
+  Generated: 2026-07-19 12:00 UTC
+════════════════════════════════════════════════════════════════

@@ -42,5 +42,9 @@
     "first_seen": "2026-07-18T15:38:09.878679+00:00",
     "triggered_at": "2026-07-18T16:47:32.960795+00:00",
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_Q_20260718_164224.log"
+  },
+  "R10_pre_race": {
+    "triggered_at": "2026-07-19T12:00:21.870172+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_pre_race_20260719_115514.log"
   }
 }
