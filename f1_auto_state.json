@@ -48,6 +48,11 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R10_pre_race_20260719_115514.log"
   },
   "R11_FP1": {
-    "first_seen": "2026-07-24T14:12:14.778545+00:00"
+    "first_seen": "2026-07-24T14:12:14.778545+00:00",
+    "triggered_at": "2026-07-24T17:19:26.989678+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R11_FP1_20260724_171343.log"
+  },
+  "R11_FP2": {
+    "first_seen": "2026-07-24T17:19:27.481099+00:00"
   }
 }
