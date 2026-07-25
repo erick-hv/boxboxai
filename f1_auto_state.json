@@ -56,5 +56,8 @@
     "first_seen": "2026-07-24T17:19:27.481099+00:00",
     "triggered_at": "2026-07-24T18:53:49.721984+00:00",
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R11_FP2_20260724_184803.log"
+  },
+  "R11_FP3": {
+    "first_seen": "2026-07-25T12:46:10.649964+00:00"
   }
 }
