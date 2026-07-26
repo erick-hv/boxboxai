@@ -1,0 +1,63 @@
+════════════════════════════════════════════════════════════════
+  RACE BRIEFING  —  R11  ·  Hungarian Grand Prix
+  Hungaroring  |  2026-07-26
+════════════════════════════════════════════════════════════════
+
+WEATHER
+  Dry expected — 0% rain probability (nowcast (live))
+  Pista ~33°C  ·  Humedad 47%  [nowcast]
+
+SAFETY CAR / VSC
+  60% probability  —  high — plan for at least one safety car
+
+TOP 10 WIN PROBABILITIES  (10,000 Monte Carlo simulations)
+
+   1. Lando Norris (McLaren)
+      Win 18.7%  ·  Podium 38.2%  ·  Exp finish P5  ·  Range P1–P11
+   2. Lewis Hamilton (Ferrari)
+      Win 10.8%  ·  Podium 30.1%  ·  Exp finish P7  ·  Range P1–P13
+   3. George Russell (Mercedes)
+      Win 8.0%  ·  Podium 22.3%  ·  Exp finish P7  ·  Range P2–P13
+   4. Andrea Kimi Antonelli (Mercedes)
+      Win 7.6%  ·  Podium 22.1%  ·  Exp finish P7  ·  Range P2–P13
+   5. Charles Leclerc (Ferrari)
+      Win 6.0%  ·  Podium 19.2%  ·  Exp finish P8  ·  Range P2–P14
+   6. Oscar Piastri (McLaren)
+      Win 5.4%  ·  Podium 17.3%  ·  Exp finish P8  ·  Range P2–P14
+   7. Pierre Gasly (Alpine F1 Team)
+      Win 4.3%  ·  Podium 13.8%  ·  Exp finish P8  ·  Range P2–P14
+   8. Liam Lawson (Racing Bulls)
+      Win 4.1%  ·  Podium 13.1%  ·  Exp finish P8  ·  Range P2–P14
+   9. Isack Hadjar (Red Bull)
+      Win 4.0%  ·  Podium 13.5%  ·  Exp finish P8  ·  Range P2–P14
+  10. Esteban Ocon (Haas F1 Team)
+      Win 3.8%  ·  Podium 12.7%  ·  Exp finish P8  ·  Range P2–P14
+
+PACE FLAGS  (top 10 drivers)
+  George Russell: race threat (FP2 race pace much better than grid slot)
+  Pierre Gasly: race threat (FP2 race pace much better than grid slot)
+  Isack Hadjar: race threat (FP2 race pace much better than grid slot)
+  Esteban Ocon: race threat (FP2 race pace much better than grid slot)
+  🚀  RUS — RACE THREAT: FP2 race pace top-3, starts P7 (will charge)
+  🚀  HAD — RACE THREAT: FP2 race pace top-5, starts P14 (will charge)
+  🚀  GAS — RACE THREAT: FP2 race pace top-10, starts P12 (will charge)
+  ⚠  COL — SANDBAGGING: FP3 suggested P19, qualified P13 (hiding pace)
+  🚀  BEA — RACE THREAT: FP2 race pace top-10, starts P17 (will charge)
+  🚀  SAI — RACE THREAT: FP2 race pace P16, starts P18 (will charge)
+  🚀  ALB — RACE THREAT: FP2 race pace P17, starts P19 (will charge)
+  🚀  OCO — RACE THREAT: FP2 race pace top-10, starts P15 (will charge)
+  🚀  ALO — RACE THREAT: FP2 race pace P15, starts P16 (will charge)
+  🚀  BOT — RACE THREAT: FP2 race pace P20, starts P21 (will charge)
+  ⚠  PER — STRUGGLING: FP3 suggested P18, qualified P22 (setup issue)
+  🚀  PER — RACE THREAT: FP2 race pace top-10, starts P22 (will charge)
+
+VERDICT
+  Lando Norris (McLaren) is the marginal favourite.
+  Win: 18.7%  ·  Podium: 38.2%  ·  Expected finish: P5
+
+BIGGEST RISK
+  Lewis Hamilton's P10–P90 interval spans P1–P13 (12 places) — the model is uncertain enough that a podium or a points miss are both live.
+
+════════════════════════════════════════════════════════════════
+  Generated: 2026-07-26 11:54 UTC
+════════════════════════════════════════════════════════════════
