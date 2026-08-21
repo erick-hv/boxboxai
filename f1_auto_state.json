@@ -96,6 +96,8 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R12_FP1_20260821_133222.log"
   },
   "R12_SQ": {
-    "first_seen": "2026-08-21T15:48:30.298158+00:00"
+    "first_seen": "2026-08-21T15:48:30.298158+00:00",
+    "triggered_at": "2026-08-21T16:35:37.285898+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R12_SQ_20260821_162941.log"
   }
 }
