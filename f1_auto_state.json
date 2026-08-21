@@ -91,6 +91,8 @@
     "log": "skipped"
   },
   "R12_FP1": {
-    "first_seen": "2026-08-21T12:39:43.778768+00:00"
+    "first_seen": "2026-08-21T12:39:43.778768+00:00",
+    "triggered_at": "2026-08-21T13:38:54.774491+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R12_FP1_20260821_133222.log"
   }
 }
