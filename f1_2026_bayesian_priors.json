@@ -1,10 +1,10 @@
 {
   "_model_meta": {
-    "last_trained_round": 10,
+    "last_trained_round": 11,
     "mode": "full retrain"
   },
   "feature_importance_history": [
     {
-      "round": 10,
+      "round": 11,
       "importances": {
-        "dnf_rate": 
+        "momentum_pos": 
