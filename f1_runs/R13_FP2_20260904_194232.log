@@ -1,0 +1,438 @@
+# F1 Auto Runner — R13 / FP2
+# Started : 2026-09-04T19:42:32.023366+00:00
+############################################################
+
+>>> f1_2026_predictor.py
+
+📅  Descargando calendario 2026...
+   ✅  23 carreras encontradas en el calendario.
+
+📅  Calendario 2026: 23 carreras
+🔍  Verificando rondas completadas...
+   ✅  Ronda 1: Australian Grand Prix — completa
+   ✅  Ronda 2: Chinese Grand Prix — completa
+   ✅  Ronda 3: Japanese Grand Prix — completa
+   ✅  Ronda 4: Miami Grand Prix — completa
+   ✅  Ronda 5: Canadian Grand Prix — completa
+   ✅  Ronda 6: Monaco Grand Prix — completa
+   ✅  Ronda 7: Barcelona Grand Prix — completa
+   ✅  Ronda 8: Austrian Grand Prix — completa
+   ✅  Ronda 9: British Grand Prix — completa
+   ✅  Ronda 10: Belgian Grand Prix — completa
+   ✅  Ronda 11: Hungarian Grand Prix — completa
+   ✅  Ronda 12: Dutch Grand Prix — completa
+   ⏳  Ronda 13 — aún no disputada
+   ⏳  Ronda 14 — aún no disputada
+   ⏳  Ronda 15 — aún no disputada
+   ⏳  Ronda 16 — aún no disputada
+   ⏳  Ronda 17 — aún no disputada
+   ⏳  Ronda 18 — aún no disputada
+   ⏳  Ronda 19 — aún no disputada
+   ⏳  Ronda 20 — aún no disputada
+   ⏳  Ronda 21 — aún no disputada
+   ⏳  Ronda 22 — aún no disputada
+   ⏳  Ronda 23 — aún no disputada
+   Completadas : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+   Próxima     : Ronda 13
+🏆  Descargando standings de pilotos...
+🏗   Descargando standings de constructores...
+🏁  Descargando resultados de 12 carrera(s)...
+⏱   Descargando resultados de clasificación...
+🏃  Descargando resultados de sprint...
+
+🔍  Descargando session keys de OpenF1...
+   ✅  131 sesiones encontradas en OpenF1
+🔍  Verificando disponibilidad de datos de telemetría...
+   ✅  OpenF1 tiene datos de vueltas — usando OpenF1 como fuente primaria
+🔴  Degradación de neumáticos (OpenF1)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+🚀  Rendimiento vuelta 1 (OpenF1)...
+📈  Consistencia de vueltas (OpenF1)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+🏋   Ritmo de prácticas libres normalizado (OpenF1)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+🟡  Rendimiento bajo Safety Car (OpenF1)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+🔧  Pit stops (OpenF1)...
+📋  Calculando penalizaciones acumuladas...
+📍  Descargando historial de Autodromo Nazionale di Monza (monza) — últimos 3 años...
+   ✅  60 resultados en 3 temporadas — 20 pilotos con ≥2 visitas
+🔢  Tiempos por sector (OpenF1)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+🗂   Calculando perfil por tipo de circuito...
+🔑  Gap qualifying vs compañero (OpenF1)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   📊  Fuente de datos de vuelta: OpenF1
+   🏁  Circuito: Autodromo Nazionale di Monza
+   🗂   Tipo: high_speed  |  Dificultad adelantar: 0.30
+   ⚖   Peso qualifying dinámico: 26.8%
+
+🎯  Descargando datos pre-carrera del próximo GP (Ronda 13)...
+🏆  Descargando clasificación del próximo GP (sk=11357)...
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ⚠  Sin datos de clasificación para el próximo GP
+   ⏳  Rate limit — esperando 1s...
+   ⏳  Rate limit — esperando 2s...
+   ⏳  Rate limit — esperando 4s...
+   ✅  Prácticas del próximo GP disponibles: FP2
+   🔷  Speed trap classes: i1=high (286 km/h), i2=high (302 km/h)
+
+🔴  Calculando inventario de neumáticos (sesiones completadas)...
+
+🏎️  Corner telemetry analysis (FastF1)...
+   ℹ️  Corner telemetry R13: no data (cached)
+   ⏳  Clasificación del próximo GP aún no disponible
+   ✅  Prácticas del próximo GP cargadas (22 pilotos)
+🌤   Consultando datos de clima (Open-Meteo)...
+   🕐  Inicio de carrera: 13:00 UTC  /  15:00 local (Europe/Rome)
+   📡  Ventana de pronóstico: 14:00–17:00 local (3h: 1h antes + 2h después de la salida)
+   📊  Pronóstico horario (nowcast omitido: carrera en 41h > 6h)
+   ✅  Clima obtenido para Autodromo Nazionale di Monza (Monza, Italy)
+🚦  Buscando penalizaciones de parrilla...
+
+🧬  Cargando perfiles comportamentales...
+   📂  Perfiles cargados desde caché (0.0d antigüedad, 29 pilotos)
+
+   📊  TOP 5 POR MÉTRICA COMPORTAMENTAL 2023-2025:
+   Adelantadores netos desde P6-P15:
+     1. VER    +5.111
+     2. PER    +4.579
+     3. HAM    +2.621
+     4. RUS    +1.833
+     5. LEC    +1.824
+   Consistencia en clasificación (σ vs compañero):
+     1. SAR    +2.716
+     2. BOT    +3.475
+     3. ZHO    +3.475
+     4. DEV    +3.606
+     5. HAD    +3.991
+   Especialistas en lluvia (neg = mejor en mojado):
+     1. SAR    -5.513
+     2. ALB    -5.174
+     3. BOT    -4.919
+     4. OCO    -4.498
+     5. ZHO    -4.182
+   Fiabilidad histórica 2023-2025 (menor DNF%):
+     1. VER    +0.033
+     2. NOR    +0.100
+     3. HAM    +0.117
+     4. RUS    +0.133
+     5. PIA    +0.150
+   Gestión de neumáticos (ganancia últimas 20% vueltas):
+     1. COL    +0.375
+     2. DEV    +0.222
+     3. PER    +0.154
+     4. STR    +0.143
+     5. VER    +0.140
+
+
+🎙️  Analizando sentimiento de rueda de prensa...
+   ℹ️   Sin transcripción para R13 — sentimiento neutral
+
+🔨  Construyendo matriz de features...
+   🔥  Rachas de podio activas:
+      ANT    3 carreras top-3 consecutivas (score=0.45)
+      NOR    2 carreras top-3 consecutivas (score=0.30)
+      RUS    1 carreras top-3 consecutivas (score=0.15)
+   💥  Post-DNF bounce (última carrera): ALB, ALO, BEA, BOR, BOT, COL, GAS, HUL, LIN, OCO, PER, SAI, STR, TSU, VER
+   🏎  Affinity top 5 (menor pos. media = más afinidad al circuito):
+      VER    2.67
+      LEC    3.00
+      NOR    4.33
+      PER    5.00
+      PIA    5.67
+   ⚠  Sin datos de sector del próximo GP — sector_balance neutral
+   🔴  Top 5 ritmo SOFT vs campo (negativo = más rápido):
+      HAM    -2.479%
+      COL    -0.896%
+      SAI    -0.745%
+      HUL    -0.724%
+      OCO    -0.046%
+   🔴  Top 5 ritmo MEDIUM vs campo (negativo = más rápido):
+      BOR    -9.158%
+      BEA    -5.536%
+      ANT    -1.025%
+      RUS    -1.025%
+      LEC    -1.025%
+   🏎  Top 5 gestión de neumáticos FP2 (s/vuelta, menor = mejor):
+      ALB    +0.0759 s/lap
+      ANT    +0.0912 s/lap
+      RUS    +0.2126 s/lap
+      HUL    +0.2480 s/lap
+      COL    +0.6758 s/lap
+   🔷  Top 5 perfil de curvas (high_speed, negativo = más rápido):
+      ANT    +1.210%
+      LIN    +6.185%
+      ALB    +6.748%
+      LEC    +7.271%
+      RUS    +7.319%
+   🧬  Perfiles comportamentales: 22/23 pilotos con datos 2023-2025
+   🔍  IsolationForest: 2 anomalías (0 sandbagging, 0 struggling, 0 race threats)
+      ALB    +0.960  ███████████████████
+      PER    +0.955  ███████████████████
+      VER    +0.941  ██████████████████
+      GAS    +0.914  ██████████████████
+      RUS    +0.909  ██████████████████
+
+🔴  Inventario de neumáticos (sesiones de práctica completadas):
+   ⏳  Sin datos de práctica completada — inventario neutral (0.0)
+
+🧠  Cargando priors bayesianos...
+   📂  Primera ejecución — sin priors previos
+
+💾  Modo modelo: full retrain (guardado R-1 → actual R12)
+
+🤖  Activando XGBoost + LightGBM + GP — Quali+Race (12 carreras ≥ 6)...
+   🏎  XGB quali model → pole predicted: ANT (P2.5)
+   ✅  XGBoost Race MAE (LOO): 3.75 posiciones
+   ✅  XGBoost: entrenamiento completo (264 muestras)
+   📊  Top features XGBoost (race model):
+      momentum_pos           0.312  ███████████████████████████████
+      dnf_rate               0.180  █████████████████
+      avg_grid               0.147  ██████████████
+      recent_form            0.056  █████
+      avg_finish             0.051  █████
+   ⚠  lightgbm no instalado — omitiendo LGBM
+   🌊  GP top-5 predicciones (σ = incertidumbre por datos escasos):
+      ANT   P 4.2  σ=4.97  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
+      HAM   P 4.6  σ=4.92  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
+      NOR   P 6.7  σ=4.93  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
+      LEC   P 6.7  σ=4.91  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
+      RUS   P 6.9  σ=4.92  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪
+   🔧  Kernel optimizado: RBF(length_scale=10) + WhiteKernel(noise_level=0.576)
+   ✅  GP: 264 muestras, 21 features
+   🔄  Aplicando feedback XGBoost a pesos manuales...
+
+   📊  Importancias blend (XGB+LGBM):
+      momentum_pos               0.312  
+      dnf_rate                   0.180  
+      avg_grid                   0.147  
+      recent_form                0.056  
+      avg_finish                 0.052  
+      fl_rate                    0.033  
+      sprint_pts                 0.026  
+      predicted_quali_pos        0.024  
+      quali_consistency          0.022  
+      tyre_deg_slope             0.022  
+   🏆  Top feature esta carrera: momentum_pos (0.312)
+   ⚠  No se pudieron guardar priors: Object of type float32 is not JSON serializable
+
+🧠  LSTM momentum model...
+   ⚠  torch not installed — LSTM skipped  (pip install torch)
+
+🕸️  GNN overtaking model...
+   ⚠  torch not installed — GNN skipped  (pip install torch)
+
+🔩  Calculando fiabilidad y riesgo por componente...
+
+🏎️  Pirelli compound selection...
+   🏎️  Compounds (cached): C3/C4/C5 → softness 1.00  [historical default]
+🎲  Corriendo 10,000 simulaciones Monte Carlo...
+   🚦  SC/VSC prob: 40%  (λ=0.51, ~0.5 SC esperados por carrera)
+   🔁  Undercut prob: 50%  (ventana óptima laps 18–23, compound scale ×1.10)
+   🥊  Head-to-head: 0/253 pares lopsided (>95% / <5%)
+   ✅  Simulaciones completadas.
+💾  Head-to-head matrix guardada en: f1_runs/R13_H2H_MATRIX.csv
+
+🧠  Actualizando priors bayesianos con carrera 12...
+   ⚠  No se pudieron guardar priors: Object of type float32 is not JSON serializable
+   💾  Priors guardados en: ./f1_2026_bayesian_priors.json
+   📊  Mayores ajustes acumulados:
+      VER: ×0.896 (⬇ sobreestimado)
+      ALO: ×1.059 (⬆ subestimado)
+      BEA: ×0.967 (⬇ sobreestimado)
+   ⚠  No se pudieron guardar priors: Object of type float32 is not JSON serializable
+
+📐  Brier Score R8 (Austrian Grand Prix) [bootstrapped]: 0.0301  (predicho: RUS  |  ganador real: RUS)
+
+🔄  Corriendo validación LOO (12 carreras)...
+
+📐  VALIDACIÓN LOO — Historial de temporada (Leave-One-Race-Out)
+  Rd   Carrera                            Brier    Pred   Real   Roll-3
+  ────────────────────────────────────────────────────────────────────
+  R1   Australian Grand Prix              0.0402  ANT    RUS     [0.0402]
+  R2   Chinese Grand Prix                 0.0377  ANT    ANT   ✓ [0.0389]
+  R3   Japanese Grand Prix                0.0380  ANT    ANT   ✓ [0.0386]
+  R4   Miami Grand Prix                   0.0391  RUS    ANT     [0.0383]
+  R5   Canadian Grand Prix                0.0393  RUS    ANT     [0.0388]
+  R6   Monaco Grand Prix                  0.0374  ANT    ANT   ✓ [0.0386]
+  R7   Barcelona Grand Prix               0.0409  ANT    HAM     [0.0392]
+  R8   Austrian Grand Prix                0.0385  ANT    RUS     [0.0389]
+  R9   British Grand Prix                 0.0462  ANT    LEC     [0.0419]
+  R10  Belgian Grand Prix                 0.0383  ANT    ANT   ✓ [0.0410]
+  R11  Hungarian Grand Prix               0.0421  ANT    NOR     [0.0422]
+  R12  Dutch Grand Prix                   0.0415  VER    NOR     [0.0406]
+  ────────────────────────────────────────────────────────────────────
+  Media LOO                               0.0399   (4/12 ganadores correctos)
+  Tendencia (ú3 vs p3): 0.0386 → 0.0406  [↓ empeorando]
+
+📏  CALIBRACIÓN DEL MODELO (12 carreras LOO)
+  Bucket    Predicciones  Ganadas  Tasa real  Estado
+  ────────────────────────────────────────────────────────────
+  0-5%               226        3       1.3%  ✓ calibrado
+  5-10%               45        9      20.0%  ~ subestimado
+  10-15%               3        0       0.0%  ~ sobreestimado
+  15-20%               1        0       0.0%  ↑ muy sobreestimado
+  20%+                 1        0       0.0%  ↑ muy sobreestimado
+  ────────────────────────────────────────────────────────────
+  Calibration score (MAE): 15.31pp  [mejorable]  (0 = perfecto, <5pp = bueno)
+
+   🔬  Stacking meta-modelo — pesos aprendidos por tipo de circuito:
+      high_speed  : XGB 0.50  LGBM 0.50  (5 rondas)
+      street      : XGB 0.50  LGBM 0.50  (2 rondas)
+      technical   : XGB 0.50  LGBM 0.50  (3 rondas)
+      mixed       : XGB 0.50  LGBM 0.50  (2 rondas)
+   💾  Meta-modelo guardado (12 rondas, R12)
+   ⚠  No se pudieron guardar priors: Object of type float32 is not JSON serializable
+
+══════════════════════════════════════════════════════════════════════
+  🏎   F1 2026  ·  PREDICCIÓN DE CARRERA
+══════════════════════════════════════════════════════════════════════
+  Carrera         : Italian Grand Prix
+  Circuito        : Autodromo Nazionale di Monza  —  Italy
+  Fecha           : 2026-09-06
+  Carreras usadas : 12
+  Modelo          : XGBoost Quali+Race + Feedback Loop
+  Clima           : ☀  Seco esperado  |  Pista ~36°C  |  Humedad 56%  [horario]
+══════════════════════════════════════════════════════════════════════
+
+  📊  TABLA 1 — PREDICCIÓN DE VICTORIA
+
+╭─────┬───────────────────────┬──────────────┬───────┬─────────────────────────────┬──────────────┬────────────┬─────────────╮
+│     │ Piloto                │ Equipo       │   Pts │ 🎲 Ganar MC                  │ 🏆 Podio MC   │   Pos Esp. │ Intervalo   │
+├─────┼───────────────────────┼──────────────┼───────┼─────────────────────────────┼──────────────┼────────────┼─────────────┤
+│  🥇  │ Andrea Kimi Antonelli │ Mercedes     │   242 │ 20.0%  ██████████░░░░░░░░░░ │ 42.7%        │        5.1 │ P1 – P11    │
+│  🥈  │ Lewis Hamilton        │ Ferrari      │   183 │ 12.7%  ██████░░░░░░░░░░░░░░ │ 32.7%        │        6.2 │ P1 – P12    │
+│  🥉  │ George Russell        │ Mercedes     │   183 │ 9.0%  ████░░░░░░░░░░░░░░░░  │ 25.4%        │        6.7 │ P1 – P13    │
+│ 4.  │ Charles Leclerc       │ Ferrari      │   155 │ 7.2%  ███░░░░░░░░░░░░░░░░░  │ 21.6%        │        7.3 │ P2 – P13    │
+│ 5.  │ Lando Norris          │ McLaren      │   159 │ 7.5%  ███░░░░░░░░░░░░░░░░░  │ 21.9%        │        7   │ P2 – P13    │
+│ 6.  │ Max Verstappen        │ Red Bull     │   112 │ 4.3%  ██░░░░░░░░░░░░░░░░░░  │ 14.9%        │        8   │ P2 – P14    │
+│ 7.  │ Oscar Piastri         │ McLaren      │   104 │ 5.5%  ██░░░░░░░░░░░░░░░░░░  │ 16.6%        │        7.5 │ P2 – P13    │
+│ 8.  │ Isack Hadjar          │ Red Bull     │    68 │ 3.5%  █░░░░░░░░░░░░░░░░░░░  │ 12.0%        │        8.5 │ P3 – P14    │
+│ 9.  │ Liam Lawson           │ Racing Bulls │    49 │ 3.8%  █░░░░░░░░░░░░░░░░░░░  │ 12.4%        │        8   │ P2 – P14    │
+│ 10. │ Arvid Lindblad        │ Racing Bulls │    23 │ 2.7%  █░░░░░░░░░░░░░░░░░░░  │ 9.9%         │        8.2 │ P2 – P14    │
+│ 11. │ Pierre Gasly          │ Alpine       │    44 │ 2.9%  █░░░░░░░░░░░░░░░░░░░  │ 10.1%        │        8.4 │ P2 – P14    │
+│ 12. │ Nico Hülkenberg       │ Audi         │     6 │ 2.3%  █░░░░░░░░░░░░░░░░░░░  │ 7.8%         │        8.6 │ P3 – P15    │
+│ 13. │ Gabriel Bortoleto     │ Audi         │    10 │ 2.4%  █░░░░░░░░░░░░░░░░░░░  │ 8.5%         │        8.7 │ P3 – P15    │
+│ 14. │ Yuki Tsunoda          │ Racing Bulls │     0 │ 3.2%  █░░░░░░░░░░░░░░░░░░░  │ 12.5%        │        8.5 │ P3 – P14    │
+│ 15. │ Franco Colapinto      │ Alpine       │    19 │ 2.4%  █░░░░░░░░░░░░░░░░░░░  │ 8.8%         │        8.8 │ P3 – P15    │
+│ 16. │ Oliver Bearman        │ Haas         │    18 │ 1.7%  ░░░░░░░░░░░░░░░░░░░░  │ 6.4%         │        9   │ P3 – P15    │
+│ 17. │ Carlos Sainz          │ Williams     │     6 │ 1.9%  ░░░░░░░░░░░░░░░░░░░░  │ 6.6%         │        9.1 │ P3 – P15    │
+│ 18. │ Fernando Alonso       │ Aston Martin │     3 │ 0.7%  ░░░░░░░░░░░░░░░░░░░░  │ 3.8%         │       10   │ P4 – P15    │
+│ 19. │ Esteban Ocon          │ Haas         │     3 │ 1.6%  ░░░░░░░░░░░░░░░░░░░░  │ 6.8%         │        9.3 │ P3 – P15    │
+│ 20. │ Sergio Pérez          │ Cadillac     │     0 │ 1.6%  ░░░░░░░░░░░░░░░░░░░░  │ 5.8%         │        9.3 │ P3 – P15    │
+│ 21. │ Alexander Albon       │ Williams     │     5 │ 1.5%  ░░░░░░░░░░░░░░░░░░░░  │ 5.7%         │        9.4 │ P3 – P15    │
+│ 22. │ Valtteri Bottas       │ Cadillac     │     0 │ 1.1%  ░░░░░░░░░░░░░░░░░░░░  │ 4.3%         │        9.6 │ P3 – P15    │
+│ 23. │ Lance Stroll          │ Aston Martin │     0 │ 0.5%  ░░░░░░░░░░░░░░░░░░░░  │ 2.6%         │       10.3 │ P4 – P16    │
+╰─────┴───────────────────────┴──────────────┴───────┴─────────────────────────────┴──────────────┴────────────┴─────────────╯
+
+  📈  PROBABILIDADES — Ganar & Podio  (todos los pilotos)
+
+    ANT     20.0% win  (P10: 14.0% — P90: 25.1%)  │   42.7% podio
+    HAM     12.7% win  (P10: 8.9% — P90: 17.0%)  │   32.7% podio
+    RUS      9.0% win  (P10: 5.0% — P90: 12.1%)  │   25.4% podio
+    LEC      7.2% win  (P10: 4.0% — P90: 11.0%)  │   21.6% podio
+    NOR      7.5% win  (P10: 4.0% — P90: 10.1%)  │   21.9% podio
+    VER      4.3% win  (P10: 2.0% — P90: 7.0%)  │   14.9% podio
+    PIA      5.5% win  (P10: 2.9% — P90: 9.0%)  │   16.6% podio
+    HAD      3.5% win  (P10: 1.0% — P90: 6.0%)  │   12.0% podio
+    LAW      3.8% win  (P10: 2.0% — P90: 6.0%)  │   12.4% podio
+    LIN      2.7% win  │    9.9% podio
+    GAS      2.9% win  │   10.1% podio
+    HUL      2.3% win  │    7.8% podio
+    BOR      2.4% win  │    8.5% podio
+    TSU      3.2% win  (P10: 1.0% — P90: 6.0%)  │   12.5% podio
+    COL      2.4% win  │    8.8% podio
+    BEA      1.7% win  │    6.4% podio
+    SAI      1.9% win  │    6.6% podio
+    ALO      0.7% win  │    3.8% podio
+    OCO      1.6% win  │    6.8% podio
+    PER      1.6% win  │    5.8% podio
+    ALB      1.5% win  │    5.7% podio
+    BOT      1.1% win  │    4.3% podio
+    STR      0.5% win  │    2.6% podio
+
+  🔮  Predicción más incierta       : ALO (epistémica: 0.00, aleatoria: 2.9)
+
+
+  🔬  TABLA 2 — DETALLE TÉCNICO  (Top 10)
+
+╭─────┬───────────────────────┬──────────────┬────────────┬────────────┬────────────┬─────────┬─────────────┬────────────┬───────────────╮
+│     │ Piloto                │ Qualy Next   │ FP Next%   │   Fin Prom │   Forma(3) │ Fiab%   │ DNFs/Carr   │   Deg Neum │   Δ Compañero │
+├─────┼───────────────────────┼──────────────┼────────────┼────────────┼────────────┼─────────┼─────────────┼────────────┼───────────────┤
+│  🥇  │ Andrea Kimi Antonelli │ P22          │ -1.12%     │        3.8 │         17 │ 91.0%   │ 1/12        │     -4.876 │          2.67 │
+│  🥈  │ Lewis Hamilton        │ P22          │ -0.75%     │        4   │         12 │ 96.0%   │ 0/12        │     -4.532 │          2.42 │
+│  🥉  │ George Russell        │ P22          │ -1.29%     │        5.4 │         10 │ 86.0%   │ 2/12        │     -2.21  │         -2.67 │
+│ 4.  │ Charles Leclerc       │ P22          │ -1.15%     │        4.6 │         13 │ 86.0%   │ 2/12        │     -1.269 │         -2.42 │
+│ 5.  │ Lando Norris          │ P22          │ -0.83%     │        3.3 │         22 │ 81.0%   │ 3/12        │     -1.449 │          1.67 │
+│ 6.  │ Max Verstappen        │ P22          │ +0.07%     │        7.1 │          8 │ 76.0%   │ 4/12        │     -2.21  │          0.82 │
+│ 7.  │ Oscar Piastri         │ P22          │ -0.73%     │        7.6 │          6 │ 76.0%   │ 4/12        │     -6.927 │         -1.67 │
+│ 8.  │ Isack Hadjar          │ P22          │ +0.16%     │        6   │          8 │ 74.7%   │ 4/11        │     -4.664 │         -0.82 │
+│ 9.  │ Liam Lawson           │ P22          │ +0.07%     │        8.1 │          5 │ 66.0%   │ 6/12        │     -5.018 │          1.79 │
+│ 10. │ Arvid Lindblad        │ P22          │ +0.02%     │       10.2 │          1 │ 56.0%   │ 8/12        │     -4.675 │         -1.67 │
+╰─────┴───────────────────────┴──────────────┴────────────┴────────────┴────────────┴─────────┴─────────────┴────────────┴───────────────╯
+
+  ──────────────────────────────────────────────────────────────────────
+  ✅  PROBABLE GANADOR  :  Andrea Kimi Antonelli  (Mercedes)
+  🎲  Monte Carlo       :  20.0% ganar  |  42.7% podio  |  91.0% terminar
+  📊  Posición esperada :  5.1  (intervalo P10=1 – P90=11)
+──────────────────────────────────────────────────────────────────────
+  ⚠   Modelo estadístico + 10,000 simulaciones Monte Carlo.
+      Estrategia, clima y mecánica pueden cambiar cualquier predicción.
+
+💾  Resultados guardados en: f1_2026_predicciones.csv
+
+
+[exit 0]

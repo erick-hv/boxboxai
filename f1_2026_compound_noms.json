@@ -34,5 +34,14 @@
     "conflict": false,
     "source": "https://www.f1network.net/main/s107/st208612.htm",
     "fetched_at": "2026-08-21T13:38:51.709106+00:00"
+  },
+  "13": {
+    "hard": 3,
+    "medium": 4,
+    "soft": 5,
+    "confirmed": false,
+    "conflict": false,
+    "source": "https://www.pitpass.com/82890/Pirelli-reveals-Austrian-and-British-GP-tyre-compounds",
+    "fetched_at": "2026-09-04T19:42:29.053563+00:00"
   }
 }

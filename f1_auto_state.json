@@ -115,9 +115,13 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R12_pre_race_20260823_111823.log"
   },
   "R13_FP1": {
-    "first_seen": "2026-09-04T17:06:05.062214+00:00"
+    "first_seen": "2026-09-04T17:06:05.062214+00:00",
+    "triggered_at": "2026-09-04T19:42:31.391798+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_FP1_20260904_193511.log"
   },
   "R13_FP2": {
-    "first_seen": "2026-09-04T17:06:05.670352+00:00"
+    "first_seen": "2026-09-04T17:06:05.670352+00:00",
+    "triggered_at": "2026-09-04T19:49:15.643225+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_FP2_20260904_194232.log"
   }
 }
