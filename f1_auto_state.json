@@ -125,9 +125,13 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_FP2_20260904_194232.log"
   },
   "R13_FP3": {
-    "first_seen": "2026-09-05T16:16:43.774794+00:00"
+    "first_seen": "2026-09-05T16:16:43.774794+00:00",
+    "triggered_at": "2026-09-05T18:36:33.233178+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_FP3_20260905_182946.log"
   },
   "R13_Q": {
-    "first_seen": "2026-09-05T16:16:44.549547+00:00"
+    "first_seen": "2026-09-05T16:16:44.549547+00:00",
+    "triggered_at": "2026-09-05T18:43:19.697072+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_Q_20260905_183633.log"
   }
 }
