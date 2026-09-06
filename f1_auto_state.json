@@ -133,5 +133,9 @@
     "first_seen": "2026-09-05T16:16:44.549547+00:00",
     "triggered_at": "2026-09-05T18:43:19.697072+00:00",
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_Q_20260905_183633.log"
+  },
+  "R13_pre_race": {
+    "triggered_at": "2026-09-06T12:40:09.747440+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_pre_race_20260906_123826.log"
   }
 }
