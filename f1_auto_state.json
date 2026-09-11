@@ -137,5 +137,8 @@
   "R13_pre_race": {
     "triggered_at": "2026-09-06T12:40:09.747440+00:00",
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R13_pre_race_20260906_123826.log"
+  },
+  "R14_FP1": {
+    "first_seen": "2026-09-11T14:02:03.862304+00:00"
   }
 }
