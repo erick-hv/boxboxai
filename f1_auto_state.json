@@ -144,6 +144,8 @@
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R14_FP1_20260911_174531.log"
   },
   "R14_FP2": {
-    "first_seen": "2026-09-11T17:53:19.422421+00:00"
+    "first_seen": "2026-09-11T17:53:19.422421+00:00",
+    "triggered_at": "2026-09-11T20:11:41.239139+00:00",
+    "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R14_FP2_20260911_200434.log"
   }
 }
