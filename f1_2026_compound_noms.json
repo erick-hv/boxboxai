@@ -52,5 +52,14 @@
     "conflict": false,
     "source": "https://www.f1network.net/main/s107/st208612.htm",
     "fetched_at": "2026-09-11T17:53:14.388093+00:00"
+  },
+  "15": {
+    "hard": 3,
+    "medium": 4,
+    "soft": 5,
+    "confirmed": true,
+    "conflict": false,
+    "source": "https://www.f1network.net/main/s107/st208612.htm",
+    "fetched_at": "2026-09-26T10:25:16.240430+00:00"
   }
 }
