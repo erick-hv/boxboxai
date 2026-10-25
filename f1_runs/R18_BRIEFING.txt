@@ -1,0 +1,48 @@
+════════════════════════════════════════════════════════════════
+  RACE BRIEFING  —  R18  ·  United States Grand Prix
+  Circuit of the Americas  |  2026-10-25
+════════════════════════════════════════════════════════════════
+
+WEATHER
+  Dry expected — 0% rain probability (nowcast (live))
+  Pista ~32°C  ·  Humedad 62%  [nowcast]
+
+SAFETY CAR / VSC
+  50% probability  —  moderate — safety car is a coin flip
+
+TOP 10 WIN PROBABILITIES  (10,000 Monte Carlo simulations)
+
+   1. Andrea Kimi Antonelli (Mercedes)
+      Win 17.9%  ·  Podium 40.1%  ·  Exp finish P5  ·  Range P1–P11
+   2. Max Verstappen (Red Bull)
+      Win 11.0%  ·  Podium 27.9%  ·  Exp finish P6  ·  Range P1–P13
+   3. Charles Leclerc (Ferrari)
+      Win 9.6%  ·  Podium 25.4%  ·  Exp finish P7  ·  Range P1–P13
+   4. Lewis Hamilton (Ferrari)
+      Win 7.7%  ·  Podium 22.9%  ·  Exp finish P7  ·  Range P2–P13
+   5. Lando Norris (McLaren)
+      Win 7.7%  ·  Podium 22.2%  ·  Exp finish P7  ·  Range P2–P13
+   6. George Russell (Mercedes)
+      Win 5.9%  ·  Podium 18.1%  ·  Exp finish P8  ·  Range P2–P14
+   7. Oscar Piastri (McLaren)
+      Win 5.7%  ·  Podium 18.5%  ·  Exp finish P8  ·  Range P2–P14
+   8. Liam Lawson (Racing Bulls)
+      Win 4.0%  ·  Podium 13.5%  ·  Exp finish P8  ·  Range P2–P14
+   9. Isack Hadjar (Red Bull)
+      Win 3.7%  ·  Podium 12.8%  ·  Exp finish P8  ·  Range P2–P14
+  10. Arvid Lindblad (Racing Bulls)
+      Win 3.6%  ·  Podium 10.8%  ·  Exp finish P8  ·  Range P2–P14
+
+PACE FLAGS  (top 10 drivers)
+  None detected for top 10
+
+VERDICT
+  Andrea Kimi Antonelli (Mercedes) is the marginal favourite.
+  Win: 17.9%  ·  Podium: 40.1%  ·  Expected finish: P5
+
+BIGGEST RISK
+  Max Verstappen's P10–P90 interval spans P1–P13 (12 places) — the model is uncertain enough that a podium or a points miss are both live.
+
+════════════════════════════════════════════════════════════════
+  Generated: 2026-10-25 18:27 UTC
+════════════════════════════════════════════════════════════════
