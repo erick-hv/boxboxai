@@ -191,5 +191,9 @@
   "R19_pre_race": {
     "triggered_at": "2026-11-01T19:54:36.862576+00:00",
     "log": "/home/runner/work/boxboxai/boxboxai/f1_runs/R19_pre_race_20261101_195225.log"
+  },
+  "R20_pre_race": {
+    "triggered_at": "2026-11-08T17:56:06.407372+00:00",
+    "log": "skipped"
   }
 }
